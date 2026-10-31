@@ -1,0 +1,21 @@
+// Research. Labs (T28) consume `cost` once per unit, `units` times, `seconds`
+// per unit, then `recipes` and `buildings` open. Anything no research
+// unlocks is open from the start: the prototype's chain and survey packs.
+[
+    (
+        id: "steel-working", name: "Steel working", tier: 1,
+        cost: [(item: "survey-pack", count: 1)], units: 15, seconds: 10.0,
+        recipes: ["steel"],
+    ),
+    (
+        id: "motors", name: "Motors", tier: 1, requires: ["steel-working"],
+        cost: [(item: "survey-pack", count: 1)], units: 25, seconds: 10.0,
+        recipes: ["motor", "engineering-pack"],
+    ),
+    (
+        id: "fast-belts", name: "Fast belts", tier: 2, requires: ["motors"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 20, seconds: 15.0,
+        buildings: ["fast-belt"],
+    ),
+]

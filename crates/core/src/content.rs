@@ -3,7 +3,7 @@
 //! These structs are what the RON files deserialize into. Loading, hot reload
 //! and validation live in other lanes; only the shape is fixed here.
 
-use crate::ids::{BuildingId, ItemId, RecipeId};
+use crate::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -21,6 +21,8 @@ pub enum IconShape {
     Wire,
     Circuit,
     Droplet,
+    /// A research pack, consumed by labs.
+    Pack,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -79,12 +81,37 @@ pub struct BuildingDef {
     pub cost: Vec<Stack>,
 }
 
+/// One research: labs consume `cost` once per `units`, `seconds` each, and
+/// when it is done the recipes and buildings in `unlocks` can be used.
+/// Recipes and buildings no research unlocks are open from the start.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ResearchDef {
+    pub id: ResearchId,
+    pub name: String,
+    /// The tier it opens; research packs of this tier or below pay for it.
+    pub tier: u8,
+    /// Research that must be done first.
+    #[serde(default)]
+    pub requires: Vec<ResearchId>,
+    /// Packs consumed per unit.
+    pub cost: Vec<Stack>,
+    pub units: u32,
+    /// Lab time per unit at lab speed 1.0.
+    pub seconds: f32,
+    #[serde(default)]
+    pub recipes: Vec<RecipeId>,
+    #[serde(default)]
+    pub buildings: Vec<BuildingId>,
+}
+
 /// Everything loaded from `data/`, before validation.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Content {
     pub items: Vec<ItemDef>,
     pub recipes: Vec<RecipeDef>,
     pub buildings: Vec<BuildingDef>,
+    #[serde(default)]
+    pub research: Vec<ResearchDef>,
 }
 
 #[cfg(test)]

@@ -7,4 +7,12 @@
     (id: "gear",         name: "Gear",         kind: Solid, shape: Gear,    color: "iron",       tier: 1),
     (id: "wire",         name: "Copper wire",  kind: Solid, shape: Wire,    color: "copper",     tier: 1),
     (id: "circuit",      name: "Circuit",      kind: Solid, shape: Circuit, color: "circuit",    tier: 1),
+    (id: "stone",        name: "Stone",        kind: Solid, shape: Ore,     color: "stone",      tier: 1),
+    (id: "brick",        name: "Brick",        kind: Solid, shape: Plate,   color: "brick",      tier: 1),
+    (id: "survey-pack",  name: "Survey pack",  kind: Solid, shape: Pack,    color: "pack-survey", tier: 1),
+    // Tier 2: steel and motors.
+    (id: "coal",         name: "Coal",         kind: Solid, shape: Ore,     color: "coal",       tier: 2),
+    (id: "steel",        name: "Steel",        kind: Solid, shape: Plate,   color: "steel",      tier: 2),
+    (id: "motor",        name: "Motor",        kind: Solid, shape: Gear,    color: "motor",      tier: 2),
+    (id: "engineering-pack", name: "Engineering pack", kind: Solid, shape: Pack, color: "pack-engineering", tier: 2),
 ]

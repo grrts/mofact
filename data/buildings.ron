@@ -9,4 +9,7 @@
         cost: [(item: "iron-plate", count: 5)]),
     (id: "assembler", name: "Assembler", size: (1, 1), role: Crafter(categories: ["assembling"], speed: 1.0),
         cost: [(item: "iron-plate", count: 8), (item: "copper-plate", count: 4)]),
+    // Tier 2: twice the belt's speed.
+    (id: "fast-belt", name: "Fast belt", size: (1, 1), role: Belt(tiles_per_second: 4.0),
+        cost: [(item: "gear", count: 1), (item: "iron-plate", count: 1)]),
 ]
