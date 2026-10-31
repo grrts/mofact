@@ -24,7 +24,9 @@ mod surface;
 
 use mofact_core::content::Content;
 use mofact_input::{CameraControl, Controls, Pointer, Tool, MOUSE, MOUSE_PAN};
-use mofact_render::{scene, wgpu, Camera, Frame, Gpu, Look, Renderer, Scene, Target, FLOOR};
+use mofact_render::{
+    scene, wgpu, Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target, FLOOR,
+};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui as _;
 use ore::OreMap;
@@ -44,6 +46,7 @@ struct App {
     sim: SimHandle,
     look: Look,
     scene: Scene,
+    overlay: Overlay,
     ore: OreMap,
     controls: Controls,
     built: built::Built,
@@ -89,6 +92,7 @@ impl App {
             sim: SimHandle::spawn(sim),
             look,
             scene: Scene::default(),
+            overlay: Overlay::new(),
             ore,
             controls,
             built,
@@ -156,7 +160,19 @@ impl App {
             atlases,
             ghosts.iter().map(|g| (&g.building, g.tile, g.dir)),
         );
-        target.draw(&self.gpu, &mut self.renderer, &camera, &self.scene)
+        self.overlay.clear();
+        hint(
+            &mut self.overlay,
+            &self.controls.builder.tool,
+            target.size(),
+        );
+        target.draw(
+            &self.gpu,
+            &mut self.renderer,
+            &camera,
+            &self.scene,
+            Some(&self.overlay),
+        )
     }
 
     /// Keys, as in the prototype: 1 to 6 pick hand, belt, drill, furnace,
@@ -470,6 +486,40 @@ fn run() -> Result<(), String> {
     }
 }
 
+/// The prototype's tip for the current tool, in a chip at the bottom of the
+/// screen, until the toolbar and inspect sheet arrive (T21).
+fn hint(overlay: &mut Overlay, tool: &Tool, (w, h): (u32, u32)) {
+    let tip = match tool {
+        Tool::Hand => "Move: drag to look around, pinch or scroll to zoom. Keys 1-6 pick a tool.",
+        Tool::Belt => "Belt: drag to draw a belt along your path. Two fingers pan and zoom.",
+        Tool::Place(b) if b.as_str() == "drill" => "Drill: tap ore to place. R rotates.",
+        Tool::Place(b) if b.as_str() == "furnace" => {
+            "Furnace: tap to place. Ore goes in any side, plates come out of the arrow."
+        }
+        Tool::Place(_) => "Assembler: tap to place. It picks its recipe from what arrives.",
+        Tool::Remove => "Remove: tap or drag over things to remove them. You get the plates back.",
+    };
+    let scale = (h as f32 / 720.0).clamp(1.0, 3.0);
+    let px = 15.0 * scale;
+    let width = overlay.measure(tip, px) + 24.0 * scale;
+    let height = 34.0 * scale;
+    let x = ((w as f32 - width) / 2.0).max(8.0);
+    let y = h as f32 - height - 16.0 * scale;
+    overlay.panel(
+        [x, y],
+        [width, height],
+        8.0 * scale,
+        [0x1d, 0x23, 0x2a, 0xeb],
+    );
+    let baseline = y + (height + overlay.cap_height(px)) / 2.0;
+    overlay.text(
+        tip,
+        [x + 12.0 * scale, baseline],
+        px,
+        [0xe9, 0xed, 0xf0, 0xff],
+    );
+}
+
 /// Saving must never crash the game; say what went wrong and play on.
 fn report(result: Result<(), String>) {
     if let Err(e) = result {
@@ -540,7 +590,7 @@ fn screenshots(
         );
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
-        let pixels = renderer.capture(&gpu, size, &camera, &scene, FLOOR);
+        let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
         let path = dir.join(format!("zoom-{ppt}.png"));
         write_png(&path, size, &pixels)?;
         println!(

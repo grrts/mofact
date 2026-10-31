@@ -13,6 +13,7 @@ mofact-artkit.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
 bytemuck = { version = "1", features = ["derive"] }
+fontdue = "0.9"
 
 [dev-dependencies]
 ron.workspace = true

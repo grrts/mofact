@@ -32,6 +32,8 @@ pub struct Atlas {
     pub pixels: Vec<u8>,
     sprites: HashMap<String, Uv>,
     shelf: (u32, u32, u32), // x, y, height of the current shelf
+    /// Goes up with every sprite added, so the GPU copy knows when to refresh.
+    pub version: u64,
 }
 
 impl Atlas {
@@ -41,6 +43,7 @@ impl Atlas {
             pixels: vec![0; (size * size * 4) as usize],
             sprites: HashMap::new(),
             shelf: (0, 0, 0),
+            version: 0,
         }
     }
 
@@ -78,6 +81,7 @@ impl Atlas {
             h as f32 / s,
         ];
         self.sprites.insert(name.to_owned(), uv);
+        self.version += 1;
         Some(uv)
     }
 

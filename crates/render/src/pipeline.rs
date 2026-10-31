@@ -2,6 +2,7 @@
 //! and a growing instance buffer drawn with a single instanced draw call.
 
 use crate::atlas::Atlas;
+use crate::overlay::Overlay;
 use crate::scene::{Camera, Instance, Scene};
 use crate::Gpu;
 use std::collections::HashMap;
@@ -19,6 +20,13 @@ pub struct Renderer {
     bands: Vec<wgpu::BindGroup>,
     instances: wgpu::Buffer,
     capacity: usize,
+    atlas_layout: wgpu::BindGroupLayout,
+    sampler: wgpu::Sampler,
+    /// Globals for the overlay: a pixel-space transform.
+    screen: wgpu::Buffer,
+    screen_group: wgpu::BindGroup,
+    /// The overlay atlas on the GPU and the atlas version it holds.
+    ui: Option<(wgpu::Texture, wgpu::BindGroup, u64)>,
 }
 
 const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
@@ -88,6 +96,20 @@ impl Renderer {
                 resource: globals.as_entire_binding(),
             }],
         });
+        let screen = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("screen"),
+            size: 32,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let screen_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("screen"),
+            layout: &globals_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: screen.as_entire_binding(),
+            }],
+        });
         let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
             mag_filter: wgpu::FilterMode::Linear,
             min_filter: wgpu::FilterMode::Linear,
@@ -134,6 +156,11 @@ impl Renderer {
             .collect();
         let capacity = 1024;
         Self {
+            atlas_layout,
+            sampler,
+            screen,
+            screen_group,
+            ui: None,
             atlases,
             instances: instance_buffer(device, capacity),
             capacity,
@@ -219,11 +246,13 @@ impl Renderer {
         (width, height): (u32, u32),
         camera: &Camera,
         scene: &Scene,
+        overlay: Option<&Overlay>,
         clear: wgpu::Color,
     ) {
         let n = scene.ore.len() + scene.instances.len();
-        if n > self.capacity {
-            self.capacity = n.next_power_of_two();
+        let ui = overlay.map_or(0, |o| o.instances.len());
+        if n + ui > self.capacity {
+            self.capacity = (n + ui).next_power_of_two();
             self.instances = instance_buffer(&gpu.device, self.capacity);
         }
         gpu.queue.write_buffer(
@@ -253,6 +282,18 @@ impl Renderer {
             gpu.queue
                 .write_buffer(&self.instances, ore, bytemuck::cast_slice(&scene.instances));
         }
+        if let Some(o) = overlay.filter(|_| ui > 0) {
+            self.upload_overlay(gpu, o);
+            let (w, h) = (width as f32, height as f32);
+            gpu.queue.write_buffer(
+                &self.screen,
+                0,
+                bytemuck::cast_slice(&[2.0 / w, -2.0 / h, -1.0, 1.0, 1.0, w, h, 0.0]),
+            );
+            let at = std::mem::size_of::<Instance>() as u64 * n as u64;
+            gpu.queue
+                .write_buffer(&self.instances, at, bytemuck::cast_slice(&o.instances));
+        }
         self.pipeline(&gpu.device, format);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("world"),
@@ -277,6 +318,52 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..6, 0..n as u32);
         }
+        if let (Some((_, group, _)), true) = (&self.ui, ui > 0) {
+            pass.set_pipeline(sprites);
+            pass.set_bind_group(0, &self.screen_group, &[]);
+            pass.set_bind_group(1, group, &[]);
+            pass.set_vertex_buffer(0, self.instances.slice(..));
+            pass.draw(0..6, n as u32..(n + ui) as u32);
+        }
+    }
+
+    /// Copy the overlay atlas to the GPU when it has new glyphs.
+    fn upload_overlay(&mut self, gpu: &Gpu, overlay: &Overlay) {
+        let atlas = &overlay.atlas;
+        if matches!(&self.ui, Some((_, _, v)) if *v == atlas.version) {
+            return;
+        }
+        if self.ui.is_none() {
+            let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("overlay atlas"),
+                size: wgpu::Extent3d {
+                    width: atlas.size,
+                    height: atlas.size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            });
+            let group = atlas_group(&gpu.device, &self.atlas_layout, &self.sampler, &texture);
+            self.ui = Some((texture, group, u64::MAX));
+        }
+        if let Some((texture, _, version)) = &mut self.ui {
+            gpu.queue.write_texture(
+                texture.as_image_copy(),
+                &atlas.pixels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(atlas.size * 4),
+                    rows_per_image: Some(atlas.size),
+                },
+                texture.size(),
+            );
+            *version = atlas.version;
+        }
     }
 
     /// Draw `scene` into an offscreen image and read it back as RGBA rows,
@@ -287,6 +374,7 @@ impl Renderer {
         size: (u32, u32),
         camera: &Camera,
         scene: &Scene,
+        overlay: Option<&Overlay>,
         clear: wgpu::Color,
     ) -> Vec<u8> {
         let (width, height) = size;
@@ -314,7 +402,17 @@ impl Renderer {
         });
         let mut encoder = gpu.device.create_command_encoder(&Default::default());
         let view = texture.create_view(&Default::default());
-        self.encode(gpu, &mut encoder, &view, format, size, camera, scene, clear);
+        self.encode(
+            gpu,
+            &mut encoder,
+            &view,
+            format,
+            size,
+            camera,
+            scene,
+            overlay,
+            clear,
+        );
         encoder.copy_texture_to_buffer(
             texture.as_image_copy(),
             wgpu::TexelCopyBufferInfo {
@@ -341,6 +439,29 @@ impl Renderer {
             .copied()
             .collect()
     }
+}
+
+fn atlas_group(
+    device: &wgpu::Device,
+    layout: &wgpu::BindGroupLayout,
+    sampler: &wgpu::Sampler,
+    texture: &wgpu::Texture,
+) -> wgpu::BindGroup {
+    let view = texture.create_view(&Default::default());
+    device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("atlas"),
+        layout,
+        entries: &[
+            wgpu::BindGroupEntry {
+                binding: 0,
+                resource: wgpu::BindingResource::TextureView(&view),
+            },
+            wgpu::BindGroupEntry {
+                binding: 1,
+                resource: wgpu::BindingResource::Sampler(sampler),
+            },
+        ],
+    })
 }
 
 fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {

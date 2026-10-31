@@ -11,11 +11,13 @@
 //! band that fits the camera.
 
 pub mod atlas;
+pub mod overlay;
 pub mod palette;
 mod pipeline;
 pub mod scene;
 
 pub use mofact_core as core;
+pub use overlay::Overlay;
 pub use pipeline::Renderer;
 pub use scene::{Camera, Instance, Look, Scene};
 pub use wgpu;
@@ -173,6 +175,7 @@ impl Target {
         renderer: &mut Renderer,
         camera: &Camera,
         scene: &Scene,
+        overlay: Option<&Overlay>,
     ) -> Frame {
         let (texture, suboptimal) = match self.surface.get_current_texture() {
             wgpu::CurrentSurfaceTexture::Success(t) => (t, false),
@@ -194,6 +197,7 @@ impl Target {
             size,
             camera,
             scene,
+            overlay,
             FLOOR,
         );
         gpu.queue.submit([encoder.finish()]);
