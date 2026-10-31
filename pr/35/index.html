@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#1b1f24">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mofact</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1f24; overflow: hidden; }
+  /* The game takes every touch; the page never scrolls or zooms. */
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block;
+           touch-action: none; user-select: none; -webkit-user-select: none;
+           -webkit-touch-callout: none; outline: none; }
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #d8dee6; font: 600 16px system-ui, sans-serif; text-align: center; padding: 24px;
+            pointer-events: none; }
+  #build { position: fixed; right: 6px; bottom: 4px; color: #ffffff55; font: 11px system-ui, sans-serif;
+           pointer-events: none; transition: opacity 1s; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<div id="status">Loading Mofact…</div>
+<div id="build">build 407d361</div>
+<script type="module">
+// The page is only a canvas: the game is the same Rust app the phones run,
+// compiled to WebAssembly (platform/web). Each deploy stamps its commit into
+// these URLs, so a new build is fetched fresh instead of served from cache.
+const build = '407d361';
+const status = document.getElementById('status');
+try {
+  const { default: init, start } = await import(`./mofact_web.js?v=${build}`);
+  await init({ module_or_path: `./mofact_web_bg.wasm?v=${build}` });
+  await start('game');
+  status.remove();
+  document.getElementById('game').focus();
+  setTimeout(() => { document.getElementById('build').style.opacity = 0; }, 4000);
+} catch (e) {
+  console.error(e);
+  status.textContent = `Mofact couldn't start: ${e && e.message ? e.message : e}. It needs a browser with WebGL2.`;
+}
+</script>
+</body>
+</html>
