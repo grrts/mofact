@@ -436,3 +436,80 @@ fn a_drill_reports_the_ore_under_it() {
     assert_eq!(at(0, 12).ore, Some(item("copper-ore")));
     assert_eq!(at(3, 10).ore, None, "only miners have ore");
 }
+
+/// The game data plus a faster belt tier.
+fn with_fast_belt() -> Content {
+    let mut c = content();
+    let mut fast = c
+        .buildings
+        .iter()
+        .find(|b| b.id.as_str() == "belt")
+        .expect("a belt")
+        .clone();
+    fast.id = BuildingId::from("fast-belt");
+    fast.role = mofact_core::content::BuildingRole::Belt {
+        tiles_per_second: 6.0,
+    };
+    c.buildings.push(fast);
+    c
+}
+
+/// Ticks until the first ore crosses a line of `belt`s, `len` long, into the hub.
+fn first_delivery(belt: &str, len: i32) -> u32 {
+    let mut sim = Sim::with_content(&with_fast_belt());
+    sim.add_stock(&item("iron-plate"), 100);
+    sim.set_ore(TilePos::new(0, 1), &item("iron-ore"));
+    place(&mut sim, "drill", 0, 1, Dir::East, None);
+    for x in 1..=len {
+        place(&mut sim, belt, x, 1, Dir::East, None);
+    }
+    place(&mut sim, "hub", len + 1, 0, Dir::East, None);
+    for t in 1..=20 * mofact_core::TICKS_PER_SECOND {
+        sim.step();
+        if sim.delivered(&item("iron-ore")) > 0 {
+            return t;
+        }
+    }
+    panic!("nothing arrived on {belt}");
+}
+
+#[test]
+fn belt_tiers_move_items_at_their_speed() {
+    let mine = ticks(1.2);
+    let slow = first_delivery("belt", 12) - mine;
+    let fast = first_delivery("fast-belt", 12) - mine;
+    // 12 tiles at 2 and 6 tiles a second, give or take a tick per hand-over.
+    assert!(slow.abs_diff(360) <= 14, "slow: {slow} ticks");
+    assert!(fast.abs_diff(120) <= 14, "fast: {fast} ticks");
+}
+
+#[test]
+fn mixed_tiers_lose_nothing() {
+    // drill -> fast -> slow -> fast -> hub: every ore mined arrives.
+    let mut sim = Sim::with_content(&with_fast_belt());
+    sim.add_stock(&item("iron-plate"), 100);
+    sim.set_ore(TilePos::new(0, 1), &item("iron-ore"));
+    place(&mut sim, "drill", 0, 1, Dir::East, None);
+    for x in 1..=12 {
+        let belt = if (5..=8).contains(&x) {
+            "belt"
+        } else {
+            "fast-belt"
+        };
+        place(&mut sim, belt, x, 1, Dir::East, None);
+    }
+    place(&mut sim, "hub", 13, 0, Dir::East, None);
+    run(&mut sim, 60);
+    let on_belts: u32 = (1..=12)
+        .map(|x| {
+            let id = sim.entity_at(TilePos::new(x, 1)).unwrap();
+            sim.inventory(id).iter().map(|(_, n)| n).sum::<u32>()
+        })
+        .sum();
+    let mined = 60 * mofact_core::TICKS_PER_SECOND / ticks(1.2);
+    let arrived = sim.delivered(&item("iron-ore")) as u32;
+    assert!(
+        (arrived + on_belts).abs_diff(mined) <= 1,
+        "{arrived} arrived and {on_belts} on belts of {mined} mined"
+    );
+}
