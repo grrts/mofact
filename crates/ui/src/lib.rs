@@ -86,6 +86,8 @@ pub struct View<'a> {
     pub dir: Dir,
     /// The recipe new crafters get.
     pub recipe: Option<&'a RecipeId>,
+    /// The belt tier the belt tool lays.
+    pub belt: &'a BuildingId,
 }
 
 impl View<'_> {
@@ -157,6 +159,8 @@ pub enum Action {
     Rotate,
     /// Choose the recipe new crafters get; `None` lets them pick from what arrives.
     Recipe(Option<RecipeId>),
+    /// Choose the belt tier the belt tool lays.
+    Belt(BuildingId),
     /// Send a command to the simulation.
     Send(Command),
     /// A tap on the world with the hand tool, at this screen point: inspect what's there.
@@ -169,6 +173,7 @@ enum Hit {
     Tool(usize),
     Rotate,
     Recipe(Option<RecipeId>),
+    Belt(BuildingId),
     SetRecipe(EntityId, Option<RecipeId>),
     Turn(EntityId, Dir),
     Remove(EntityId),
@@ -354,6 +359,7 @@ impl Hud {
             }
             Hit::Rotate => vec![Action::Rotate],
             Hit::Recipe(r) => vec![Action::Recipe(r)],
+            Hit::Belt(b) => vec![Action::Belt(b)],
             Hit::SetRecipe(entity, recipe) => {
                 vec![Action::Send(Command::SetRecipe { entity, recipe })]
             }
@@ -481,10 +487,29 @@ impl Hud {
             let choices: Vec<_> = pills
                 .map(|r| {
                     let chosen = r.map(|r| &r.id) == view.recipe;
-                    (r, chosen, Hit::Recipe(r.map(|r| r.id.clone())))
+                    recipe_pill(view, r, chosen, Hit::Recipe(r.map(|r| r.id.clone())))
                 })
                 .collect();
-            self.pills(view, o, choices, [m, corner[1]], right - m, true);
+            self.pills(o, choices, [m, corner[1]], right - m, true);
+        }
+        // Belt tiers, once there is more than one to lay.
+        if *view.tool == Tool::Belt {
+            let tiers: Vec<Pill> = view
+                .content
+                .buildings
+                .iter()
+                .filter(|b| {
+                    matches!(b.role, BuildingRole::Belt { .. }) && view.building_open(&b.id)
+                })
+                .map(|b| {
+                    let chosen = &b.id == view.belt;
+                    let icon = view.look.building(&b.id);
+                    (b.name.as_str(), icon, chosen, Hit::Belt(b.id.clone()))
+                })
+                .collect();
+            if tiers.len() > 1 {
+                self.pills(o, tiers, [m, corner[1]], right - m, true);
+            }
         }
     }
 
@@ -883,9 +908,8 @@ impl Hud {
     /// with `draw` false, only measures.
     fn pills(
         &mut self,
-        view: &View,
         o: &mut Overlay,
-        choices: Vec<(Option<&RecipeDef>, bool, Hit)>,
+        choices: Vec<Pill>,
         at: [f32; 2],
         width: f32,
         draw: bool,
@@ -897,11 +921,7 @@ impl Hud {
         let gap = 6.0 * u;
         let sized: Vec<_> = choices
             .into_iter()
-            .map(|(r, chosen, hit)| {
-                let name = r.map_or("Auto", |r| r.name.as_str());
-                let icon = r
-                    .and_then(|r| r.outputs.first())
-                    .and_then(|s| view.look.item(&s.item));
+            .map(|(name, icon, chosen, hit)| {
                 let w =
                     14.0 * u + icon.map_or(0.0, |_| s + 6.0 * u) + o.measure(name, px) + 14.0 * u;
                 (name, icon, w, chosen, hit)
@@ -952,7 +972,15 @@ impl Hud {
         let pad = 16.0 * u;
         let def = view.building(&e.building);
         let hub = def.is_some_and(|d| d.role == BuildingRole::Hub);
-        let belt = def.is_some_and(|d| matches!(d.role, BuildingRole::Belt { .. }));
+        // Belts, splitters and underground belts only carry: nothing to show but the controls.
+        let belt = def.is_some_and(|d| {
+            matches!(
+                d.role,
+                BuildingRole::Belt { .. }
+                    | BuildingRole::Splitter
+                    | BuildingRole::Underground { .. }
+            )
+        });
         let pole = def.is_some_and(|d| matches!(d.role, BuildingRole::Pole { .. }));
         let generator = def.and_then(|d| match d.role {
             BuildingRole::Generator { kw } => Some(kw),
@@ -972,12 +1000,12 @@ impl Hud {
                 .map(|r| {
                     let id = r.map(|r| r.id.clone());
                     let chosen = id == e.recipe;
-                    (r, chosen, Hit::SetRecipe(e.id, id))
+                    recipe_pill(view, r, chosen, Hit::SetRecipe(e.id, id))
                 })
                 .collect()
         });
         let pill_rows = choices.clone().map_or(0.0, |c| {
-            self.pills(view, o, c, [0.0, 0.0], width - 2.0 * pad, false) as f32
+            self.pills(o, c, [0.0, 0.0], width - 2.0 * pad, false) as f32
         });
         let height = pad
             + 30.0 * u // title
@@ -1099,7 +1127,6 @@ impl Hud {
             // Pills fill upwards from a bottom edge; aim them at this band.
             let band = pill_rows * 46.0 * u;
             self.pills(
-                view,
                 o,
                 choices,
                 [left, y + band - 6.0 * u],
@@ -1134,6 +1161,18 @@ impl Hud {
     }
 }
 
+/// A pill: its label, icon, whether it is the one chosen, and what a tap does.
+type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
+
+/// A pill for a recipe, showing its first output; `None` is Auto.
+fn recipe_pill<'a>(view: &View<'a>, r: Option<&'a RecipeDef>, chosen: bool, hit: Hit) -> Pill<'a> {
+    let name = r.map_or("Auto", |r| r.name.as_str());
+    let icon = r
+        .and_then(|r| r.outputs.first())
+        .and_then(|s| view.look.item(&s.item));
+    (name, icon, chosen, hit)
+}
+
 /// A machine state's label and colour.
 fn state(s: MachineState) -> (&'static str, Rgba) {
     match s {
@@ -1161,6 +1200,12 @@ fn tip(tool: &Tool) -> &'static str {
         }
         Tool::Place(b) if b.as_str() == "pole" => {
             "Tap to place. Poles link up to 7 tiles apart and power what's next to them."
+        }
+        Tool::Place(b) if b.as_str() == "splitter" => {
+            "Tap to place facing along a belt. Items go out left and right in turn."
+        }
+        Tool::Place(b) if b.as_str() == "underground-belt" => {
+            "Place an entrance, then an exit up to 5 tiles on facing the same way."
         }
         Tool::Place(b) if b.as_str() == "wind-turbine" => {
             "Tap to place next to a pole. Each turbine powers one lab."

@@ -184,6 +184,7 @@ impl App {
             tool: &builder.tool,
             dir: builder.dir,
             recipe: builder.recipe.as_ref(),
+            belt: &builder.belt,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -225,6 +226,7 @@ impl App {
                 Action::Tool(tool) => self.controls.builder.set_tool(tool),
                 Action::Rotate => self.controls.builder.rotate(),
                 Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
+                Action::Belt(belt) => self.controls.builder.belt = belt,
                 Action::Send(command) => self.sim.send(command),
                 Action::Inspect(at) if self.controls.builder.tool == Tool::Hand => {
                     let [x, y] = self.controls.camera.world_at(at);
@@ -660,6 +662,7 @@ fn screenshots(
             tool: &Tool::Hand,
             dir: mofact_core::geom::Dir::East,
             recipe: None,
+            belt: &"belt".into(),
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);

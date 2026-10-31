@@ -18,4 +18,15 @@
         units: 20, seconds: 15.0,
         buildings: ["fast-belt"],
     ),
+    (
+        id: "logistics", name: "Logistics", tier: 1,
+        cost: [(item: "survey-pack", count: 1)], units: 10, seconds: 10.0,
+        buildings: ["splitter", "underground-belt"],
+    ),
+    (
+        id: "express-belts", name: "Express belts", tier: 2, requires: ["fast-belts", "logistics"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 40, seconds: 15.0,
+        buildings: ["express-belt"],
+    ),
 ]

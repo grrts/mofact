@@ -32,6 +32,10 @@ enum Art {
     Hub,
     Pole,
     Turbine,
+    Splitter,
+    Underground {
+        exit: bool,
+    },
     Drill {
         ore: Rgba,
         pose: Pose,
@@ -64,6 +68,10 @@ enum Kind {
     Lab,
     Pole,
     Generator,
+    /// Splitters and underground belts face east and are turned when drawn,
+    /// as belts are.
+    Splitter,
+    Underground,
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +165,8 @@ impl Look {
                 BuildingRole::Lab { .. } => (Kind::Lab, Vec::new()),
                 BuildingRole::Pole { .. } => (Kind::Pole, Vec::new()),
                 BuildingRole::Generator { .. } => (Kind::Generator, Vec::new()),
+                BuildingRole::Splitter => (Kind::Splitter, Vec::new()),
+                BuildingRole::Underground { .. } => (Kind::Underground, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -191,6 +201,14 @@ impl Look {
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
                 Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
                 Kind::Generator => push(&mut look, id.to_owned(), b.size, Art::Turbine),
+                Kind::Splitter => push(&mut look, id.to_owned(), b.size, Art::Splitter),
+                Kind::Underground => {
+                    for exit in [false, true] {
+                        let end = if exit { "exit" } else { "entrance" };
+                        let art = Art::Underground { exit };
+                        push(&mut look, format!("{id}:{end}"), b.size, art);
+                    }
+                }
                 _ => {
                     let none = std::iter::once(None);
                     let choices: Vec<Option<&str>> = none
@@ -275,12 +293,25 @@ impl Look {
             .is_some_and(|b| b.kind == Kind::Belt)
     }
 
+    /// Whether `building` is drawn facing east and turned by its direction:
+    /// belts, splitters and underground belts. Items ride across these.
+    pub fn turns(&self, building: &BuildingId) -> bool {
+        self.buildings
+            .get(building)
+            .is_some_and(|b| matches!(b.kind, Kind::Belt | Kind::Splitter | Kind::Underground))
+    }
+
     /// Whether `building` shows a status badge when it stalls.
     pub fn has_badge(&self, building: &BuildingId) -> bool {
         self.buildings.get(building).is_some_and(|b| {
             !matches!(
                 b.kind,
-                Kind::Belt | Kind::Hub | Kind::Pole | Kind::Generator
+                Kind::Belt
+                    | Kind::Hub
+                    | Kind::Pole
+                    | Kind::Generator
+                    | Kind::Splitter
+                    | Kind::Underground
             )
         })
     }
@@ -298,7 +329,8 @@ impl Look {
         let b = self.buildings.get(building)?;
         let at = match b.kind {
             Kind::Belt => return Some(BELT),
-            Kind::Hub | Kind::Pole | Kind::Generator => b.base,
+            Kind::Hub | Kind::Pole | Kind::Generator | Kind::Splitter => b.base,
+            Kind::Underground => b.base + usize::from(setting == Some("exit")),
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -383,6 +415,8 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
+        Art::Splitter => draw::splitter(&mut c, z, fine),
+        Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
         Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
         Art::Assembler { product, ref pose } => draw::assembler(&mut c, z, product, fine, pose),

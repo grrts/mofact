@@ -12,6 +12,16 @@
     // Tier 2: twice the belt's speed.
     (id: "fast-belt", name: "Fast belt", size: (1, 1), role: Belt(tiles_per_second: 4.0),
         cost: [(item: "gear", count: 1), (item: "iron-plate", count: 1)]),
+    // Tier 3: three times the belt's speed.
+    (id: "express-belt", name: "Express belt", size: (1, 1), role: Belt(tiles_per_second: 6.0),
+        cost: [(item: "gear", count: 2), (item: "steel", count: 1)]),
+    // Splits a line in two: items from behind go out left and right in turn.
+    (id: "splitter",  name: "Splitter",  size: (1, 1), role: Splitter,
+        cost: [(item: "circuit", count: 5), (item: "iron-plate", count: 5)]),
+    // Place an entrance, then an exit up to 5 tiles on, facing the same way.
+    (id: "underground-belt", name: "Underground belt", size: (1, 1),
+        role: Underground(tiles_per_second: 6.0, reach: 5),
+        cost: [(item: "gear", count: 5), (item: "iron-plate", count: 10)]),
     // Labs eat research packs from belts, one unit of the current research at a time.
     (id: "lab",       name: "Lab",       size: (1, 1), role: Lab(speed: 1.0), power: 60.0,
         cost: [(item: "brick", count: 10), (item: "gear", count: 10), (item: "circuit", count: 5)]),

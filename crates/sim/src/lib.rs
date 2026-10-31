@@ -73,6 +73,23 @@ enum State {
     /// Poles and generators hold nothing: their grids follow from where they stand.
     Pole,
     Generator,
+    /// The item waiting to go out, and whether it goes right next.
+    Splitter {
+        held: Option<Item>,
+        right: bool,
+    },
+    Tunnel(Tunnel),
+}
+
+/// One end of an underground belt.
+#[derive(Clone, Debug, Default)]
+struct Tunnel {
+    exit: bool,
+    /// The other end, once paired.
+    partner: Option<EntityId>,
+    /// At an entrance, the items under way, front first, by position in
+    /// [`UNIT`]s from the entrance tile to the exit tile.
+    items: Vec<(Item, u32)>,
 }
 
 /// A lab: packs waiting, and the unit it is working on, if any.
@@ -305,6 +322,7 @@ impl Sim {
                 self.states.resize(id.0 as usize + 1, None);
                 self.states[id.0 as usize] = Some(state);
                 self.regrid(kind);
+                self.pair(id);
                 Ok((vec![Command::Remove { entity: id }], Some(id)))
             }
             Command::Remove { entity } => {
@@ -329,6 +347,7 @@ impl Sim {
                     dir: e.dir,
                     recipe: recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
                 };
+                self.unpair(*entity);
                 self.entities.remove(*entity);
                 self.states[entity.0 as usize] = None;
                 self.regrid(e.kind);
@@ -340,6 +359,14 @@ impl Sim {
                     .get_mut(*entity)
                     .ok_or(CommandError::NoSuchEntity)?;
                 let old = std::mem::replace(&mut e.dir, *dir);
+                // An underground end turned away from its pair finds a new one.
+                if self.tunnel(*entity).is_some() {
+                    self.unpair(*entity);
+                    if let Some(t) = self.tunnel_mut(*entity) {
+                        t.exit = false;
+                    }
+                    self.pair(*entity);
+                }
                 Ok((
                     vec![Command::Rotate {
                         entity: *entity,
@@ -446,7 +473,87 @@ impl Sim {
             Role::Lab { .. } => State::Lab(Lab::default()),
             Role::Pole { .. } => State::Pole,
             Role::Generator { .. } => State::Generator,
+            Role::Splitter => State::Splitter {
+                held: None,
+                right: false,
+            },
+            Role::Underground { .. } => State::Tunnel(Tunnel::default()),
         }
+    }
+
+    fn tunnel(&self, id: EntityId) -> Option<&Tunnel> {
+        match self.states.get(id.0 as usize)?.as_ref()? {
+            State::Tunnel(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    fn tunnel_mut(&mut self, id: EntityId) -> Option<&mut Tunnel> {
+        match self.states.get_mut(id.0 as usize)?.as_mut()? {
+            State::Tunnel(t) => Some(t),
+            _ => None,
+        }
+    }
+
+    /// Pair the underground belt end `id` with another of its kind facing
+    /// the same way: an unpaired entrance behind it makes it an exit,
+    /// otherwise an unpaired exit ahead of it makes it an entrance. The
+    /// first end of its kind met on either side stops the search.
+    fn pair(&mut self, id: EntityId) {
+        let Some(e) = self.entities.get(id).copied() else {
+            return;
+        };
+        let Role::Underground { reach, .. } = self.tables.buildings[e.kind as usize].role else {
+            return;
+        };
+        let find = |sim: &Sim, dir: Dir| {
+            let mut tile = e.pos;
+            for _ in 0..reach {
+                tile = tile.step(dir);
+                let Some(other) = sim.entities.at(tile) else {
+                    continue;
+                };
+                let o = sim.entities.get(other).expect("indexed");
+                if o.kind == e.kind && o.dir == e.dir {
+                    let t = sim.tunnel(other)?;
+                    return Some((other, t.exit, t.partner.is_none()));
+                }
+            }
+            None
+        };
+        let (exit, partner) = match find(self, e.dir.opposite()) {
+            Some((other, false, true)) => (true, Some(other)),
+            _ => match find(self, e.dir) {
+                Some((other, true, true)) => (false, Some(other)),
+                _ => (false, None),
+            },
+        };
+        if let Some(other) = partner {
+            if let Some(t) = self.tunnel_mut(other) {
+                t.partner = Some(id);
+            }
+        }
+        if let Some(t) = self.tunnel_mut(id) {
+            t.exit = exit;
+            t.partner = partner;
+        }
+    }
+
+    /// Unpair `id` from its other end, if it has one.
+    fn unpair(&mut self, id: EntityId) {
+        let partner = self.tunnel_mut(id).and_then(|t| t.partner.take());
+        if let Some(t) = partner.and_then(|p| self.tunnel_mut(p)) {
+            t.partner = None;
+        }
+    }
+
+    /// How far items travel inside the entrance `e`: to its exit's tile, or
+    /// one tile when it has none.
+    fn tunnel_length(&self, e: &Entity, t: &Tunnel) -> u32 {
+        let tiles = t.partner.and_then(|p| self.entities.get(p)).map_or(1, |x| {
+            (x.pos.x - e.pos.x).abs().max((x.pos.y - e.pos.y).abs())
+        });
+        tiles.max(1) as u32 * UNIT
     }
 
     /// Rebuild the power grids if a building of `kind` changes them.
@@ -520,6 +627,42 @@ impl Sim {
         let front = e.pos.step(e.dir);
         match state {
             State::Hub | State::Pole | State::Generator => {}
+            State::Splitter { held, right } => {
+                if let Some(item) = *held {
+                    let r = e.dir.rotate_cw();
+                    let l = r.opposite();
+                    let order = if *right { [r, l] } else { [l, r] };
+                    for side in order {
+                        if self.push(e.pos.step(side), item, side) {
+                            *held = None;
+                            *right = side != r;
+                            break;
+                        }
+                    }
+                }
+            }
+            State::Tunnel(t) => {
+                if t.exit {
+                    return;
+                }
+                let Role::Underground { per_tick, .. } =
+                    self.tables.buildings[e.kind as usize].role
+                else {
+                    return;
+                };
+                let length = self.tunnel_length(e, t);
+                let mut limit = length;
+                for (_, pos) in t.items.iter_mut() {
+                    *pos = (*pos + per_tick).min(limit).max(*pos);
+                    limit = pos.saturating_sub(SPACING);
+                }
+                let out = t.partner.and_then(|p| self.entities.get(p)).map(|x| x.pos);
+                if let (Some(&(item, pos)), Some(exit)) = (t.items.first(), out) {
+                    if pos >= length && self.push(exit.step(e.dir), item, e.dir) {
+                        t.items.remove(0);
+                    }
+                }
+            }
             State::Belt {
                 items, per_tick, ..
             } => {
@@ -683,6 +826,24 @@ impl Sim {
                 true
             }
             State::Miner { .. } | State::Pole | State::Generator => false,
+            State::Splitter { held, .. } => {
+                // Only from behind.
+                if dir != target.dir || held.is_some() {
+                    return false;
+                }
+                *held = Some(item);
+                true
+            }
+            State::Tunnel(t) => {
+                if t.exit || dir != target.dir {
+                    return false;
+                }
+                if t.items.last().is_some_and(|&(_, p)| p < SPACING) {
+                    return false;
+                }
+                t.items.push((item, 0));
+                true
+            }
             State::Lab(lab) => {
                 if !self.tables.packs.contains(&item) {
                     return false;
@@ -751,6 +912,36 @@ impl Sim {
             let b = &self.tables.buildings[e.kind as usize];
             let slot = id.0 as usize;
             let (state, progress, recipe) = match self.states[id.0 as usize].as_ref() {
+                Some(State::Splitter {
+                    held: Some(item), ..
+                }) => {
+                    snap.belt_items.push(BeltItemView {
+                        item: self.tables.items[*item as usize].clone(),
+                        tile: e.pos,
+                        along: 0.5,
+                    });
+                    (MachineState::Working, 0.0, None)
+                }
+                Some(State::Tunnel(t)) if !t.exit => {
+                    // Items show only where they go in and come out.
+                    let length = self.tunnel_length(e, t);
+                    let exit = t.partner.and_then(|p| self.entities.get(p)).map(|x| x.pos);
+                    for &(item, p) in &t.items {
+                        let (tile, along) = if p < UNIT / 2 {
+                            (e.pos, p as f32 / UNIT as f32)
+                        } else if let (Some(x), true) = (exit, p + UNIT / 2 > length) {
+                            (x, (p + UNIT - length) as f32 / UNIT as f32)
+                        } else {
+                            continue;
+                        };
+                        snap.belt_items.push(BeltItemView {
+                            item: self.tables.items[item as usize].clone(),
+                            tile,
+                            along,
+                        });
+                    }
+                    (MachineState::Working, 0.0, None)
+                }
                 Some(State::Belt { items, .. }) => {
                     for &(item, p) in items {
                         snap.belt_items.push(BeltItemView {
@@ -836,6 +1027,10 @@ impl Sim {
                     .flatten()
                     .map(|&i| self.tables.items[i as usize].clone()),
                 grid: self.grids.grid(slot),
+                exit: matches!(
+                    self.states[slot],
+                    Some(State::Tunnel(Tunnel { exit: true, .. }))
+                ),
                 state,
                 progress,
             });

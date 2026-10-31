@@ -653,3 +653,92 @@ pub fn turbine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
     c.fill_circle(0.0, 0.0, s * 0.05, pal::ACCENT);
     c.restore();
 }
+
+/// A splitter facing east: a short belt stub from the west into a housing
+/// that sends items out north and south, shown by arrows on both sides.
+pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z;
+    let sh = z * 0.07;
+    // The intake: the belt's western half.
+    c.fill_rect(0.0, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
+    c.fill_rect(0.0, s * 0.1, s * 0.5, s * 0.08, pal::BELT_RAIL);
+    c.fill_rect(0.0, s * 0.82, s * 0.5, s * 0.08, pal::BELT_RAIL);
+    shadow(
+        c,
+        rr(
+            s * 0.3 + sh,
+            s * 0.06 + sh * 1.3,
+            s * 0.62,
+            s * 0.88,
+            s * 0.12,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.3, s * 0.06, s * 0.62, s * 0.88, s * 0.12),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.34, s * 0.1, s * 0.54, s * 0.8, s * 0.1),
+        pal::MACHINE,
+    );
+    // A divider down the middle, and the two ways out.
+    c.line(
+        &[(s * 0.4, s * 0.5), (s * 0.82, s * 0.5)],
+        pal::MACHINE_EDGE,
+        (z * 0.05).max(1.0),
+    );
+    arrow(c, s * 0.61, s * 0.27, 3, s * 0.42, pal::ACCENT);
+    arrow(c, s * 0.61, s * 0.73, 1, s * 0.42, pal::ACCENT);
+    if fine {
+        for (bx, by) in [(0.4, 0.16), (0.82, 0.16), (0.4, 0.84), (0.82, 0.84)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+}
+
+/// One end of an underground belt facing east. An entrance takes the belt
+/// in from the west and dives under a hood on its eastern half; an exit
+/// is the same turned around, the belt coming out to the east.
+pub fn underground(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
+    let s = z;
+    let sh = z * 0.07;
+    let (belt_x, hood_x) = if exit { (s * 0.5, 0.0) } else { (0.0, s * 0.5) };
+    c.fill_rect(belt_x, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
+    c.fill_rect(belt_x, s * 0.1, s * 0.5, s * 0.08, pal::BELT_RAIL);
+    c.fill_rect(belt_x, s * 0.82, s * 0.5, s * 0.08, pal::BELT_RAIL);
+    arrow(c, belt_x + s * 0.22, s * 0.5, 0, s * 0.4, pal::CHEVRON);
+    shadow(
+        c,
+        rr(hood_x + sh, s * 0.06 + sh * 1.3, s * 0.5, s * 0.88, s * 0.1),
+    );
+    fill(
+        c,
+        rr(hood_x, s * 0.06, s * 0.5, s * 0.88, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(hood_x + s * 0.04, s * 0.1, s * 0.42, s * 0.8, s * 0.08),
+        pal::MACHINE,
+    );
+    // The dark mouth faces the belt.
+    let mouth_x = if exit {
+        hood_x + s * 0.34
+    } else {
+        hood_x + s * 0.04
+    };
+    c.fill_rect(mouth_x, s * 0.2, s * 0.12, s * 0.6, pal::SOOT);
+    if fine {
+        let stripe_x = if exit {
+            hood_x + s * 0.1
+        } else {
+            hood_x + s * 0.3
+        };
+        for k in 0..3 {
+            let y = s * (0.24 + k as f32 * 0.2);
+            c.fill_rect(stripe_x, y, s * 0.06, s * 0.1, pal::ACCENT);
+        }
+    }
+}

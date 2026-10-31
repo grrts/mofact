@@ -12,7 +12,7 @@
 
 use crate::entities::Entity;
 use crate::tables::Role;
-use crate::{Crafter, Lab, Sim, State};
+use crate::{Crafter, Lab, Sim, State, Tunnel};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 3;
+pub const VERSION: u16 = 4;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -108,6 +108,15 @@ enum SavedState {
     },
     Pole,
     Generator,
+    Splitter {
+        held: Option<ItemId>,
+        right: bool,
+    },
+    Underground {
+        exit: bool,
+        partner: Option<u32>,
+        items: Vec<(ItemId, u32)>,
+    },
 }
 
 /// Bring an older payload up to [`VERSION`].
@@ -126,9 +135,9 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: None,
             })
         }
-        // Version 3 added poles and generators: new variants only, so a
-        // version 2 payload reads as it is.
-        2 | 3 => postcard::from_bytes(payload).map_err(corrupt),
+        // Versions 3 and 4 added poles and generators, then splitters and
+        // underground belts: new variants only, so a version 2 payload reads as it is.
+        2..=4 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -173,6 +182,15 @@ impl Sim {
                     },
                     State::Pole => SavedState::Pole,
                     State::Generator => SavedState::Generator,
+                    State::Splitter { held, right } => SavedState::Splitter {
+                        held: held.map(item),
+                        right: *right,
+                    },
+                    State::Tunnel(tu) => SavedState::Underground {
+                        exit: tu.exit,
+                        partner: tu.partner.map(|p| p.0),
+                        items: tu.items.iter().map(|&(i, p)| (item(i), p)).collect(),
+                    },
                 };
                 let saved = Saved {
                     building: t.buildings[e.kind as usize].id.clone(),
@@ -347,6 +365,25 @@ impl Sim {
                 }),
                 (SavedState::Pole, Role::Pole { .. }) => State::Pole,
                 (SavedState::Generator, Role::Generator { .. }) => State::Generator,
+                (SavedState::Splitter { held, right }, Role::Splitter) => State::Splitter {
+                    held: opt(&held, &mut warnings),
+                    right,
+                },
+                (
+                    SavedState::Underground {
+                        exit,
+                        partner,
+                        items,
+                    },
+                    Role::Underground { .. },
+                ) => State::Tunnel(Tunnel {
+                    exit,
+                    partner: partner.map(mofact_core::ids::EntityId),
+                    items: items
+                        .iter()
+                        .filter_map(|(i, p)| Some((item(i, &mut warnings)?, *p)))
+                        .collect(),
+                }),
                 _ => {
                     warnings.push(format!(
                         "building `{}` changed role; rebuilt empty",
@@ -374,6 +411,16 @@ impl Sim {
             sim.states
                 .resize(sim.states.len().max(slot as usize + 1), None);
             sim.states[slot as usize] = Some(state);
+        }
+        // An underground end whose partner didn't load stands alone.
+        for slot in 0..sim.states.len() {
+            let id = mofact_core::ids::EntityId(slot as u32);
+            let partner = sim.tunnel(id).and_then(|t| t.partner);
+            if partner.is_some_and(|p| sim.tunnel(p).and_then(|t| t.partner) != Some(id)) {
+                if let Some(t) = sim.tunnel_mut(id) {
+                    t.partner = None;
+                }
+            }
         }
         sim.rebuild_grids();
         Ok((sim, warnings))
