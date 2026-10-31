@@ -4,10 +4,17 @@
 //! [`TICKS_PER_SECOND`](mofact_core::TICKS_PER_SECOND), applies queued
 //! [`Command`]s at the start of each tick and publishes a [`Snapshot`] after it.
 //!
-//! Skeleton from task T01. The fixed-tick thread and snapshot buffers arrive in
-//! T05, entity storage in T06, transport lines in T07 and machines in T08.
+//! [`SimHandle`] runs it on that thread (T05). Entity storage arrives in T06,
+//! transport lines in T07 and machines in T08.
 
 pub use mofact_core as core;
+
+mod clock;
+pub mod entities;
+mod thread;
+
+pub use clock::Stepper;
+pub use thread::SimHandle;
 
 use mofact_core::command::{Command, CommandError, CommandResult};
 use mofact_core::snapshot::Snapshot;
