@@ -3,7 +3,7 @@
 //!
 //! The [`Hud`] is immediate mode. Each frame, [`Hud::draw`] lays out and
 //! paints the toolbar, the rotate button, the recipe pills, the stock, tips
-//! and the inspect sheet onto the render [`Overlay`], and remembers where
+//! the research button and sheet, and the inspect sheet onto the render [`Overlay`], and remembers where
 //! every control went. Pointer events go to [`Hud::pointer`] first: a press
 //! that lands on a control belongs to the HUD until it lifts, and anything
 //! else falls through to the camera and the build tools.
@@ -13,9 +13,9 @@
 //! rests. The rotate button, recipe pills and inspect sheet sit next to it.
 
 use mofact_core::command::Command;
-use mofact_core::content::{BuildingDef, BuildingRole, Content, RecipeDef, Stack};
+use mofact_core::content::{BuildingDef, BuildingRole, Content, RecipeDef, ResearchDef, Stack};
 use mofact_core::geom::Dir;
-use mofact_core::ids::{BuildingId, EntityId, ItemId, RecipeId};
+use mofact_core::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
 use mofact_core::snapshot::{EntityView, MachineState, Snapshot};
 use mofact_input::{Pointer, Tool, MOUSE_PAN};
 use mofact_render::look;
@@ -36,20 +36,23 @@ const TAP_SLOP: f32 = 12.0;
 const TOAST_FOR: Duration = Duration::from_millis(2500);
 
 /// The toolbar, left to right (top to bottom in landscape).
-const TOOLS: [(&str, Option<&str>); 6] = [
+const TOOLS: [(&str, Option<&str>); 7] = [
     ("Move", None),
     ("Belt", Some("belt")),
     ("Drill", Some("drill")),
     ("Furnace", Some("furnace")),
     ("Assembler", Some("assembler")),
+    ("Lab", Some("lab")),
     ("Remove", None),
 ];
+/// The last tool, Remove.
+const REMOVE: usize = TOOLS.len() - 1;
 
 fn tool_at(i: usize) -> Tool {
     match i {
         0 => Tool::Hand,
         1 => Tool::Belt,
-        5 => Tool::Remove,
+        REMOVE => Tool::Remove,
         _ => Tool::Place(TOOLS[i].1.unwrap_or_default().into()),
     }
 }
@@ -58,7 +61,7 @@ fn tool_index(tool: &Tool) -> Option<usize> {
     match tool {
         Tool::Hand => Some(0),
         Tool::Belt => Some(1),
-        Tool::Remove => Some(5),
+        Tool::Remove => Some(REMOVE),
         Tool::Place(b) => TOOLS.iter().position(|(_, id)| *id == Some(b.as_str())),
     }
 }
@@ -99,7 +102,32 @@ impl View<'_> {
         cost.iter().all(|s| self.stock(&s.item) >= s.count)
     }
 
-    /// The recipes a building can be set to, if it is a crafter.
+    fn done(&self, id: &ResearchId) -> bool {
+        self.snapshot.research.done.contains(id)
+    }
+
+    /// Whether no unfinished research still locks `recipe`.
+    fn recipe_open(&self, recipe: &RecipeId) -> bool {
+        self.content
+            .research
+            .iter()
+            .all(|r| self.done(&r.id) || !r.recipes.contains(recipe))
+    }
+
+    /// Whether no unfinished research still locks `building`.
+    fn building_open(&self, building: &BuildingId) -> bool {
+        self.content
+            .research
+            .iter()
+            .all(|r| self.done(&r.id) || !r.buildings.contains(building))
+    }
+
+    /// Whether `r` can be picked now: not done, and its prerequisites are.
+    fn research_ready(&self, r: &ResearchDef) -> bool {
+        !self.done(&r.id) && r.requires.iter().all(|q| self.done(q))
+    }
+
+    /// The unlocked recipes a building can be set to, if it is a crafter.
     fn recipes_for(&self, id: &BuildingId) -> Option<Vec<&RecipeDef>> {
         let BuildingRole::Crafter { categories, .. } = &self.building(id)?.role else {
             return None;
@@ -108,7 +136,7 @@ impl View<'_> {
             self.content
                 .recipes
                 .iter()
-                .filter(|r| categories.contains(&r.category))
+                .filter(|r| categories.contains(&r.category) && self.recipe_open(&r.id))
                 .collect(),
         )
     }
@@ -138,6 +166,10 @@ enum Hit {
     SetRecipe(EntityId, Option<RecipeId>),
     Turn(EntityId, Dir),
     Remove(EntityId),
+    /// The research button: opens or closes the research sheet.
+    Research,
+    /// Set what labs work on.
+    Study(Option<ResearchId>),
     Close,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
@@ -169,6 +201,8 @@ struct Tap {
 pub struct Hud {
     /// The entity the inspect sheet shows.
     selected: Option<EntityId>,
+    /// Whether the research sheet is open.
+    research: bool,
     /// Where each control went in the last frame, topmost last.
     hits: Vec<(Rect, Hit)>,
     press: Option<Press>,
@@ -191,6 +225,14 @@ impl Hud {
     /// Show `entity` in the inspect sheet, or close it.
     pub fn select(&mut self, entity: Option<EntityId>) {
         self.selected = entity;
+        if entity.is_some() {
+            self.research = false;
+        }
+    }
+
+    /// Whether the research sheet is open.
+    pub fn researching(&self) -> bool {
+        self.research
     }
 
     /// Show a short message, such as why a build was refused.
@@ -290,8 +332,15 @@ impl Hud {
                 self.selected = None;
                 vec![Action::Send(Command::Remove { entity })]
             }
+            Hit::Research => {
+                self.research = !self.research;
+                self.selected = None;
+                Vec::new()
+            }
+            Hit::Study(research) => vec![Action::Send(Command::SetResearch { research })],
             Hit::Close => {
                 self.selected = None;
+                self.research = false;
                 Vec::new()
             }
             Hit::Block => Vec::new(),
@@ -305,7 +354,8 @@ impl Hud {
         let portrait = h > w;
         // Points to pixels, shrunk if the toolbar would not fit across.
         let across = if portrait { w } else { h };
-        let u = view.scale.max(0.5).min(across / (6.0 * 64.0 + 24.0));
+        let n = TOOLS.len() as f32;
+        let u = view.scale.max(0.5).min(across / (n * 64.0 + 24.0));
         self.unit = u;
         let m = 12.0 * u;
         let gap = 10.0 * u;
@@ -322,7 +372,7 @@ impl Hud {
             [m, h - m - bh, w - 2.0 * m, bh]
         } else {
             let bw = 92.0 * u;
-            let bh = (h - 2.0 * m).min(6.0 * 80.0 * u);
+            let bh = (h - 2.0 * m).min(n * 80.0 * u);
             [w - m - bw, h - m - bh, bw, bh]
         };
         self.toolbar(view, o, bar, portrait);
@@ -334,6 +384,7 @@ impl Hud {
         };
 
         let top = self.stock(view, o, [m, m]);
+        let top = self.research_button(view, o, [m, top + gap], corner[0] - m);
         let mut tip_y = top + gap;
         if let Some((text, at)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
@@ -343,16 +394,22 @@ impl Hud {
                 self.toast = None;
             }
         }
-        if selected.is_none() {
+        if selected.is_none() && !self.research {
             chip(o, tip(view.tool), [m, tip_y], corner[0] - m, u, TEXT);
+        }
+        let width = if portrait {
+            w - 2.0 * m
+        } else {
+            (360.0 * u).min(corner[0] - m)
+        };
+
+        if self.research {
+            let room = corner[1] - tip_y;
+            self.research_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
         }
 
         if let Some(e) = selected {
-            let width = if portrait {
-                w - 2.0 * m
-            } else {
-                (360.0 * u).min(corner[0] - m)
-            };
             self.sheet(view, o, e, [corner[0] - width, corner[1]], width);
             return;
         }
@@ -399,7 +456,7 @@ impl Hud {
         let pad = 4.0 * u;
         for (i, (label, building)) in TOOLS.iter().enumerate() {
             let r = if portrait {
-                let bw = (bar[2] - 2.0 * pad) / 6.0;
+                let bw = (bar[2] - 2.0 * pad) / TOOLS.len() as f32;
                 [
                     bar[0] + pad + bw * i as f32,
                     bar[1] + pad,
@@ -407,7 +464,7 @@ impl Hud {
                     bar[3] - 2.0 * pad,
                 ]
             } else {
-                let bh = (bar[3] - 2.0 * pad) / 6.0;
+                let bh = (bar[3] - 2.0 * pad) / TOOLS.len() as f32;
                 [
                     bar[0] + pad,
                     bar[1] + pad + bh * i as f32,
@@ -417,7 +474,8 @@ impl Hud {
             };
             let def = building.and_then(|b| view.building(&b.into()));
             let cost = def.map(|d| d.cost.as_slice()).unwrap_or_default();
-            let afford = view.affordable(cost);
+            let open = def.is_none_or(|d| view.building_open(&d.id));
+            let afford = open && view.affordable(cost);
             if current == Some(i) {
                 o.panel([r[0], r[1]], [r[2], r[3]], 10.0 * u, PRESSED);
                 o.panel(
@@ -449,7 +507,7 @@ impl Hud {
                         TEXT,
                     );
                 }
-                (5, _) => {
+                (REMOVE, _) => {
                     let px = icon * 1.3;
                     let cw = o.measure("×", px);
                     o.text(
@@ -513,6 +571,147 @@ impl Hud {
             x += w + 6.0 * u;
         }
         at[1] + h
+    }
+
+    /// The research button under the stock: what labs study and how far
+    /// along. Returns the bottom edge.
+    fn research_button(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
+        if view.content.research.is_empty() {
+            return at[1] - 6.0 * self.unit;
+        }
+        let u = self.unit;
+        let h = 36.0 * u;
+        let px = 14.0 * u;
+        let r = &view.snapshot.research;
+        let current = r
+            .current
+            .as_ref()
+            .and_then(|id| view.content.research.iter().find(|d| &d.id == id));
+        let (text, ink) = match current {
+            Some(d) => (
+                format!("Research: {} {}/{}", d.name, r.progress.0, r.progress.1),
+                TEXT,
+            ),
+            None if view.content.research.iter().any(|d| view.research_ready(d)) => (
+                "Research: pick what labs study".to_string(),
+                palette::ACCENT,
+            ),
+            None => ("Research: all done".to_string(), MUTED),
+        };
+        let px = fit(o, &text, px, width - 28.0 * u);
+        let w = (o.measure(&text, px) + 28.0 * u).min(width);
+        let fill = if self.research { PRESSED } else { RAISED };
+        o.panel(at, [w, h], h / 2.0, fill);
+        if current.is_some() {
+            let done = r.progress.0 as f32 / r.progress.1.max(1) as f32;
+            o.panel(
+                [at[0] + h / 2.0, at[1] + h - 5.0 * u],
+                [(w - h) * done.clamp(0.0, 1.0), 3.0 * u],
+                1.5 * u,
+                WORKING,
+            );
+        }
+        o.text(
+            &text,
+            [at[0] + 14.0 * u, at[1] + (h + o.cap_height(px)) / 2.0],
+            px,
+            ink,
+        );
+        self.hits.push(([at[0], at[1], w, h], Hit::Research));
+        at[1] + h
+    }
+
+    /// The research sheet, bottom-left at `at`, at most `room` tall: one row
+    /// per research with its cost and state. Tapping one that is ready
+    /// sets the labs on it; tapping the current one stops them.
+    fn research_sheet(
+        &mut self,
+        view: &View,
+        o: &mut Overlay,
+        at: [f32; 2],
+        width: f32,
+        room: f32,
+    ) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let row = 52.0 * u;
+        let title = 30.0 * u;
+        let fits = ((room - 2.0 * pad - title) / row).floor().max(1.0) as usize;
+        let shown = &view.content.research[..view.content.research.len().min(fits)];
+        let height = pad + title + shown.len() as f32 * row + pad;
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let mut y = r[1] + pad;
+
+        let px = 20.0 * u;
+        o.text("Research", [left, y + o.cap_height(px) + 4.0 * u], px, TEXT);
+        let close = 32.0 * u;
+        let c = [r[0] + r[2] - pad - close, y - 2.0 * u, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+        y += title;
+
+        let current = view.snapshot.research.current.as_ref();
+        for d in shown {
+            let b = [left, y, r[2] - 2.0 * pad, row - 6.0 * u];
+            let is_current = current == Some(&d.id);
+            let (label, color, hit) = if view.done(&d.id) {
+                ("Done", WORKING, None)
+            } else if is_current {
+                ("Studying", palette::ACCENT, Some(Hit::Study(None)))
+            } else if view.research_ready(d) {
+                ("Study", TEXT, Some(Hit::Study(Some(d.id.clone()))))
+            } else {
+                ("Locked", MUTED, None)
+            };
+            let fill = if is_current { PRESSED } else { RAISED };
+            o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, fill);
+            let npx = 15.0 * u;
+            let ink = if label == "Locked" { MUTED } else { TEXT };
+            o.text(
+                &d.name,
+                [b[0] + 12.0 * u, b[1] + 6.0 * u + o.cap_height(npx)],
+                npx,
+                ink,
+            );
+            // Cost per unit, times the units.
+            let spx = 12.0 * u;
+            let s = 14.0 * u;
+            let sy = b[1] + b[3] - 8.0 * u - s;
+            let mut x = b[0] + 12.0 * u;
+            x += o.text(&format!("{}×", d.units), [x, sy + s * 0.85], spx, MUTED) + 4.0 * u;
+            for st in &d.cost {
+                if let Some((sprite, t)) = view.look.item(&st.item) {
+                    o.icon(sprite, [x, sy], s, t);
+                }
+                x += s + 2.0 * u;
+                x += o.text(&st.count.to_string(), [x, sy + s * 0.85], spx, MUTED) + 6.0 * u;
+            }
+            let lpx = 13.0 * u;
+            let lw = o.measure(label, lpx);
+            o.text(
+                label,
+                [
+                    b[0] + b[2] - 12.0 * u - lw,
+                    b[1] + (b[3] + o.cap_height(lpx)) / 2.0,
+                ],
+                lpx,
+                color,
+            );
+            if let Some(hit) = hit {
+                self.hits.push((b, hit));
+            }
+            y += row;
+        }
     }
 
     /// Recipe pills, bottom-left at `at`, at most `width` wide, wrapping
@@ -771,6 +970,9 @@ fn tip(tool: &Tool) -> &'static str {
         }
         Tool::Place(b) if b.as_str() == "furnace" => {
             "Tap to place. Ore goes in any side, plates come out of the arrow."
+        }
+        Tool::Place(b) if b.as_str() == "lab" => {
+            "Tap to place. Belt research packs into it, then pick what to study."
         }
         Tool::Place(_) => "Tap to place. Pick a recipe, or let it pick from what arrives.",
         Tool::Remove => "Tap or drag over things to remove them. You get the plates back.",

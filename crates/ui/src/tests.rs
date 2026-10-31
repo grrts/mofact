@@ -231,14 +231,14 @@ fn the_toolbar_sits_under_the_thumb_in_both_orientations() {
     let mut f = Fixture::new();
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     let first = f.find(&Hit::Tool(0));
-    let last = f.find(&Hit::Tool(5));
+    let last = f.find(&Hit::Tool(REMOVE));
     assert!(first[1] > 2000.0, "portrait: along the bottom");
     assert_eq!(first[1], last[1]);
     assert!(last[0] > first[0]);
 
     f.draw((2340, 1080), 3.0, &Tool::Hand);
     let first = f.find(&Hit::Tool(0));
-    let last = f.find(&Hit::Tool(5));
+    let last = f.find(&Hit::Tool(REMOVE));
     assert!(first[0] > 2000.0, "landscape: on the right edge");
     assert_eq!(first[0], last[0]);
     assert!(last[1] > first[1]);
@@ -262,9 +262,15 @@ fn everything_stays_on_screen() {
     ];
     for (size, scale) in sizes {
         for tool in &tools {
-            for selected in [None, Some(EntityId(1)), Some(EntityId(2))] {
+            for (selected, research) in [
+                (None, false),
+                (Some(EntityId(1)), false),
+                (Some(EntityId(2)), false),
+                (None, true),
+            ] {
                 let mut f = Fixture::new();
                 f.hud.select(selected);
+                f.hud.research = research;
                 f.draw(size, scale, tool);
                 let (w, h) = (size.0 as f32, size.1 as f32);
                 for (r, hit) in &f.hud.hits {
@@ -298,4 +304,55 @@ fn unaffordable_tools_say_so_in_red() {
     f.snapshot.stock = vec![("iron-plate".into(), 30)];
     f.draw((1280, 720), 1.0, &Tool::Hand);
     assert!(red(&f) > rich);
+}
+
+#[test]
+fn the_research_sheet_picks_what_labs_study() {
+    let mut f = Fixture::new();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let button = f.find(&Hit::Research);
+    assert_eq!(f.tap(centre(button)), (true, vec![]));
+    assert!(f.hud.researching());
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    // Steel working is ready; motors need it first, so they can't be tapped.
+    let steel = f.find(&Hit::Study(Some("steel-working".into())));
+    assert!(!f
+        .hud
+        .hits
+        .iter()
+        .any(|(_, h)| *h == Hit::Study(Some("motors".into()))));
+    assert_eq!(
+        f.tap(centre(steel)).1,
+        vec![Action::Send(Command::SetResearch {
+            research: Some("steel-working".into())
+        })]
+    );
+
+    // Once it is under way, tapping it again stops the labs; once done,
+    // motors open up.
+    f.snapshot.research.current = Some("steel-working".into());
+    f.snapshot.research.progress = (3, 15);
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    f.find(&Hit::Study(None));
+    f.snapshot.research = mofact_core::snapshot::ResearchView {
+        current: None,
+        progress: (0, 0),
+        done: vec!["steel-working".into()],
+    };
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    f.find(&Hit::Study(Some("motors".into())));
+    let close = f.find(&Hit::Close);
+    f.tap(centre(close));
+    assert!(!f.hud.researching());
+}
+
+#[test]
+fn locked_recipes_stay_off_the_pills_until_researched() {
+    let mut f = Fixture::new();
+    let motor = Hit::Recipe(Some("motor".into()));
+    f.draw((1280, 720), 1.0, &Tool::Place("assembler".into()));
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == motor));
+    f.snapshot.research.done = vec!["steel-working".into(), "motors".into()];
+    f.draw((1280, 720), 1.0, &Tool::Place("assembler".into()));
+    f.find(&motor);
 }
