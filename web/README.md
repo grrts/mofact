@@ -18,9 +18,14 @@ The Pages workflow (`.github/workflows/pages.yml`) builds it and publishes this 
 - every push to `main` goes to https://grrts.github.io/mofact/
 - every pull request gets a preview at https://grrts.github.io/mofact/pr/<number>/, linked in a comment on the PR, and removed when the PR closes
 
-`__MOFACT_BUILD__` is replaced with the commit at deploy time. The page loads
-the game's script and wasm with that commit in their URLs, so a new deploy is
-picked up on the next load instead of coming from the browser cache.
+Each deploy puts the game's script and wasm in a folder of its own,
+`b/<commit>/`, and writes `version.json` naming it. `index.html` is only a
+loader: it fetches `version.json` past every cache (GitHub Pages caches pages
+for ten minutes), loads that build, clears any service worker or cache an old
+page left, shows the build in the top-right corner, and checks
+`version.json` again every minute and on returning to the tab, offering
+"New version ready · tap to reload" when a newer deploy is up. The game saves
+as the page reloads.
 
 To run it locally (the `wasm-bindgen` CLI must match the version in `Cargo.lock`):
 

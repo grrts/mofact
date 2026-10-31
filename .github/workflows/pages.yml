@@ -79,12 +79,26 @@ jobs:
             exit 0
           fi
           mkdir -p "$dest"
-          # main owns the root but must not delete the PR previews under pr/.
-          find "$dest" -mindepth 1 -maxdepth 1 ! -name pr ! -name .git ! -name .nojekyll -exec rm -rf {} +
+          # main owns the root but must not delete the PR previews under pr/,
+          # nor the recent builds under b/ that open pages may still be using.
+          find "$dest" -mindepth 1 -maxdepth 1 ! -name pr ! -name b ! -name .git ! -name .nojekyll -exec rm -rf {} +
           cp -R src/web/. "$dest/"
-          wasm-bindgen --target web --no-typescript --out-dir "$dest" src/target/wasm32-unknown-unknown/release/mofact_web.wasm
           rm -f "$dest/README.md"
-          sed -i "s/__MOFACT_BUILD__/${SHA::7}/g" "$dest/index.html"
+          # Each build's files live in a folder of their own and never
+          # change, so no cache can mix builds. version.json, which the page
+          # fetches past every cache, names the current one.
+          build="${SHA::7}"
+          wasm-bindgen --target web --no-typescript --out-dir "$dest/b/$build" src/target/wasm32-unknown-unknown/release/mofact_web.wasm
+          printf '{"build":"%s","js":"b/%s/mofact_web.js","wasm":"b/%s/mofact_web_bg.wasm","built":"%s"}\n' \
+            "$build" "$build" "$build" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > "$dest/version.json"
+          # Older builds stay a while for pages still running them: keep the
+          # newest five folders.
+          ls -1t "$dest/b" | tail -n +6 | while read -r old; do
+            [ "$old" = "$build" ] || rm -rf "$dest/b/$old"
+          done
+          test -s "$dest/b/$build/mofact_web_bg.wasm"
+          # A page cached from before version.json loads these names directly.
+          cp "$dest/b/$build/mofact_web.js" "$dest/b/$build/mofact_web_bg.wasm" "$dest/"
 
       - name: Push gh-pages
         run: |
