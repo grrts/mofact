@@ -58,6 +58,18 @@ jobs:
       - name: App shell smoke test
         if: runner.os == 'macOS'
         run: cargo run -p mofact -- --frames 120
+      # Renderer tests that need a GPU, and screenshots at three zooms (T16).
+      - name: GPU tests and screenshots
+        if: runner.os == 'Linux'
+        run: |
+          cargo test -p mofact-render -- --ignored
+          cargo run -p mofact -- --screenshot screenshots/starter-line
+          cargo run -p mofact -- --screenshot screenshots/circuit-chain --scenario scenarios/circuit-chain.ron
+      - uses: actions/upload-artifact@v4
+        if: runner.os == 'Linux'
+        with:
+          name: screenshots
+          path: screenshots/
       - run: cargo run -p mofact-balance -- data
       - run: cargo run --release -p mofact-headless -- scenarios data
 

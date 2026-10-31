@@ -1,0 +1,305 @@
+//! The GPU half of the renderer: one pipeline, one atlas texture per band,
+//! and a growing instance buffer drawn with a single instanced draw call.
+
+use crate::atlas::Atlas;
+use crate::scene::{Camera, Instance, Scene};
+use crate::Gpu;
+use std::collections::HashMap;
+use wgpu::util::DeviceExt;
+
+pub struct Renderer {
+    atlases: Vec<Atlas>,
+    shader: wgpu::ShaderModule,
+    layout: wgpu::PipelineLayout,
+    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    globals: wgpu::Buffer,
+    globals_group: wgpu::BindGroup,
+    bands: Vec<wgpu::BindGroup>,
+    instances: wgpu::Buffer,
+    capacity: usize,
+}
+
+const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
+    0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Unorm8x4, 4 => Uint32
+];
+
+impl Renderer {
+    /// Upload `atlases` (one per zoom band) and build the sprite pipeline.
+    pub fn new(gpu: &Gpu, atlases: Vec<Atlas>) -> Self {
+        let device = &gpu.device;
+        let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
+        let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("globals"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::VERTEX,
+                ty: wgpu::BindingType::Buffer {
+                    ty: wgpu::BufferBindingType::Uniform,
+                    has_dynamic_offset: false,
+                    min_binding_size: None,
+                },
+                count: None,
+            }],
+        });
+        let atlas_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("atlas"),
+            entries: &[
+                wgpu::BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Texture {
+                        sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                        view_dimension: wgpu::TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                wgpu::BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: wgpu::ShaderStages::FRAGMENT,
+                    ty: wgpu::BindingType::Sampler(wgpu::SamplerBindingType::Filtering),
+                    count: None,
+                },
+            ],
+        });
+        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("sprites"),
+            bind_group_layouts: &[Some(&globals_layout), Some(&atlas_layout)],
+            ..Default::default()
+        });
+        let globals = device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("globals"),
+            size: 16,
+            usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+            mapped_at_creation: false,
+        });
+        let globals_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: Some("globals"),
+            layout: &globals_layout,
+            entries: &[wgpu::BindGroupEntry {
+                binding: 0,
+                resource: globals.as_entire_binding(),
+            }],
+        });
+        let sampler = device.create_sampler(&wgpu::SamplerDescriptor {
+            mag_filter: wgpu::FilterMode::Linear,
+            min_filter: wgpu::FilterMode::Linear,
+            ..Default::default()
+        });
+        let bands = atlases
+            .iter()
+            .map(|atlas| {
+                let texture = device.create_texture_with_data(
+                    &gpu.queue,
+                    &wgpu::TextureDescriptor {
+                        label: Some("atlas"),
+                        size: wgpu::Extent3d {
+                            width: atlas.size,
+                            height: atlas.size,
+                            depth_or_array_layers: 1,
+                        },
+                        mip_level_count: 1,
+                        sample_count: 1,
+                        dimension: wgpu::TextureDimension::D2,
+                        format: wgpu::TextureFormat::Rgba8UnormSrgb,
+                        usage: wgpu::TextureUsages::TEXTURE_BINDING,
+                        view_formats: &[],
+                    },
+                    wgpu::util::TextureDataOrder::LayerMajor,
+                    &atlas.pixels,
+                );
+                let view = texture.create_view(&Default::default());
+                device.create_bind_group(&wgpu::BindGroupDescriptor {
+                    label: Some("atlas"),
+                    layout: &atlas_layout,
+                    entries: &[
+                        wgpu::BindGroupEntry {
+                            binding: 0,
+                            resource: wgpu::BindingResource::TextureView(&view),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 1,
+                            resource: wgpu::BindingResource::Sampler(&sampler),
+                        },
+                    ],
+                })
+            })
+            .collect();
+        let capacity = 1024;
+        Self {
+            atlases,
+            instances: instance_buffer(device, capacity),
+            capacity,
+            shader,
+            layout,
+            pipelines: HashMap::new(),
+            globals,
+            globals_group,
+            bands,
+        }
+    }
+
+    /// The atlases the renderer was made with, for [`Scene::build`].
+    pub fn atlases(&self) -> &[Atlas] {
+        &self.atlases
+    }
+
+    fn pipeline(
+        &mut self,
+        device: &wgpu::Device,
+        format: wgpu::TextureFormat,
+    ) -> &wgpu::RenderPipeline {
+        self.pipelines.entry(format).or_insert_with(|| {
+            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("sprites"),
+                layout: Some(&self.layout),
+                vertex: wgpu::VertexState {
+                    module: &self.shader,
+                    entry_point: Some("vs"),
+                    compilation_options: Default::default(),
+                    buffers: &[Some(wgpu::VertexBufferLayout {
+                        array_stride: std::mem::size_of::<Instance>() as u64,
+                        step_mode: wgpu::VertexStepMode::Instance,
+                        attributes: &ATTRIBUTES,
+                    })],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.shader,
+                    entry_point: Some("fs"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(wgpu::ColorTargetState {
+                        format,
+                        blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                        write_mask: wgpu::ColorWrites::ALL,
+                    })],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            })
+        })
+    }
+
+    /// Clear `view` to `clear` and draw `scene` into it.
+    #[allow(clippy::too_many_arguments)]
+    pub fn encode(
+        &mut self,
+        gpu: &Gpu,
+        encoder: &mut wgpu::CommandEncoder,
+        view: &wgpu::TextureView,
+        format: wgpu::TextureFormat,
+        (width, height): (u32, u32),
+        camera: &Camera,
+        scene: &Scene,
+        clear: wgpu::Color,
+    ) {
+        let n = scene.instances.len();
+        if n > self.capacity {
+            self.capacity = n.next_power_of_two();
+            self.instances = instance_buffer(&gpu.device, self.capacity);
+        }
+        gpu.queue.write_buffer(
+            &self.globals,
+            0,
+            bytemuck::cast_slice(&camera.transform(width, height)),
+        );
+        if n > 0 {
+            gpu.queue
+                .write_buffer(&self.instances, 0, bytemuck::cast_slice(&scene.instances));
+        }
+        self.pipeline(&gpu.device, format);
+        let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("world"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Clear(clear),
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            ..Default::default()
+        });
+        if n > 0 {
+            pass.set_pipeline(&self.pipelines[&format]);
+            pass.set_bind_group(0, &self.globals_group, &[]);
+            pass.set_bind_group(1, &self.bands[scene.band], &[]);
+            pass.set_vertex_buffer(0, self.instances.slice(..));
+            pass.draw(0..6, 0..n as u32);
+        }
+    }
+
+    /// Draw `scene` into an offscreen image and read it back as RGBA rows,
+    /// for screenshots and golden-image tests.
+    pub fn capture(
+        &mut self,
+        gpu: &Gpu,
+        size: (u32, u32),
+        camera: &Camera,
+        scene: &Scene,
+        clear: wgpu::Color,
+    ) -> Vec<u8> {
+        let (width, height) = size;
+        let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+        let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("capture"),
+            size: wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+            view_formats: &[],
+        });
+        let row = (width * 4).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
+        let buffer = gpu.device.create_buffer(&wgpu::BufferDescriptor {
+            label: Some("capture"),
+            size: u64::from(row * height),
+            usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+            mapped_at_creation: false,
+        });
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        let view = texture.create_view(&Default::default());
+        self.encode(gpu, &mut encoder, &view, format, size, camera, scene, clear);
+        encoder.copy_texture_to_buffer(
+            texture.as_image_copy(),
+            wgpu::TexelCopyBufferInfo {
+                buffer: &buffer,
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(row),
+                    rows_per_image: Some(height),
+                },
+            },
+            texture.size(),
+        );
+        gpu.queue.submit([encoder.finish()]);
+        buffer
+            .slice(..)
+            .map_async(wgpu::MapMode::Read, |r| r.expect("map capture"));
+        gpu.device
+            .poll(wgpu::PollType::wait_indefinitely())
+            .expect("wait for capture");
+        let mapped = buffer.slice(..).get_mapped_range().expect("read capture");
+        mapped
+            .chunks(row as usize)
+            .flat_map(|r| &r[..(width * 4) as usize])
+            .copied()
+            .collect()
+    }
+}
+
+fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {
+    device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+        label: Some("instances"),
+        contents: &vec![0u8; capacity * std::mem::size_of::<Instance>()],
+        usage: wgpu::BufferUsages::VERTEX | wgpu::BufferUsages::COPY_DST,
+    })
+}

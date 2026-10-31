@@ -3,3 +3,4 @@
 .DS_Store
 *.mofsave
 /web/mofact.wasm
+/screenshots/

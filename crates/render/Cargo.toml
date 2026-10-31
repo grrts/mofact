@@ -12,6 +12,10 @@ mofact-core.workspace = true
 mofact-artkit.workspace = true
 wgpu.workspace = true
 pollster.workspace = true
+bytemuck = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+ron.workspace = true
 
 [lints]
 workspace = true
