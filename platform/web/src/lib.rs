@@ -7,6 +7,9 @@
 //! touch and mouse events do, keys go by name, and the game autosaves to
 //! `localStorage` every 30 seconds and whenever the tab is hidden or closed.
 //! `?new` in the address starts a new game.
+//!
+//! Sound plays through Web Audio, which a page may only start from a tap or
+//! a key, so the first of those starts it.
 
 #![cfg(target_arch = "wasm32")]
 
@@ -35,6 +38,8 @@ struct Shell {
     mouse: u64,
     /// When the game last saved, in page milliseconds.
     saved: f64,
+    /// Where the sound plays, if the browser has Web Audio.
+    sound: Option<web_sys::AudioContext>,
 }
 
 impl Shell {
@@ -59,6 +64,18 @@ impl Shell {
         self.game.frame(size, scale);
         if self.now() - self.saved >= SAVE_EVERY {
             self.save();
+        }
+    }
+
+    /// Start or stop the sound. Starting only works from a tap or a key.
+    fn hush(&self, quiet: bool) {
+        if let Some(ctx) = &self.sound {
+            let running = ctx.state() == web_sys::AudioContextState::Running;
+            if quiet && running {
+                let _ = ctx.suspend();
+            } else if !quiet && !running {
+                let _ = ctx.resume();
+            }
         }
     }
 
@@ -162,6 +179,36 @@ fn saved(window: &web_sys::Window, content: &mofact_core::content::Content) -> O
     }
 }
 
+/// The game's sound through Web Audio, at the browser's own sample rate.
+/// The page's thread fills each block as it is due.
+fn speaker(game: &mut Game) -> Result<web_sys::AudioContext, JsValue> {
+    let ctx = web_sys::AudioContext::new()?;
+    let audio = mofact_audio::Audio::new(ctx.sample_rate() as u32);
+    game.sound.use_audio(audio.clone());
+    let node = ctx.create_script_processor_with_buffer_size_and_number_of_input_channels_and_number_of_output_channels(2048, 0, 2)?;
+    let mut buf = Vec::new();
+    let mut side = Vec::new();
+    let fill = Closure::<dyn FnMut(web_sys::AudioProcessingEvent)>::new(
+        move |e: web_sys::AudioProcessingEvent| {
+            let Ok(out) = e.output_buffer() else {
+                return;
+            };
+            let n = out.length() as usize;
+            buf.resize(n * 2, 0.0);
+            audio.render(&mut buf);
+            for channel in 0..2 {
+                side.clear();
+                side.extend(buf.chunks(2).map(|f| f[channel]));
+                let _ = out.copy_to_channel(&side, channel as i32);
+            }
+        },
+    );
+    node.set_onaudioprocess(Some(fill.as_ref().unchecked_ref()));
+    fill.forget();
+    node.connect_with_audio_node(&ctx.destination())?;
+    Ok(ctx)
+}
+
 fn js(e: impl std::fmt::Display) -> JsValue {
     JsValue::from_str(&e.to_string())
 }
@@ -216,10 +263,15 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         window: window.clone(),
         mouse: MOUSE,
         saved: 0.0,
+        sound: None,
     }));
     {
         let mut s = shell.borrow_mut();
         s.saved = s.now();
+        match speaker(&mut s.game) {
+            Ok(ctx) => s.sound = Some(ctx),
+            Err(e) => log(&format!("mofact: no sound ({e:?})")),
+        }
     }
 
     for kind in ["pointerdown", "pointermove", "pointerup", "pointercancel"] {
@@ -229,6 +281,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
             let mut s = s.borrow_mut();
             if kind == "pointerdown" {
                 let _ = s.canvas.set_pointer_capture(e.pointer_id());
+                s.hush(false);
             }
             if let Some(p) = s.pointer(kind, &e) {
                 s.game.handle(p);
@@ -267,7 +320,9 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
             if e.ctrl_key() || e.meta_key() || e.alt_key() || e.repeat() {
                 return;
             }
-            s.borrow_mut().game.key(&e.key().to_lowercase());
+            let mut s = s.borrow_mut();
+            s.hush(false);
+            s.game.key(&e.key().to_lowercase());
         })?;
     }
     {
@@ -279,6 +334,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
             if hidden {
                 s.save();
             }
+            s.hush(hidden);
             s.game.sim.set_paused(hidden);
         })?;
     }

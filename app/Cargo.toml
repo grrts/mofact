@@ -14,6 +14,7 @@ mofact-world.workspace = true
 mofact-render.workspace = true
 mofact-ui.workspace = true
 mofact-input.workspace = true
+mofact-audio.workspace = true
 mofact-content.workspace = true
 mofact-headless.workspace = true
 web-time = "1"
