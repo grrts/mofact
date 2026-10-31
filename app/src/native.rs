@@ -472,6 +472,7 @@ fn screenshots(
             dir: mofact_core::geom::Dir::East,
             recipe: None,
             belt: &"belt".into(),
+            history: (false, false),
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
