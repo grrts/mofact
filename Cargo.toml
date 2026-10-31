@@ -10,6 +10,7 @@ members = [
     "crates/ui",
     "crates/input",
     "app",
+    "platform/web",
     "tools/headless",
     "tools/bench",
     "tools/balance",

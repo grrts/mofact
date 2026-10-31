@@ -36,6 +36,19 @@ jobs:
           ref: ${{ env.SHA }}
           path: src
 
+      - uses: dtolnay/rust-toolchain@stable
+        if: env.CLOSED != 'true'
+        with:
+          targets: wasm32-unknown-unknown
+      - uses: Swatinem/rust-cache@v2
+        if: env.CLOSED != 'true'
+        with:
+          workspaces: src
+      - name: Build the engine for the web
+        if: env.CLOSED != 'true'
+        working-directory: src
+        run: cargo build --release -p mofact-web --target wasm32-unknown-unknown
+
       - name: Check out gh-pages (or start it)
         run: |
           if git ls-remote --exit-code --heads "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages >/dev/null; then
@@ -57,6 +70,7 @@ jobs:
           # main owns the root but must not delete the PR previews under pr/.
           find "$dest" -mindepth 1 -maxdepth 1 ! -name pr ! -name .git ! -name .nojekyll -exec rm -rf {} +
           cp -R src/web/. "$dest/"
+          cp src/target/wasm32-unknown-unknown/release/mofact_web.wasm "$dest/mofact.wasm"
           rm -f "$dest/README.md"
           sed -i "s/__MOFACT_BUILD__/${SHA::7}/g" "$dest/index.html"
 

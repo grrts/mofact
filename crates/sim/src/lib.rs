@@ -119,6 +119,50 @@ impl Sim {
         }
     }
 
+    /// Set the stock of `item` outright, as when loading a save.
+    pub fn set_stock(&mut self, item: &ItemId, n: u32) {
+        if let Some(i) = self.tables.item(item) {
+            self.stock[i as usize] = n;
+        }
+    }
+
+    /// What an entity holds, for the inspect sheet: crafter inputs then output,
+    /// a miner's waiting ore, or the items on a belt tile.
+    pub fn inventory(&self, id: EntityId) -> Vec<(ItemId, u32)> {
+        let name = |i: Item| self.tables.items[i as usize].clone();
+        match self.states.get(id.0 as usize).and_then(Option::as_ref) {
+            Some(State::Crafter(c)) => {
+                let mut v: Vec<_> = c.recipe.map_or(Vec::new(), |r| {
+                    let def = &self.tables.recipes[r as usize];
+                    def.inputs
+                        .iter()
+                        .zip(&c.inputs)
+                        .map(|(&(i, _), &n)| (name(i), n))
+                        .collect()
+                });
+                if let (Some(i), true) = (c.out_item, c.out > 0) {
+                    v.push((name(i), c.out));
+                }
+                v
+            }
+            Some(State::Miner { out: Some(i), .. }) => vec![(name(*i), 1)],
+            Some(State::Belt { items, .. }) => {
+                let mut v: Vec<(ItemId, u32)> = Vec::new();
+                for &(i, _) in items {
+                    match v
+                        .iter_mut()
+                        .find(|(id, _)| *id == self.tables.items[i as usize])
+                    {
+                        Some((_, n)) => *n += 1,
+                        None => v.push((name(i), 1)),
+                    }
+                }
+                v
+            }
+            _ => Vec::new(),
+        }
+    }
+
     pub fn stock(&self, item: &ItemId) -> u32 {
         self.tables.item(item).map_or(0, |i| self.stock[i as usize])
     }

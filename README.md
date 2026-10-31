@@ -3,7 +3,7 @@
 A factory automation game built for phones first, then Steam. One Rust codebase
 ships to iOS, Android and Windows.
 
-**Play it:** https://grrts.github.io/mofact/ (always the latest `main`; every pull request gets its own preview link). Until the Rust app has a web build this serves the phone prototype in `web/`.
+**Play it:** https://grrts.github.io/mofact/ (always the latest `main`; every pull request gets its own preview link). It runs the real simulation compiled to WebAssembly under the prototype's page, until the native renderer and UI can be built for the web.
 
 **Stack:** Rust (stable), wgpu for graphics, SDL3 for windows, input, audio and
 app lifecycle, tiny-skia for art drawn in code, RON for content data.
@@ -22,7 +22,7 @@ Each lane owns its own folder, so parallel work rarely touches the same files.
 | `data/`, `crates/content` | Content | Items, recipes, research, biomes (`*.ron`) and their loader |
 | `tools/balance` | Content | Validator and balance report |
 | `app/`, `platform/*` | Platform | App shell, builds, saves, store, cloud |
-| `web/` | Platform | The playable web link (the prototype for now) |
+| `web/`, `platform/web` | Platform | The playable web link: the prototype page on the engine compiled to WebAssembly |
 | `tools/headless`, `tools/bench` | QA | Headless scenarios and benchmarks |
 
 ## Architecture in one paragraph
