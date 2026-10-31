@@ -91,8 +91,13 @@ impl Overlay {
 
     /// A world sprite (a building or an item shape) as an icon of `size` pixels.
     pub fn icon(&mut self, sprite: &str, pos: [f32; 2], size: f32, tint: Rgba) {
+        self.icon_turned(sprite, pos, size, tint, 0);
+    }
+
+    /// An icon turned `turns` quarter turns clockwise, as a building facing that way.
+    pub fn icon_turned(&mut self, sprite: &str, pos: [f32; 2], size: f32, tint: Rgba, turns: u32) {
         if let Some(uv) = self.atlas.get(sprite) {
-            self.quad(pos, [size, size], uv, tint, 0);
+            self.quad(pos, [size, size], uv, tint, turns % 4);
         }
     }
 

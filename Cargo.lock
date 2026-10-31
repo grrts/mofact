@@ -642,8 +642,10 @@ dependencies = [
 name = "mofact-ui"
 version = "0.1.0"
 dependencies = [
+ "mofact-content",
  "mofact-core",
  "mofact-input",
+ "mofact-render",
 ]
 
 [[package]]

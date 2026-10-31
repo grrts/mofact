@@ -10,6 +10,10 @@ publish.workspace = true
 [dependencies]
 mofact-core.workspace = true
 mofact-input.workspace = true
+mofact-render.workspace = true
+
+[dev-dependencies]
+mofact-content.workspace = true
 
 [lints]
 workspace = true
