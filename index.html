@@ -52,9 +52,20 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 #bar { position: fixed; left: 0; right: 0; bottom: 0; padding-bottom: calc(env(safe-area-inset-bottom, 0px) + 8px); padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); display: flex; flex-direction: column; gap: 8px; pointer-events: none; }
 #bar > * { pointer-events: auto; }
-#ctx { display: flex; align-items: center; gap: 8px; min-height: 40px; }
-#ctx .tip { flex: 1; min-width: 0; font-size: 13px; line-height: 1.3; color: var(--ink); background: color-mix(in srgb, var(--panel) 88%, transparent); border-radius: 8px; padding: 6px 10px; border: 1px solid var(--line); }
-#recipes { display: flex; gap: 6px; }
+#ctx { display: flex; align-items: center; gap: 8px; }
+#bar > #ctx { pointer-events: none; }
+#ctx > * { pointer-events: auto; }
+#ctx:not(:has(button:not([hidden]))) { display: none; }
+#tip { flex: 1; min-width: 0; display: flex; align-items: center; gap: 8px; font-size: 13px; line-height: 1.3; color: var(--ink); background: color-mix(in srgb, var(--panel) 88%, transparent); border-radius: 8px; padding: 4px 4px 4px 10px; min-height: 40px; box-sizing: border-box; border: 1px solid var(--line); }
+#tip span { flex: 1; min-width: 0; padding: 2px 0; }
+#tip.danger { border-color: var(--starve); }
+#tip.danger b { color: var(--starve); }
+#doneBtn { flex: none; height: 32px; padding: 0 12px; border-radius: 6px; background: var(--panel-2); border: 1px solid var(--line); font-size: 14px; font-weight: 700; }
+.pill.icon { width: 44px; padding: 0; justify-content: center; flex: none; }
+.pill:disabled { opacity: .35; }
+#recipes { display: flex; gap: 6px; overflow-x: auto; }
+#recipes .pill { flex: 1; justify-content: center; }
+#edge { position: fixed; inset: 0; pointer-events: none; box-shadow: inset 0 0 0 3px var(--starve); }
 .pill { display: flex; align-items: center; gap: 5px; height: 40px; padding: 0 10px; border-radius: 8px; background: var(--panel); border: 1px solid var(--line); font-size: 14px; font-weight: 600; white-space: nowrap; }
 .pill[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
 #tools { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 4px; }
@@ -113,11 +124,15 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
 
 <div id="toast" role="status" aria-live="polite"></div>
 
+<div id="edge" hidden></div>
 <footer id="bar">
+  <div id="recipes" hidden></div>
+  <div class="tip" id="tip"><span id="tipText"></span><button id="doneBtn" hidden>Done</button></div>
   <div id="ctx">
-    <div class="tip" id="tip"></div>
-    <div id="recipes" hidden></div>
-    <button class="pill" id="rotBtn" aria-label="Rotate" hidden><svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M16 10a6 6 0 1 1-2-4.5"/><path d="M16 3v4h-4"/></svg>Rotate</button>
+    <button class="pill icon" id="undoBtn" aria-label="Undo" title="Undo (Ctrl+Z)" hidden><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4L3 8l4 4"/><path d="M3 8h9a5 5 0 0 1 0 10H8"/></svg></button>
+    <button class="pill icon" id="redoBtn" aria-label="Redo" title="Redo (Ctrl+Shift+Z)" hidden><svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 4l4 4-4 4"/><path d="M17 8H8a5 5 0 0 0 0 10h4"/></svg></button>
+    <span style="flex:1"></span>
+    <button class="pill" id="rotBtn" aria-label="Rotate" hidden></button>
   </div>
   <nav id="tools" aria-label="Build tools"></nav>
 </footer>
@@ -127,13 +142,15 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   <h2>How to play</h2>
   <ul>
     <li><b>Move</b>: drag with one finger to look around, pinch to zoom. Tap a machine to inspect it.</li>
-    <li><b>Belt</b>: drag a path. Belts carry items the way you drew them. Two fingers still pan and zoom.</li>
+    <li><b>Drill, Furnace, Assembler</b>: tap to place. Dragging still looks around, and tapping a machine inspects it. The Rotate arrow shows which way the next one faces.</li>
+    <li><b>Belt</b>: drag a path. Belts carry items the way you drew them. <b>Remove</b>: tap or drag to mark, lift to remove. In both, two fingers pan and zoom.</li>
+    <li>Made a mistake? <b>Undo</b> (bottom left) takes back your last actions. Tap <b>Done</b> or the tool again to go back to Move.</li>
     <li><b>Drill</b> goes on ore (blue is iron, orange is copper). <b>Furnace</b> smelts ore into plates. <b>Assembler</b> crafts the recipe you pick.</li>
     <li>Machines push their output out of the side with the arrow. They take input from any other side.</li>
     <li>Everything belted into the <b>hub</b> counts towards your goal. Buildings are paid for with plates from the hub.</li>
     <li>Zoom out to see the factory as a flow map. A red <b>!</b> marks a machine that is starving for input. A yellow <b>=</b> marks one whose output is backed up.</li>
   </ul>
-  <p class="muted">Progress saves in this browser. Build <span style="font-family:var(--font-num)">fc50f1c</span>.</p>
+  <p class="muted">Progress saves in this browser. Build <span style="font-family:var(--font-num)">85bad53</span>.</p>
   <div class="actions">
     <button class="pill danger" id="resetBtn">Start over</button>
     <button class="pill" id="menuClose">Back to factory</button>
@@ -230,9 +247,68 @@ async function loadEngine() {
 // Send one command; returns the created entity id, true, or the refusal reason.
 function cmd(c) {
   const r = call({ op: 'command', command: c });
-  if (r.Applied) { dirty = true; return r.Applied.created == null ? true : r.Applied.created; }
+  if (r.Applied) { dirty = true; if (action) action.items.unshift(...reverseOf(c, r.Applied.undo)); return r.Applied.created == null ? true : r.Applied.created; }
   return { refused: r.Refused || r.error || 'refused' };
 }
+
+// ---------- undo and redo ----------
+// One player action (a tap, a belt drag, a remove drag) is one entry, however
+// many commands it sent. Each entry holds the commands that reverse it, which
+// the engine hands back with every applied command. Undoing a removal places
+// a new entity with a new id, so older entries that named the old id are
+// remapped, the same way the engine's own history does it.
+let action = null;
+const undoStack = [], redoStack = [];
+const UNDO_STEPS = 50;
+const reverseOf = (c, undo) => undo.map(u => ({ c: u, revives: c.Remove ? c.Remove.entity : null }));
+function act(label, fn) {
+  action = { label, items: [] };
+  let out;
+  try { out = fn(); } finally {
+    const a = action; action = null;
+    if (a.items.length) { undoStack.push(a); if (undoStack.length > UNDO_STEPS) undoStack.shift(); redoStack.length = 0; buzz(8); }
+    renderUndo();
+  }
+  return out;
+}
+function remap(old, nu, extra) {
+  for (const e of [...undoStack, ...redoStack, extra]) for (const it of e.items) {
+    const c = it.c, body = c.Remove || c.Rotate || c.SetRecipe;
+    if (body && body.entity === old) body.entity = nu;
+    if (it.revives === old) it.revives = nu;
+  }
+}
+// Apply an entry; returns the entry that reverses what was applied, and whether all of it applied.
+function replay(entry) {
+  const back = { label: entry.label, items: [] };
+  for (const it of entry.items) {
+    const r = call({ op: 'command', command: it.c });
+    if (!r.Applied) return { back, ok: false };
+    dirty = true;
+    back.items.unshift(...reverseOf(it.c, r.Applied.undo));
+    if (r.Applied.created != null && it.revives != null) remap(it.revives, r.Applied.created, entry);
+  }
+  return { back, ok: true };
+}
+function undoRedo(from, to, verb) {
+  const e = from.pop(); if (!e) return;
+  toolCancel();
+  const { back, ok } = replay(e);
+  if (back.items.length) to.push(back);
+  sync(true);
+  if (selected && !sheet.hidden) renderSheet();
+  toast(ok ? verb + ': ' + e.label : 'Could not ' + verb.toLowerCase() + ' all of it, something is in the way or plates ran out');
+  buzz(8); renderUndo();
+}
+const undo = () => undoRedo(undoStack, redoStack, 'Undid');
+const redo = () => undoRedo(redoStack, undoStack, 'Redid');
+function clearHistory() { undoStack.length = 0; redoStack.length = 0; renderUndo(); }
+function renderUndo() {
+  document.getElementById('undoBtn').hidden = !undoStack.length && !redoStack.length;
+  document.getElementById('undoBtn').disabled = !undoStack.length;
+  document.getElementById('redoBtn').hidden = !redoStack.length;
+}
+function buzz(ms) { try { if (navigator.vibrate) navigator.vibrate(ms); } catch (_) {} }
 const placeCmd = (type, x, y, dir, rec) => cmd({ Place: { building: type, pos: { x, y }, dir: DIRN[dir], recipe: rec || null } });
 
 function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
@@ -266,7 +342,7 @@ const PLENTY = { 'iron-plate': 1e6, 'copper-plate': 1e6 };
 
 function newGame() {
   genOre();
-  log = []; goalIdx = 0; elapsed = 0; done = false; deliveredBase = {}; lastBelt.clear();
+  log = []; goalIdx = 0; elapsed = 0; done = false; deliveredBase = {}; lastBelt.clear(); clearHistory();
   // starter iron line: drill -> belt -> furnace -> belt -> hub
   const y = 27;
   ore[y * W + 19] = 1;
@@ -297,7 +373,7 @@ function load() {
   const s = { 'iron-plate': 0, 'copper-plate': 0 };
   for (const [k, n] of Object.entries(d.stock || {})) s[k] = n;
   call({ op: 'set_stock', stock: s });
-  deliveredBase = d.delivered || {}; goalIdx = d.goalIdx | 0; elapsed = +d.elapsed || 0; done = !!d.done; log = [];
+  deliveredBase = d.delivered || {}; goalIdx = d.goalIdx | 0; elapsed = +d.elapsed || 0; done = !!d.done; log = []; clearHistory();
   lastBelt.clear();
   sync(true);
   return true;
@@ -715,17 +791,23 @@ function draw(t) {
   if (lod < 2) drawSmoke(t); else smoke.length = 0;
   for (const e of vis) if (e.type !== 'belt' && e.type !== 'hub') drawStatus(e, lod);
   // ghosts
-  if (gesture && gesture.preview) for (const p of gesture.preview) {
+  if (gesture && gesture.preview) gesture.preview.forEach((p, i, path) => {
     const ex = at(p.x, p.y); const ok = !ex || ex.type === 'belt';
     drawBelt({ x: p.x, y: p.y, dir: p.dir, items: [], last: null }, Math.min(lod, 1), t, ok ? .75 : .3);
     if (!ok) { ctx.strokeStyle = COL.bad; ctx.lineWidth = 2; ctx.strokeRect(w2sx(p.x) + 1, w2sy(p.y) + 1, z - 2, z - 2); }
-  }
-  if (gesture && gesture.ghost) {
-    const g = gesture.ghost; const ok = canPlace(g.type, g.x, g.y) === true;
+    // an existing belt this drag will turn is outlined, so crossing a line never breaks it unseen
+    else if (ex && path.length > 1 && i < path.length - 1 && ex.dir !== p.dir) { ctx.strokeStyle = COL.accent; ctx.lineWidth = 2; ctx.setLineDash([4, 3]); ctx.strokeRect(w2sx(p.x) + 1, w2sy(p.y) + 1, z - 2, z - 2); ctx.setLineDash([]); }
+  });
+  const ghost = (gesture && gesture.ghost) || (!gesture && hover && MACHINES.includes(tool) && !at(hover.x, hover.y) ? hover : null);
+  if (ghost) {
+    const g = ghost; const ok = canPlace(g.type, g.x, g.y) === true;
     drawBuilding({ type: g.type, x: g.x, y: g.y, w: 1, h: 1, dir: rot, recipe, work: false, prog: 0, inType: null, id: 0 }, Math.min(lod, 1), t, .7, ok);
   }
-  if (gesture && gesture.removeAt) {
-    const { x, y } = gesture.removeAt; ctx.strokeStyle = COL.bad; ctx.lineWidth = 2; ctx.strokeRect(w2sx(x) + 1, w2sy(y) + 1, z - 2, z - 2);
+  if (gesture && gesture.marks) for (const e of gesture.marks.values()) {
+    const x = w2sx(e.x), y = w2sy(e.y), w = z * e.w, h = z * e.h;
+    ctx.fillStyle = 'rgba(255,93,93,0.28)'; ctx.fillRect(x, y, w, h);
+    ctx.strokeStyle = COL.bad; ctx.lineWidth = 2; ctx.strokeRect(x + 1, y + 1, w - 2, h - 2);
+    ctx.beginPath(); ctx.moveTo(x + w * .3, y + h * .3); ctx.lineTo(x + w * .7, y + h * .7); ctx.moveTo(x + w * .7, y + h * .3); ctx.lineTo(x + w * .3, y + h * .7); ctx.stroke();
   }
   if (selected && ents.has(selected.id)) {
     ctx.strokeStyle = COL.accent; ctx.lineWidth = 2;
@@ -744,31 +826,41 @@ const TOOLS = [
 ];
 const TIPS = {
   hand: 'Drag to look around, pinch to zoom. Tap a machine to inspect it.',
-  belt: 'Drag to draw a belt along your path. Two fingers pan and zoom.',
-  drill: 'Tap blue or orange ore to place. Drag to adjust before lifting.',
-  furnace: 'Tap to place. Ore goes in any side, plates come out of the arrow.',
-  assembler: 'Pick a recipe, then tap to place.',
-  remove: 'Tap or drag over things to remove them. You get the plates back.',
+  belt: 'Drag to draw a belt. Two fingers pan and zoom.',
+  drill: 'Tap blue or orange ore to place. Drag to look around.',
+  furnace: 'Tap to place. Plates come out of the arrow. Drag to look around.',
+  assembler: 'Tap to place. Drag to look around.',
+  remove: 'Tap or drag to mark, lift to remove. Two fingers pan.',
 };
-let tool = 'hand', rot = 0, recipe = 'gear', selected = null, gesture = null;
+const MACHINES = ['drill', 'furnace', 'assembler'];
+const TAP_SLOP = 10; // px a finger may wander and still count as a tap
+let tool = 'hand', rot = 0, recipe = 'gear', selected = null, gesture = null, hover = null;
 const pointers = new Map();
 
 const unlocked = id => id !== 'assembler' || goalIdx >= 2;
 function costText(id) { const c = COST[id]; if (!c) return ''; return Object.values(c).reduce((a, b) => a + b, 0) + ''; }
+const ROT_SVG = '<svg width="18" height="18" viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" style="transform:rotate(%deg)"><path d="M3 10h13M11 5l5 5-5 5"/></svg>';
+function renderRot() {
+  const b = document.getElementById('rotBtn');
+  b.innerHTML = ROT_SVG.replace('%', rot * 90) + 'Rotate';
+  b.setAttribute('aria-label', 'Rotate, facing ' + DIRN[rot].toLowerCase());
+}
 function renderTools() {
   const nav = document.getElementById('tools');
   nav.innerHTML = TOOLS.map(t => `<button class="tool${unlocked(t.id) ? '' : ' locked'}" data-tool="${t.id}" aria-pressed="${t.id === tool}">
     ${COST[t.id] && t.id !== 'belt' ? `<span class="cost">${costText(t.id)}</span>` : ''}
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">${t.svg}</svg>${t.label}</button>`).join('');
-  const tip = document.getElementById('tip');
-  tip.textContent = TIPS[tool];
+  // the tip names the active tool, so it is always clear what a tap will do, and offers a way back to Move
+  const label = TOOLS.find(t => t.id === tool).label;
+  document.getElementById('tipText').innerHTML = (tool === 'hand' ? '' : `<b>${label}</b> · `) + TIPS[tool];
+  document.getElementById('doneBtn').hidden = tool === 'hand';
+  document.getElementById('tip').classList.toggle('danger', tool === 'remove');
+  document.getElementById('edge').hidden = tool !== 'remove';
   document.getElementById('rotBtn').hidden = !['drill', 'furnace', 'assembler', 'belt'].includes(tool);
+  renderRot();
   const rec = document.getElementById('recipes');
   rec.hidden = tool !== 'assembler';
-  if (tool === 'assembler') {
-    rec.innerHTML = Object.entries(RECIPES).map(([k, r]) => `<button class="pill" data-recipe="${k}" aria-pressed="${k === recipe}">${itemSvg(r.out, 16)}${r.name}</button>`).join('');
-    tip.hidden = vw < 520;
-  } else tip.hidden = false;
+  if (tool === 'assembler') rec.innerHTML = Object.entries(RECIPES).map(([k, r]) => `<button class="pill" data-recipe="${k}" aria-pressed="${k === recipe}">${itemSvg(r.out, 16)}${r.name}</button>`).join('');
 }
 function itemSvg(type, s) { return `<img alt="" width="${s}" height="${s}" src="${iconCache(type)}">`; }
 const icons = {};
@@ -785,13 +877,18 @@ document.getElementById('tools').addEventListener('click', ev => {
   const b = ev.target.closest('[data-tool]'); if (!b) return;
   const id = b.dataset.tool;
   if (!unlocked(id)) { toast('Assembler unlocks at goal 3'); return; }
-  setTool(id);
+  // tapping the active tool again puts it away
+  setTool(id === tool ? 'hand' : id);
 });
-function setTool(id) { tool = id; selected = null; closeSheet(); renderTools(); }
+function setTool(id) { toolCancel(); tool = id; hover = null; closeSheet(); renderTools(); }
+document.getElementById('doneBtn').addEventListener('click', () => setTool('hand'));
 document.getElementById('recipes').addEventListener('click', ev => {
   const b = ev.target.closest('[data-recipe]'); if (!b) return; recipe = b.dataset.recipe; renderTools();
 });
-document.getElementById('rotBtn').addEventListener('click', () => { rot = (rot + 1) % 4; toast('Facing ' + ['east', 'south', 'west', 'north'][rot]); });
+function turn() { rot = (rot + 1) % 4; renderRot(); }
+document.getElementById('rotBtn').addEventListener('click', turn);
+document.getElementById('undoBtn').addEventListener('click', undo);
+document.getElementById('redoBtn').addEventListener('click', redo);
 
 function afford(type) { const c = COST[type]; return Object.entries(c).every(([k, n]) => (stock[k] || 0) >= n); }
 function needText(type) { return Object.entries(COST[type]).map(([k, n]) => `${n} ${ITEMS[k].name.toLowerCase()}s`).join(' and '); }
@@ -804,15 +901,16 @@ function canPlace(type, x, y) {
 }
 function place(type, x, y, dir) {
   const ok = canPlace(type, x, y); if (ok !== true) { toast(ok); return null; }
-  const r = placeCmd(type, x, y, dir, type === 'assembler' ? recipe : null);
+  const r = act('placed ' + NAMES[type].toLowerCase(), () => placeCmd(type, x, y, dir, type === 'assembler' ? recipe : null));
   if (typeof r !== 'number') { toast('Can\'t build there'); return null; }
   sync(true); return ents.get(r + 1);
 }
-function removeAt(x, y) {
-  const e = at(x, y); if (!e || e.type === 'hub') return false;
+// remove without recording; callers group removals into one undo step
+function removeEnt(e) {
+  if (!e || e.type === 'hub') return false;
   if (cmd({ Remove: { entity: eid(e) } }) !== true) return false;
   if (selected && selected.id === e.id) closeSheet();
-  sync(true); return true;
+  return true;
 }
 
 function tileAt(px, py) { const [wx, wy] = s2w(px, py); return [Math.floor(wx), Math.floor(wy)]; }
@@ -828,45 +926,56 @@ function extendPath(path, x, y) {
     const n = { x: nx, y: ny, dir: 0 }; last.dir = dirBetween(last, n); n.dir = last.dir; path.push(n); last = n;
   }
 }
-
+// Belt and Remove: one finger draws or marks; nothing changes until the finger lifts.
 function toolStart(px, py) {
   const [x, y] = tileAt(px, py);
   if (tool === 'belt') { const ex = at(x, y); gesture.preview = [{ x, y, dir: ex && ex.type === 'belt' ? ex.dir : rot }]; gesture.startBelt = ex && ex.type === 'belt' ? ex : null; }
-  else if (tool === 'remove') { gesture.removeAt = { x, y }; removeAt(x, y); }
-  else gesture.ghost = { type: tool, x, y };
+  else if (tool === 'remove') { gesture.marks = new Map(); mark(x, y); }
 }
+function mark(x, y) { const e = at(x, y); if (e && e.type !== 'hub') gesture.marks.set(e.id, e); }
 function toolMove(px, py) {
   const [x, y] = tileAt(px, py);
-  if (tool === 'belt' && gesture.preview) { extendPath(gesture.preview, x, y); }
-  else if (tool === 'remove') { if (gesture.removeAt.x !== x || gesture.removeAt.y !== y) { gesture.removeAt = { x, y }; removeAt(x, y); } }
-  else if (gesture.ghost) { gesture.ghost.x = x; gesture.ghost.y = y; }
+  if (tool === 'belt' && gesture.preview) extendPath(gesture.preview, x, y);
+  else if (tool === 'remove' && gesture.marks) mark(x, y);
 }
 function toolEnd() {
   if (tool === 'belt' && gesture.preview) {
-    const path = gesture.preview;
-    if (path.length === 1 && gesture.startBelt) { cmd({ Rotate: { entity: eid(gesture.startBelt), dir: DIRN[(gesture.startBelt.dir + 1) % 4] } }); sync(true); }
+    const path = gesture.preview, first = at(path[0].x, path[0].y);
+    if (path.length === 1 && first && first.type !== 'belt') inspect(first);
+    else if (path.length === 1 && gesture.startBelt) { act('turned belt', () => cmd({ Rotate: { entity: eid(gesture.startBelt), dir: DIRN[(gesture.startBelt.dir + 1) % 4] } })); sync(true); }
     else {
       let placed = 0, short = false;
       path.forEach((p, i) => { p.joinEnd = i === path.length - 1 && path.length > 1; });
-      for (const p of path) {
-        if (!inb(p.x, p.y)) continue;
-        const ex = at(p.x, p.y);
-        // a drag that ends on an existing belt joins it rather than turning it
-        if (ex) { if (ex.type === 'belt' && !p.joinEnd && ex.dir !== p.dir) cmd({ Rotate: { entity: eid(ex), dir: DIRN[p.dir] } }); continue; }
-        if (!afford('belt')) { short = true; break; }
-        if (typeof placeCmd('belt', p.x, p.y, p.dir) === 'number') placed++;
-        sync(true);
-      }
+      act(path.length === 1 ? 'placed belt' : 'drew belt', () => {
+        for (const p of path) {
+          if (!inb(p.x, p.y)) continue;
+          const ex = at(p.x, p.y);
+          // a drag that ends on an existing belt joins it rather than turning it
+          if (ex) { if (ex.type === 'belt' && !p.joinEnd && ex.dir !== p.dir) cmd({ Rotate: { entity: eid(ex), dir: DIRN[p.dir] } }); continue; }
+          if (!afford('belt')) { short = true; break; }
+          if (typeof placeCmd('belt', p.x, p.y, p.dir) === 'number') placed++;
+          sync(true);
+        }
+      });
       sync(true);
       if (short) toast('Out of iron plates for belts');
-      if (path.length > 1) rot = path[path.length - 1].dir;
     }
-  } else if (gesture.ghost) {
-    place(gesture.ghost.type, gesture.ghost.x, gesture.ghost.y, rot);
+  } else if (tool === 'remove' && gesture.marks && gesture.marks.size) {
+    const list = [...gesture.marks.values()];
+    let n = 0;
+    act(list.length === 1 ? 'removed ' + NAMES[list[0].type].toLowerCase() : 'removed ' + list.length + ' things', () => { for (const e of list) if (removeEnt(e)) n++; });
+    sync(true);
+    if (n) toast(n === 1 ? 'Removed. Undo brings it back.' : 'Removed ' + n + ' things. Undo brings them back.');
   }
-  gesture.preview = null; gesture.ghost = null; gesture.removeAt = null;
+  toolCancel();
 }
-function toolCancel() { if (gesture) { gesture.preview = null; gesture.ghost = null; gesture.removeAt = null; } }
+// Drill, Furnace, Assembler: a tap places (or inspects what is already there); a drag pans.
+function tapEnd(px, py) {
+  const [x, y] = tileAt(px, py), e = at(x, y);
+  if (e) inspect(e);
+  else place(tool, x, y, rot);
+}
+function toolCancel() { if (gesture) { gesture.preview = null; gesture.ghost = null; gesture.marks = null; } }
 
 cv.addEventListener('contextmenu', e => e.preventDefault());
 cv.addEventListener('pointerdown', ev => {
@@ -874,18 +983,31 @@ cv.addEventListener('pointerdown', ev => {
   pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   if (pointers.size === 1) {
     const panBtn = ev.pointerType === 'mouse' && ev.button !== 0;
-    gesture = { mode: (tool === 'hand' || panBtn) ? 'pan' : 'tool', sx: ev.clientX, sy: ev.clientY, lx: ev.clientX, ly: ev.clientY, moved: false };
-    if (gesture.mode === 'tool') toolStart(ev.clientX, ev.clientY);
+    // with a sheet or the menu open, the first tap on the map only closes it
+    const dismiss = tool !== 'hand' && !panBtn && (!sheet.hidden || !menu.hidden);
+    const mode = (tool === 'hand' || panBtn) ? 'pan' : (dismiss || MACHINES.includes(tool)) ? 'tap' : 'tool';
+    gesture = { mode, dismiss, sx: ev.clientX, sy: ev.clientY, lx: ev.clientX, ly: ev.clientY, moved: false };
+    if (mode === 'tool') toolStart(ev.clientX, ev.clientY);
+    if (mode === 'tap' && !dismiss) { const [x, y] = tileAt(ev.clientX, ev.clientY); if (!at(x, y)) gesture.ghost = { type: tool, x, y }; }
   } else if (pointers.size === 2) {
+    // a second finger always means pan and zoom; whatever the first finger started is dropped
     toolCancel();
     const [a, b] = [...pointers.values()];
     gesture = { mode: 'pinch', d0: Math.hypot(a.x - b.x, a.y - b.y) || 1, z0: cam.z, c0: [(a.x + b.x) / 2, (a.y + b.y) / 2], w0: s2w((a.x + b.x) / 2, (a.y + b.y) / 2) };
   }
 });
 cv.addEventListener('pointermove', ev => {
-  if (!pointers.has(ev.pointerId)) return;
+  if (!pointers.has(ev.pointerId)) {
+    // desktop: show where the next machine would go under the mouse
+    if (ev.pointerType === 'mouse' && MACHINES.includes(tool)) { const [x, y] = tileAt(ev.clientX, ev.clientY); hover = { type: tool, x, y }; }
+    return;
+  }
   pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
   if (!gesture) return;
+  if (gesture.mode === 'tap' && Math.hypot(ev.clientX - gesture.sx, ev.clientY - gesture.sy) > TAP_SLOP) {
+    // the finger is travelling: this is a pan, not a placement
+    gesture.mode = 'pan'; gesture.moved = true; gesture.ghost = null;
+  }
   if (gesture.mode === 'pinch' && pointers.size >= 2) {
     const [a, b] = [...pointers.values()];
     cam.z = clampZ(gesture.z0 * Math.hypot(a.x - b.x, a.y - b.y) / gesture.d0);
@@ -894,9 +1016,10 @@ cv.addEventListener('pointermove', ev => {
   } else if (gesture.mode === 'pan') {
     cam.x -= (ev.clientX - gesture.lx) / cam.z; cam.y -= (ev.clientY - gesture.ly) / cam.z; clampCam();
     gesture.lx = ev.clientX; gesture.ly = ev.clientY;
-    if (Math.hypot(ev.clientX - gesture.sx, ev.clientY - gesture.sy) > 8) gesture.moved = true;
+    if (Math.hypot(ev.clientX - gesture.sx, ev.clientY - gesture.sy) > TAP_SLOP) gesture.moved = true;
   } else if (gesture.mode === 'tool') toolMove(ev.clientX, ev.clientY);
 });
+cv.addEventListener('pointerleave', ev => { if (ev.pointerType === 'mouse') hover = null; });
 function endPointer(ev, cancelled) {
   if (!pointers.has(ev.pointerId)) return;
   pointers.delete(ev.pointerId);
@@ -904,6 +1027,8 @@ function endPointer(ev, cancelled) {
   if (gesture.mode === 'pinch') { if (pointers.size === 0) gesture = null; else gesture.mode = 'none'; return; }
   if (pointers.size === 0) {
     if (gesture.mode === 'pan' && !gesture.moved && !cancelled) { const [x, y] = tileAt(ev.clientX, ev.clientY); inspect(at(x, y)); }
+    else if (gesture.mode === 'tap' && gesture.dismiss && !cancelled) { closeSheet(); menu.hidden = true; disarmReset(); }
+    else if (gesture.mode === 'tap' && !cancelled) tapEnd(gesture.sx, gesture.sy);
     else if (gesture.mode === 'tool') { if (cancelled) toolCancel(); else toolEnd(); }
     gesture = null;
   }
@@ -918,7 +1043,10 @@ cv.addEventListener('wheel', ev => {
 }, { passive: false });
 window.addEventListener('keydown', ev => {
   if (ev.target.closest && ev.target.closest('input,textarea')) return;
-  if (ev.key === 'r' || ev.key === 'R') { rot = (rot + 1) % 4; }
+  const k = ev.key.toLowerCase();
+  if ((ev.ctrlKey || ev.metaKey) && (k === 'z' || k === 'y')) { ev.preventDefault(); if (k === 'y' || ev.shiftKey) redo(); else undo(); return; }
+  if (ev.ctrlKey || ev.metaKey || ev.altKey) return;
+  if (k === 'r') turn();
   const n = parseInt(ev.key, 10); if (n >= 1 && n <= TOOLS.length && unlocked(TOOLS[n - 1].id)) setTool(TOOLS[n - 1].id);
   if (ev.key === 'Escape') { setTool('hand'); }
 });
@@ -965,10 +1093,11 @@ function renderSheet() {
 }
 sheet.addEventListener('click', ev => {
   const b = ev.target.closest('button'); if (!b || !selected) return;
-  if (b.dataset.rec) { cmd({ SetRecipe: { entity: eid(selected), recipe: b.dataset.rec } }); sync(true); renderSheet(); return; }
+  const name = NAMES[selected.type].toLowerCase();
+  if (b.dataset.rec) { if (b.dataset.rec !== selected.recipe) act('changed recipe', () => cmd({ SetRecipe: { entity: eid(selected), recipe: b.dataset.rec } })); sync(true); renderSheet(); return; }
   const a = b.dataset.act;
-  if (a === 'rotate') { cmd({ Rotate: { entity: eid(selected), dir: DIRN[(selected.dir + 1) % 4] } }); sync(true); renderSheet(); }
-  if (a === 'remove') { removeAt(selected.x, selected.y); closeSheet(); }
+  if (a === 'rotate') { act('turned ' + name, () => cmd({ Rotate: { entity: eid(selected), dir: DIRN[(selected.dir + 1) % 4] } })); sync(true); renderSheet(); }
+  if (a === 'remove') { const e = selected; act('removed ' + name, () => removeEnt(e)); sync(true); closeSheet(); toast('Removed. Undo brings it back.'); }
   if (a === 'close') closeSheet();
 });
 
@@ -997,16 +1126,17 @@ document.getElementById('goal').addEventListener('click', () => document.getElem
 function fmtTime(s) { s = Math.floor(s); return String(Math.floor(s / 60)).padStart(2, '0') + ':' + String(s % 60).padStart(2, '0'); }
 
 let toastT = 0;
-function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
+function toast(msg) { const t = document.getElementById('toast'); t.textContent = msg; t.style.bottom = (document.getElementById('bar').offsetHeight + 8) + 'px'; t.classList.add('show'); clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove('show'), 1800); }
 function showWin() { document.getElementById('winTime').textContent = fmtTime(elapsed); document.getElementById('win').hidden = false; }
 document.getElementById('winClose').addEventListener('click', () => document.getElementById('win').hidden = true);
 const menu = document.getElementById('menu');
-document.getElementById('menuBtn').addEventListener('click', () => { closeSheet(); menu.hidden = !menu.hidden; });
-document.getElementById('menuClose').addEventListener('click', () => menu.hidden = true);
+document.getElementById('menuBtn').addEventListener('click', () => { closeSheet(); menu.hidden = !menu.hidden; disarmReset(); });
+function disarmReset() { const b = document.getElementById('resetBtn'); delete b.dataset.armed; b.textContent = 'Start over'; }
+document.getElementById('menuClose').addEventListener('click', () => { menu.hidden = true; disarmReset(); });
 document.getElementById('resetBtn').addEventListener('click', () => {
   const b = document.getElementById('resetBtn');
   if (b.dataset.armed) { try { localStorage.removeItem(SAVE_KEY); } catch (_) {} GOALS.forEach(g => g.base = 0); newGame(); menu.hidden = true; tool = 'hand'; renderTools(); renderGoal(); b.textContent = 'Start over'; delete b.dataset.armed; resetCam(); }
-  else { b.dataset.armed = '1'; b.textContent = 'Tap again to wipe this factory'; }
+  else { b.dataset.armed = '1'; b.textContent = 'Tap again to wipe this factory'; clearTimeout(b._t); b._t = setTimeout(disarmReset, 4000); }
 });
 
 // ---------- loop ----------
