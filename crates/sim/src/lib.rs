@@ -579,6 +579,10 @@ impl Sim {
                 pos: e.pos,
                 dir: e.dir,
                 recipe,
+                ore: matches!(b.role, Role::Miner { .. })
+                    .then(|| self.ore.get(&e.pos))
+                    .flatten()
+                    .map(|&i| self.tables.items[i as usize].clone()),
                 state,
                 progress,
             });

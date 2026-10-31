@@ -7,7 +7,7 @@ use crate::look::{self, Look, ITEM_TILES};
 use crate::palette::{self, Rgba};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId};
-use mofact_core::snapshot::{BeltItemView, MachineState, Snapshot};
+use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot};
 use std::collections::HashMap;
 
 /// What the screen shows: the world point at its centre and how many screen
@@ -69,6 +69,14 @@ fn turns(dir: Dir) -> u32 {
     }
 }
 
+/// What picks an entity's variant: its recipe, or the ore under a drill.
+fn setting(e: &EntityView) -> Option<&str> {
+    e.recipe
+        .as_ref()
+        .map(|r| r.as_str())
+        .or(e.ore.as_ref().map(|o| o.as_str()))
+}
+
 /// Where a belt item is, in tiles, at `along` on its tile.
 fn item_center(item: &BeltItemView, dir: Dir) -> [f32; 2] {
     let (dx, dy) = dir.offset();
@@ -123,7 +131,7 @@ impl Scene {
                 continue;
             }
             let working = e.state == MachineState::Working;
-            let Some(sprite) = look.sprite(&e.building, e.dir, e.recipe.as_ref(), working) else {
+            let Some(sprite) = look.sprite(&e.building, e.dir, setting(e), working) else {
                 continue;
             };
             let instance = Instance {
@@ -217,7 +225,7 @@ impl Scene {
         for (building, tile, dir, recipe) in ghosts {
             let (Some((w, h)), Some(sprite)) = (
                 look.size(building),
-                look.sprite(building, dir, recipe, false),
+                look.sprite(building, dir, recipe.map(|r| r.as_str()), false),
             ) else {
                 continue;
             };
@@ -291,6 +299,7 @@ mod tests {
             pos: TilePos::new(x, 0),
             dir: Dir::East,
             recipe: None,
+            ore: None,
             state: MachineState::Idle,
             progress: 0.0,
         }
@@ -383,6 +392,7 @@ mod tests {
             pos: TilePos::new(2, 0),
             dir: Dir::South,
             recipe: Some("copper-plate".into()),
+            ore: None,
             state,
             progress: 0.0,
         };
