@@ -2,11 +2,11 @@
 //!
 //! Kept free of wgpu so it can be tested without a GPU.
 
-use crate::atlas::{band_for, sprites, Atlas, Uv, BANDS};
+use crate::atlas::{band_for, sprites, Atlas, Uv};
+use crate::look::{self, Look, ITEM_TILES};
 use crate::palette::{self, Rgba};
-use mofact_core::content::{BuildingRole, Content, IconShape};
 use mofact_core::geom::{Dir, TilePos};
-use mofact_core::ids::{BuildingId, ItemId};
+use mofact_core::ids::{BuildingId, ItemId, RecipeId};
 use mofact_core::snapshot::{BeltItemView, MachineState, Snapshot};
 use std::collections::HashMap;
 
@@ -48,63 +48,6 @@ pub struct Instance {
     pub tint: Rgba,
     /// Quarter turns clockwise from east.
     pub turns: u32,
-}
-
-/// How each building and item looks, looked up once from the content.
-#[derive(Default)]
-pub struct Look {
-    buildings: HashMap<BuildingId, (&'static str, (u8, u8), Rgba)>,
-    items: HashMap<ItemId, (usize, Rgba)>,
-}
-
-impl Look {
-    pub fn new(content: &Content) -> Self {
-        let buildings = content
-            .buildings
-            .iter()
-            .map(|b| {
-                let sprite = match b.role {
-                    BuildingRole::Belt { .. } => sprites::BELT,
-                    BuildingRole::Hub => sprites::HUB,
-                    _ => sprites::MACHINE,
-                };
-                (
-                    b.id.clone(),
-                    (sprite, b.size, palette::building(b.id.as_str())),
-                )
-            })
-            .collect();
-        let items = content
-            .items
-            .iter()
-            .map(|i| {
-                let shape = match i.shape {
-                    IconShape::Ore => 0,
-                    IconShape::Plate => 1,
-                    IconShape::Gear => 2,
-                    IconShape::Wire => 3,
-                    IconShape::Circuit => 4,
-                    IconShape::Droplet => 5,
-                };
-                (i.id.clone(), (shape, palette::item(&i.color)))
-            })
-            .collect();
-        Self { buildings, items }
-    }
-
-    /// The sprite and tint that draw `item`, for icons.
-    pub fn item(&self, item: &ItemId) -> Option<(&'static str, Rgba)> {
-        self.items
-            .get(item)
-            .map(|&(shape, tint)| (sprites::SHAPES[shape], tint))
-    }
-
-    /// The sprite and tint that draw `building`, for icons.
-    pub fn building(&self, building: &BuildingId) -> Option<(&'static str, Rgba)> {
-        self.buildings
-            .get(building)
-            .map(|&(sprite, _, tint)| (sprite, tint))
-    }
 }
 
 /// The sprites for one frame, in draw order, and the band they come from.
@@ -164,36 +107,52 @@ impl Scene {
 
         let mut belt_dirs = HashMap::new();
         let mut machines = Vec::new();
+        let mut badges = Vec::new();
+        // Badges keep a readable size on screen when zoomed out, as in the prototype.
+        let badge = (7.0 / camera.pixels_per_tile).max(0.2) * 2.0;
         for e in &latest.entities {
-            let Some(&(sprite, (w, h), tint)) = look.buildings.get(&e.building) else {
+            let Some((w, h)) = look.size(&e.building) else {
                 continue;
             };
+            let belt = look.is_belt(&e.building);
             let (x, y, w, h) = (e.pos.x as f32, e.pos.y as f32, f32::from(w), f32::from(h));
-            if sprite == sprites::BELT {
+            if belt {
                 belt_dirs.insert(e.pos, e.dir);
             }
             if !seen(x, y, w, h) {
                 continue;
             }
-            let state = match e.state {
-                MachineState::Starved | MachineState::NoPower => palette::STARVE,
-                _ => tint,
+            let working = e.state == MachineState::Working;
+            let Some(sprite) = look.sprite(&e.building, e.dir, e.recipe.as_ref(), working) else {
+                continue;
             };
             let instance = Instance {
                 pos: [x, y],
                 size: [w, h],
                 uv: uv(sprite),
-                tint: if sprite == sprites::BELT { tint } else { state },
-                turns: if sprite == sprites::BELT {
-                    turns(e.dir)
-                } else {
-                    0
-                },
+                tint: palette::WHITE,
+                turns: if belt { turns(e.dir) } else { 0 },
             };
-            if sprite == sprites::BELT {
+            if belt {
                 self.instances.push(instance);
-            } else {
-                machines.push(instance);
+                continue;
+            }
+            machines.push(instance);
+            let status = match e.state {
+                MachineState::Starved | MachineState::NoPower => Some(look::STARVED),
+                MachineState::Blocked => Some(look::BLOCKED),
+                _ => None,
+            };
+            if let Some(status) = status.filter(|_| look.has_badge(&e.building)) {
+                // On the top-right corner, a little inside.
+                let r = badge / 2.0;
+                badges.push(Instance {
+                    pos: [x + w - r - r * 0.3, y - r + r * 0.3],
+                    size: [badge, badge],
+                    uv: uv(status),
+                    tint: palette::WHITE,
+                    turns: 0,
+                });
             }
         }
 
@@ -206,13 +165,13 @@ impl Scene {
             *m.entry(i.tile).or_insert(0usize) += 1;
             m
         });
-        let size = 0.42;
+        let size = ITEM_TILES;
         for item in &latest.belt_items {
             let n = index.entry(item.tile).or_insert(0);
             let k = *n;
             *n += 1;
-            let (Some(&dir), Some(&(shape, tint))) =
-                (belt_dirs.get(&item.tile), look.items.get(&item.item))
+            let (Some(&dir), Some((sprite, tint))) =
+                (belt_dirs.get(&item.tile), look.item(&item.item))
             else {
                 continue;
             };
@@ -235,12 +194,13 @@ impl Scene {
             self.instances.push(Instance {
                 pos: [c[0] - size / 2.0, c[1] - size / 2.0],
                 size: [size, size],
-                uv: uv(sprites::SHAPES[shape]),
+                uv: uv(sprite),
                 tint,
                 turns: 0,
             });
         }
         self.instances.append(&mut machines);
+        self.instances.append(&mut badges);
     }
 }
 
@@ -251,20 +211,26 @@ impl Scene {
         &mut self,
         look: &Look,
         atlases: &[Atlas],
-        ghosts: impl IntoIterator<Item = (&'a BuildingId, TilePos, Dir)>,
+        ghosts: impl IntoIterator<Item = (&'a BuildingId, TilePos, Dir, Option<&'a RecipeId>)>,
     ) {
         let atlas = &atlases[self.band];
-        for (building, tile, dir) in ghosts {
-            let Some(&(sprite, (w, h), tint)) = look.buildings.get(building) else {
+        for (building, tile, dir, recipe) in ghosts {
+            let (Some((w, h)), Some(sprite)) = (
+                look.size(building),
+                look.sprite(building, dir, recipe, false),
+            ) else {
                 continue;
             };
-            let [r, g, b, _] = tint;
             self.instances.push(Instance {
                 pos: [tile.x as f32, tile.y as f32],
                 size: [f32::from(w), f32::from(h)],
                 uv: atlas.get(sprite).unwrap_or([0.0; 4]),
-                tint: [r, g, b, 140],
-                turns: turns(dir),
+                tint: [255, 255, 255, 140],
+                turns: if look.is_belt(building) {
+                    turns(dir)
+                } else {
+                    0
+                },
             });
         }
     }
@@ -287,7 +253,7 @@ impl Scene {
             if x + 1.0 < lo[0] || y + 1.0 < lo[1] || x > hi[0] || y > hi[1] {
                 continue;
             }
-            if let Some(&(_, tint)) = look.items.get(item) {
+            if let Some(tint) = look.item_color(item) {
                 self.ore.push(Instance {
                     pos: [x, y],
                     size: [1.0, 1.0],
@@ -301,20 +267,10 @@ impl Scene {
 }
 
 /// The atlases for every band, painted with the placeholder sprites.
-pub fn atlases() -> Vec<Atlas> {
-    BANDS
-        .iter()
-        .map(|&px| {
-            let mut atlas = Atlas::new(px * 8);
-            sprites::paint_all(&mut atlas, px);
-            atlas
-        })
-        .collect()
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mofact_core::content::Content;
     use mofact_core::ids::EntityId;
     use mofact_core::snapshot::EntityView;
 
@@ -359,7 +315,8 @@ mod tests {
 
     #[test]
     fn items_move_smoothly_between_ticks() {
-        let (look, atlases, mut scene) = (Look::new(&content()), atlases(), Scene::default());
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
         let x_at = |scene: &mut Scene, alpha| {
             scene.build(
                 &look,
@@ -371,7 +328,7 @@ mod tests {
                 alpha,
             );
             assert_eq!(scene.instances.len(), 5, "four belts and an item");
-            scene.instances[4].pos[0] + 0.21
+            scene.instances[4].pos[0] + ITEM_TILES / 2.0
         };
         let xs: Vec<f32> = [0.0, 0.5, 1.0]
             .iter()
@@ -384,7 +341,8 @@ mod tests {
 
     #[test]
     fn off_screen_sprites_are_culled_and_bands_follow_zoom() {
-        let (look, atlases, mut scene) = (Look::new(&content()), atlases(), Scene::default());
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
         let far = Camera {
             center: [100.0, 100.0],
             ..CAMERA
@@ -416,6 +374,39 @@ mod tests {
     }
 
     #[test]
+    fn machines_draw_their_variant_and_a_badge_when_stalled() {
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
+        let furnace = |state| EntityView {
+            id: EntityId(9),
+            building: "furnace".into(),
+            pos: TilePos::new(2, 0),
+            dir: Dir::South,
+            recipe: Some("copper-plate".into()),
+            state,
+            progress: 0.0,
+        };
+        let mut frame = |state| {
+            let snap = Snapshot {
+                entities: vec![furnace(state)],
+                ..Default::default()
+            };
+            scene.build(&look, &atlases, &CAMERA, (640, 360), &snap, &snap, 1.0);
+            scene.instances.clone()
+        };
+        let uv = |name: &str| atlases[1].get(name).unwrap();
+        let working = frame(MachineState::Working);
+        assert_eq!(working.len(), 1, "no badge while working");
+        assert_eq!(working[0].uv, uv("furnace:copper-plate:lit:1"));
+        let starved = frame(MachineState::Starved);
+        assert_eq!(starved.len(), 2);
+        assert_eq!(starved[0].uv, uv("furnace:copper-plate:cold:1"));
+        assert_eq!(starved[1].uv, uv(look::STARVED));
+        assert!(starved[1].pos[0] > 2.5, "on the machine's right");
+        assert_eq!(frame(MachineState::Blocked)[1].uv, uv(look::BLOCKED));
+    }
+
+    #[test]
     fn camera_maps_its_center_to_the_middle_of_the_screen() {
         let [sx, sy, ox, oy] = CAMERA.transform(640, 360);
         assert!((CAMERA.center[0] * sx + ox).abs() < 1e-6);
@@ -431,7 +422,7 @@ mod tests {
     #[ignore = "needs a GPU"]
     fn sprites_reach_the_screen() {
         let gpu = crate::Gpu::headless().expect("a GPU");
-        let mut renderer = crate::Renderer::new(&gpu, atlases());
+        let mut renderer = crate::Renderer::new(&gpu, Look::new(&content()).atlases());
         let look = Look::new(&content());
         let mut scene = Scene::default();
         let size = (128, 64);
@@ -460,22 +451,25 @@ mod tests {
             (palette::GROUND[i].saturating_sub(3)..=palette::GROUND2[i] + 3).contains(&g[i])
         });
         assert!(between, "ground: {g:?}");
+        // Between a roller and the rail, clear of the chevrons.
         assert!(
-            close(at(16, 32), palette::BELT),
+            close(at(20, 24), palette::BELT),
             "belt body: {:?}",
-            at(16, 32)
+            at(20, 24)
         );
-        // The plate sits in the middle of tile 1: x = 48 px, y = 32 px.
+        // The plate sits in the middle of tile 1 (x = 48 px, y = 32 px); just
+        // above its middle groove it is plain plate colour.
         assert!(
-            close(at(48, 32), palette::item("iron")),
+            close(at(48, 30), palette::item("iron")),
             "plate: {:?}",
-            at(48, 32)
+            at(48, 30)
         );
     }
 
     #[test]
     fn ore_in_view_is_laid_under_everything() {
-        let (look, atlases, mut scene) = (Look::new(&content()), atlases(), Scene::default());
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
         scene.build(
             &look,
             &atlases,
@@ -505,8 +499,8 @@ mod tests {
     #[ignore = "needs a GPU"]
     fn the_overlay_draws_over_the_world_in_pixels() {
         let gpu = crate::Gpu::headless().expect("a GPU");
-        let mut renderer = crate::Renderer::new(&gpu, atlases());
-        let mut overlay = crate::Overlay::new();
+        let mut renderer = crate::Renderer::new(&gpu, Look::new(&content()).atlases());
+        let mut overlay = crate::Overlay::new(&Look::new(&content()));
         overlay.panel([10.0, 10.0], [60.0, 30.0], 6.0, palette::ACCENT);
         let w = overlay.text("Mofact", [80.0, 36.0], 24.0, palette::WHITE);
         let scene = Scene::default();
@@ -533,7 +527,7 @@ mod tests {
     #[test]
     fn ten_thousand_sprites() {
         let look = Look::new(&content());
-        let atlases = atlases();
+        let atlases = look.atlases();
         let mut snapshot = Snapshot::default();
         for i in 0..5_000 {
             let mut b = belt(i % 100);

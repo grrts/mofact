@@ -25,9 +25,7 @@ mod surface;
 use mofact_core::content::Content;
 use mofact_input::Ground;
 use mofact_input::{CameraControl, Controls, Pointer, Tool, MOUSE, MOUSE_PAN};
-use mofact_render::{
-    scene, wgpu, Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target, FLOOR,
-};
+use mofact_render::{wgpu, Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target, FLOOR};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui::{Action, Hud, View};
 use ore::OreMap;
@@ -88,15 +86,16 @@ impl App {
             camera.pixels_per_tile,
             [w as f32, h as f32],
         ));
+        let overlay = Overlay::new(&look);
         Ok(Self {
             target: Some(target),
-            renderer: Renderer::new(&gpu, scene::atlases()),
+            renderer: Renderer::new(&gpu, look.atlases()),
             gpu,
             window,
             sim: SimHandle::spawn(sim),
             look,
             scene: Scene::default(),
-            overlay: Overlay::new(),
+            overlay,
             hud: Hud::new(),
             content,
             ore,
@@ -167,10 +166,11 @@ impl App {
             self.ore.tiles(),
         );
         let ghosts = self.controls.builder.ghosts();
+        let recipe = self.controls.builder.recipe.as_ref();
         self.scene.ghosts(
             &self.look,
             atlases,
-            ghosts.iter().map(|g| (&g.building, g.tile, g.dir)),
+            ghosts.iter().map(|g| (&g.building, g.tile, g.dir, recipe)),
         );
         self.overlay.clear();
         let builder = &self.controls.builder;
@@ -587,8 +587,8 @@ fn screenshots(
     sim.step();
     let latest = sim.snapshot();
     let gpu = Gpu::headless().map_err(|e| e.to_string())?;
-    let mut renderer = Renderer::new(&gpu, scene::atlases());
     let look = Look::new(content);
+    let mut renderer = Renderer::new(&gpu, look.atlases());
     let mut scene = Scene::default();
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let size = (960, 540);

@@ -40,11 +40,12 @@ struct Fixture {
 impl Fixture {
     fn new() -> Self {
         let content = content();
+        let look = Look::new(&content);
         Self {
-            look: Look::new(&content),
+            overlay: Overlay::new(&look),
+            look,
             content,
             snapshot: snapshot(),
-            overlay: Overlay::new(),
             hud: Hud::new(),
         }
     }
