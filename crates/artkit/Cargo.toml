@@ -9,6 +9,10 @@ publish.workspace = true
 
 [dependencies]
 mofact-core.workspace = true
+tiny-skia = { version = "0.11", default-features = false, features = ["std", "simd"] }
+
+[dev-dependencies]
+png = "0.17"
 
 [lints]
 workspace = true
