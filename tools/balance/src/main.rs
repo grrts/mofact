@@ -1,8 +1,7 @@
 //! Content validator and balance report: reachability, ratios, chain depth and
-//! by-product sinks for data/*.ron (R1, R3, R6).
-//!
-//! For now it loads the content and runs the loader's referential checks, so CI
-//! fails on broken content. The balance report arrives in T25.
+//! by-product sinks for data/*.ron (R1, R3, R6). See the library for what
+//! each check means. Exits with failure on any problem, so CI catches broken
+//! content.
 //!
 //! Usage: `mofact-balance [DATA_DIR]` (default `data`).
 
@@ -11,20 +10,25 @@ use std::process::ExitCode;
 
 fn main() -> ExitCode {
     let dir = PathBuf::from(std::env::args().nth(1).unwrap_or_else(|| "data".into()));
-    match mofact_content::load_dir(&dir) {
-        Ok(c) => {
-            println!(
-                "{}: {} items, {} recipes, {} buildings, no problems",
-                dir.display(),
-                c.items.len(),
-                c.recipes.len(),
-                c.buildings.len()
-            );
-            ExitCode::SUCCESS
-        }
+    let content = match mofact_content::load_dir(&dir) {
+        Ok(c) => c,
         Err(e) => {
             eprintln!("{e}");
-            ExitCode::FAILURE
+            return ExitCode::FAILURE;
         }
+    };
+    println!(
+        "{}: {} items, {} recipes, {} buildings\n",
+        dir.display(),
+        content.items.len(),
+        content.recipes.len(),
+        content.buildings.len()
+    );
+    let report = mofact_balance::analyse(&content);
+    print!("{}", report.text());
+    if report.problems.is_empty() {
+        ExitCode::SUCCESS
+    } else {
+        ExitCode::FAILURE
     }
 }
