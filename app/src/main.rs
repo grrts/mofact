@@ -14,12 +14,13 @@
 mod surface;
 
 use mofact_core::content::Content;
-use mofact_input as _;
+use mofact_input::{CameraControl, Pointer, MOUSE};
 use mofact_render::{scene, wgpu, Camera, Frame, Gpu, Look, Renderer, Scene, Target, FLOOR};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui as _;
 use mofact_world as _;
 use sdl3::event::{Event, WindowEvent};
+use sdl3::mouse::MouseButton;
 use std::path::Path;
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
@@ -33,7 +34,7 @@ struct App {
     sim: SimHandle,
     look: Look,
     scene: Scene,
-    camera: Camera,
+    control: CameraControl,
     /// When the latest snapshot arrived, for smoothing between ticks.
     latest: (u64, Instant),
     /// The platform has taken the window away, or it is minimised.
@@ -59,6 +60,8 @@ impl App {
         let gpu = Gpu::new(instance, &surface).map_err(|e| e.to_string())?;
         let (w, h) = window.size_in_pixels();
         let target = Target::new(&gpu, surface, w, h).map_err(|e| e.to_string())?;
+        let control =
+            CameraControl::new(camera.center, camera.pixels_per_tile, [w as f32, h as f32]);
         Ok(Self {
             target: Some(target),
             renderer: Renderer::new(&gpu, scene::atlases()),
@@ -67,7 +70,7 @@ impl App {
             sim: SimHandle::spawn(sim),
             look,
             scene: Scene::default(),
-            camera,
+            control,
             latest: (0, Instant::now()),
             background: false,
         })
@@ -103,17 +106,85 @@ impl App {
             self.latest = (latest.tick, Instant::now());
         }
         let alpha = (self.latest.1.elapsed().as_secs_f32() / mofact_core::TICK_SECONDS).min(1.0);
+        let camera = Camera {
+            center: self.control.center,
+            pixels_per_tile: self.control.pixels_per_tile,
+        };
         let atlases = self.renderer.atlases();
         self.scene.build(
             &self.look,
             atlases,
-            &self.camera,
+            &camera,
             target.size(),
             &prev,
             &latest,
             alpha,
         );
-        target.draw(&self.gpu, &mut self.renderer, &self.camera, &self.scene)
+        target.draw(&self.gpu, &mut self.renderer, &camera, &self.scene)
+    }
+
+    /// An SDL event as a pointer event in screen pixels, if it is one.
+    fn pointer(&self, event: &Event) -> Option<Pointer> {
+        // Mouse positions are in window points; touches are 0 to 1.
+        let (pw, ph) = self.window.size_in_pixels();
+        let (ww, _) = self.window.size();
+        let scale = pw as f32 / ww.max(1) as f32;
+        let touch = |x: f32, y: f32| (x * pw as f32, y * ph as f32);
+        let drag = |b: MouseButton| {
+            matches!(
+                b,
+                MouseButton::Left | MouseButton::Middle | MouseButton::Right
+            )
+        };
+        Some(match *event {
+            Event::MouseButtonDown {
+                mouse_btn, x, y, ..
+            } if drag(mouse_btn) => Pointer::Down {
+                id: MOUSE,
+                x: x * scale,
+                y: y * scale,
+            },
+            Event::MouseButtonUp { mouse_btn, .. } if drag(mouse_btn) => Pointer::Up { id: MOUSE },
+            Event::MouseMotion { x, y, .. } => Pointer::Move {
+                id: MOUSE,
+                x: x * scale,
+                y: y * scale,
+            },
+            Event::MouseWheel {
+                y,
+                mouse_x,
+                mouse_y,
+                ..
+            } => Pointer::Wheel {
+                steps: y,
+                x: mouse_x * scale,
+                y: mouse_y * scale,
+            },
+            Event::FingerDown {
+                finger_id, x, y, ..
+            } => {
+                let (x, y) = touch(x, y);
+                Pointer::Down {
+                    id: finger_id,
+                    x,
+                    y,
+                }
+            }
+            Event::FingerMotion {
+                finger_id, x, y, ..
+            } => {
+                let (x, y) = touch(x, y);
+                Pointer::Move {
+                    id: finger_id,
+                    x,
+                    y,
+                }
+            }
+            Event::FingerUp { finger_id, .. } | Event::FingerCanceled { finger_id, .. } => {
+                Pointer::Up { id: finger_id }
+            }
+            _ => return None,
+        })
     }
 }
 
@@ -175,6 +246,8 @@ fn run() -> Result<(), String> {
         return screenshots(&content, sim, camera, Path::new(dir));
     }
 
+    // Touches arrive as finger events; don't also turn them into mouse events.
+    sdl3::hint::set("SDL_TOUCH_MOUSE_EVENTS", "0");
     let sdl = sdl3::init().map_err(|e| e.to_string())?;
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
@@ -193,6 +266,10 @@ fn run() -> Result<(), String> {
     let mut second = (Instant::now(), 0u32);
     loop {
         for event in events.poll_iter() {
+            if let Some(p) = app.pointer(&event) {
+                app.control.handle(p);
+                continue;
+            }
             match event {
                 Event::Quit { .. } | Event::AppTerminating { .. } => return Ok(()),
                 Event::AppWillEnterBackground { .. } => app.suspend(),
@@ -206,6 +283,7 @@ fn run() -> Result<(), String> {
                         if let Some(t) = &mut app.target {
                             t.resize(&app.gpu, w.max(1) as u32, h.max(1) as u32);
                         }
+                        app.control.set_viewport(w as f32, h as f32);
                     }
                     _ => {}
                 },

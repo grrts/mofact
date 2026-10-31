@@ -9,6 +9,10 @@ publish.workspace = true
 
 [dependencies]
 mofact-core.workspace = true
+serde.workspace = true
+
+[dev-dependencies]
+ron.workspace = true
 
 [lints]
 workspace = true
