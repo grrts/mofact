@@ -18,6 +18,10 @@ fn main() {
     println!("cargo:rustc-link-search=native={}/lib/darwin", dir.trim());
     println!(
         "cargo:rustc-link-lib=static={}",
-        if sim { "clang_rt.iossim" } else { "clang_rt.ios" }
+        if sim {
+            "clang_rt.iossim"
+        } else {
+            "clang_rt.ios"
+        }
     );
 }
