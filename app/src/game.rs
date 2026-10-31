@@ -251,6 +251,12 @@ impl Game {
                 }
             }
             Action::Cancel => self.controls.builder.cancel(),
+            // A problem from the list: look at it, with the hand, so its
+            // inspect sheet (opened by the HUD) says what's wrong.
+            Action::Focus(at) => {
+                self.controls.camera.center = at;
+                self.controls.builder.set_tool(Tool::Hand);
+            }
         }
     }
 

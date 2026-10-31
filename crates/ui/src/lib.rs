@@ -174,6 +174,8 @@ pub enum Action {
     /// Take back the latest action, or put it back.
     Undo,
     Redo,
+    /// Centre the camera on this point, in tiles: a problem's whereabouts.
+    Focus([f32; 2]),
 }
 
 /// A control on screen, and what tapping it does.
@@ -200,6 +202,10 @@ enum Hit {
     Redo,
     /// Put the tool away and go back to Move.
     Done,
+    /// The problems button: opens or closes the problems list.
+    Problems,
+    /// A line of the problems list, by its place in it.
+    Problem(usize),
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -235,6 +241,13 @@ pub struct Hud {
     research: bool,
     /// Whether the build sheet is open.
     more: bool,
+    /// Whether the problems list is open.
+    problems: bool,
+    /// What's stuck, as of the last frame drawn.
+    found: Vec<Problem>,
+    /// The line last jumped to and which of its places, so another tap
+    /// on it goes to the next one.
+    jumped: Option<(problems::Trouble, Option<BuildingId>, usize)>,
     /// Where the radial build menu is open, in pixels.
     radial: Option<[f32; 2]>,
     /// The item the recipe browser shows.
@@ -270,6 +283,7 @@ impl Hud {
         if entity.is_some() {
             self.research = false;
             self.more = false;
+            self.problems = false;
         }
     }
 
@@ -281,6 +295,11 @@ impl Hud {
     /// Open the recipe browser on `item`, as tapping its icon does.
     pub fn browse(&mut self, item: ItemId) {
         self.tapped(Hit::Item(item));
+    }
+
+    /// Open or close the problems list, as its button does.
+    pub fn toggle_problems(&mut self) {
+        self.tapped(Hit::Problems);
     }
 
     /// Open or close the research sheet, as its button does.
@@ -401,6 +420,7 @@ impl Hud {
             Hit::Tool(MORE) => {
                 self.more = !self.more;
                 self.research = false;
+                self.problems = false;
                 self.selected = None;
                 Vec::new()
             }
@@ -442,6 +462,7 @@ impl Hud {
             Hit::Research => {
                 self.research = !self.research;
                 self.more = false;
+                self.problems = false;
                 self.selected = None;
                 Vec::new()
             }
@@ -450,16 +471,40 @@ impl Hud {
                 self.browse = Some(item);
                 self.selected = None;
                 self.research = false;
+                self.problems = false;
                 self.more = false;
                 Vec::new()
             }
             Hit::Close => {
                 self.selected = None;
                 self.research = false;
+                self.problems = false;
                 self.more = false;
                 self.radial = None;
                 self.browse = None;
                 Vec::new()
+            }
+            Hit::Problems => {
+                self.problems = !self.problems;
+                self.research = false;
+                self.more = false;
+                self.selected = None;
+                Vec::new()
+            }
+            Hit::Problem(i) => {
+                let Some(p) = self.found.get(i) else {
+                    return Vec::new();
+                };
+                // Another tap on the same line goes on to the next one.
+                let k = match &self.jumped {
+                    Some((t, b, k)) if *t == p.trouble && *b == p.building => (k + 1) % p.at.len(),
+                    _ => 0,
+                };
+                self.jumped = Some((p.trouble, p.building.clone(), k));
+                let (entity, at) = p.at[k];
+                self.problems = false;
+                self.selected = Some(entity);
+                vec![Action::Focus(at)]
             }
             Hit::Block => Vec::new(),
         }
@@ -505,6 +550,11 @@ impl Hud {
 
         let top = self.stock(view, o, [m, m]);
         let top = self.research_button(view, o, [m, top + gap], corner[0] - m);
+        self.found = problems::find(view);
+        if self.found.is_empty() {
+            self.problems = false;
+        }
+        let top = self.problems_button(o, [m, top + gap], corner[0] - m);
         let mut tip_y = top + gap;
         if let Some((text, at)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
@@ -514,7 +564,12 @@ impl Hud {
                 self.toast = None;
             }
         }
-        if selected.is_none() && !self.research && !self.more && self.browse.is_none() {
+        if selected.is_none()
+            && !self.research
+            && !self.more
+            && !self.problems
+            && self.browse.is_none()
+        {
             self.tip(view, o, [m, tip_y], corner[0] - m);
         }
         let width = if portrait {
@@ -540,6 +595,11 @@ impl Hud {
         if self.research {
             let room = corner[1] - tip_y;
             self.research_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
+        }
+        if self.problems {
+            let room = corner[1] - tip_y;
+            self.problems_sheet(view, o, [corner[0] - width, corner[1]], width, room);
             return;
         }
 
@@ -815,6 +875,111 @@ impl Hud {
 
     /// The research button under the stock: what labs study and how far
     /// along. Returns the bottom edge.
+    /// The problems button, under the research button, when anything is
+    /// stuck. Returns its bottom edge.
+    fn problems_button(&mut self, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
+        if self.found.is_empty() {
+            return at[1] - 10.0 * self.unit;
+        }
+        let u = self.unit;
+        let h = 36.0 * u;
+        let n: usize = self.found.iter().map(|p| p.at.len()).sum();
+        let text = if n == 1 {
+            "1 problem: tap to see it".to_string()
+        } else {
+            format!("{n} problems: tap to see them")
+        };
+        let px = fit(o, &text, 14.0 * u, width - 28.0 * u);
+        let w = (o.measure(&text, px) + 28.0 * u).min(width);
+        let fill = if self.problems { PRESSED } else { RAISED };
+        o.panel(at, [w, h], h / 2.0, fill);
+        o.panel(
+            [at[0] + 10.0 * u, at[1] + (h - 8.0 * u) / 2.0],
+            [8.0 * u, 8.0 * u],
+            4.0 * u,
+            palette::STARVE,
+        );
+        o.text(
+            &text,
+            [at[0] + 24.0 * u, at[1] + (h + o.cap_height(px)) / 2.0],
+            px,
+            TEXT,
+        );
+        self.hits.push(([at[0], at[1], w, h], Hit::Problems));
+        at[1] + h
+    }
+
+    /// The problems list, bottom-left at `at`, at most `room` tall: one line
+    /// per kind of trouble and building. A tap goes to one of them.
+    fn problems_sheet(
+        &mut self,
+        view: &View,
+        o: &mut Overlay,
+        at: [f32; 2],
+        width: f32,
+        room: f32,
+    ) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let row = 48.0 * u;
+        let title = 30.0 * u;
+        let fits = ((room - 2.0 * pad - title) / row).floor().max(1.0) as usize;
+        let shown = self.found.len().min(fits);
+        let height = pad + title + shown as f32 * row - 6.0 * u + pad;
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let mut y = r[1] + pad;
+
+        let px = 20.0 * u;
+        o.text("Problems", [left, y + o.cap_height(px) + 4.0 * u], px, TEXT);
+        let close = 32.0 * u;
+        let c = [r[0] + r[2] - pad - close, y - 2.0 * u, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+        y += title;
+
+        for i in 0..shown {
+            let p = &self.found[i];
+            let b = [left, y, r[2] - 2.0 * pad, row - 6.0 * u];
+            o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, RAISED);
+            let s = 26.0 * u;
+            let mut x = b[0] + 10.0 * u;
+            let icon = p.building.as_ref().and_then(|id| view.look.building(id));
+            if let Some((sprite, tint)) = icon {
+                o.icon(sprite, [x, b[1] + (b[3] - s) / 2.0], s, tint);
+            } else {
+                // A power grid: a lightning-yellow dot.
+                o.panel(
+                    [x + s * 0.25, b[1] + (b[3] - s * 0.5) / 2.0],
+                    [s * 0.5, s * 0.5],
+                    s * 0.25,
+                    palette::ACCENT,
+                );
+            }
+            x += s + 10.0 * u;
+            let count = format!("×{}", p.at.len());
+            let cpx = 14.0 * u;
+            let cw = o.measure(&count, cpx);
+            let lpx = fit(o, &p.label, 15.0 * u, b[0] + b[2] - 22.0 * u - cw - x);
+            let base = b[1] + (b[3] + o.cap_height(lpx)) / 2.0;
+            o.text(&p.label, [x, base], lpx, TEXT);
+            if p.building.is_some() {
+                o.text(&count, [b[0] + b[2] - 12.0 * u - cw, base], cpx, MUTED);
+            }
+            self.hits.push((b, Hit::Problem(i)));
+            y += row;
+        }
+    }
+
     fn research_button(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
         if view.content.research.is_empty() {
             return at[1] - 6.0 * self.unit;
@@ -1739,3 +1904,6 @@ fn wrap(o: &Overlay, text: &str, px: f32, width: f32) -> Vec<String> {
 
 #[cfg(test)]
 mod tests;
+
+pub mod problems;
+use problems::Problem;
