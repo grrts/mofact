@@ -34,6 +34,8 @@ pub struct Game {
     latest: (u64, Instant),
     /// What it sounds like; the platform plays [`Sound::audio`].
     pub sound: Sound,
+    /// When the game started showing, the clock machine animations run on.
+    started: Instant,
 }
 
 impl Game {
@@ -64,6 +66,7 @@ impl Game {
             hotkeys: mofact_ui::hotkeys(&content),
             built: Built::new(&content),
             sound: Sound::new(&content),
+            started: Instant::now(),
             content,
             ore,
             controls,
@@ -133,6 +136,10 @@ impl Game {
             &latest,
             alpha,
         );
+        // Wrapped at an hour, so the clock stays precise in an f32.
+        let t = self.started.elapsed().as_secs_f32() % 3600.0;
+        self.scene
+            .animate(&self.look, atlases, &camera, target.size(), &latest, t);
         self.sound.frame(&latest, &camera, target.size());
         self.ore.update(&camera, target.size());
         self.scene.ore(

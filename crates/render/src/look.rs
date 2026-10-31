@@ -25,6 +25,29 @@ pub const ORE: &str = "ore-tile";
 /// The badges over a machine that is waiting for input or can't get rid of its output.
 pub const STARVED: &str = "badge:starved";
 pub const BLOCKED: &str = "badge:blocked";
+/// A soft white dot, a thin white ring and a white bar, tinted per use for
+/// machine animations (see [`crate::Scene::animate`]).
+pub const FX_DOT: &str = "fx:dot";
+pub const FX_RING: &str = "fx:ring";
+pub const FX_BAR: &str = "fx:bar";
+
+/// How a machine shows it is working, beyond its sprite.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Effect {
+    None,
+    /// Smoke from a chimney: furnaces and boilers; `big` for refineries.
+    Smoke {
+        big: bool,
+    },
+    /// White puffs: steam engines.
+    Steam,
+    /// Chips of ore flying from the bit: drills.
+    Dust,
+    /// Bubbles rising in the vat: chemical plants.
+    Bubbles,
+    /// Only the progress bar: assemblers and labs.
+    Busy,
+}
 /// The fluid in a pipe joined on a set of sides, `pipe-fluid:<links>`.
 const PIPE_FLUID: &str = "pipe-fluid";
 
@@ -98,6 +121,8 @@ enum Art {
     Badge {
         starved: bool,
     },
+    /// 0 a dot, 1 a ring, 2 a bar.
+    Fx(u8),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -258,6 +283,9 @@ impl Look {
                 let bits = joins.bits();
                 push(&mut look, format!("belt-frame:{b}:{bits}"), (1, 1), art);
             }
+        }
+        for (k, name) in [FX_DOT, FX_RING, FX_BAR].into_iter().enumerate() {
+            push(&mut look, name.into(), (1, 1), Art::Fx(k as u8));
         }
         look.pipe_fluid = look.sprites.len();
         for links in 0..16u8 {
@@ -516,6 +544,19 @@ impl Look {
         })
     }
 
+    /// How `building` shows it is working.
+    pub fn effect(&self, building: &BuildingId) -> Effect {
+        match self.buildings.get(building).map(|b| b.kind) {
+            Some(Kind::Furnace | Kind::Boiler) => Effect::Smoke { big: false },
+            Some(Kind::Refinery) => Effect::Smoke { big: true },
+            Some(Kind::Engine) => Effect::Steam,
+            Some(Kind::Drill) => Effect::Dust,
+            Some(Kind::ChemicalPlant) => Effect::Bubbles,
+            Some(Kind::Assembler | Kind::Lab) => Effect::Busy,
+            _ => Effect::None,
+        }
+    }
+
     /// Whether `building` shows a status badge when it stalls.
     pub fn has_badge(&self, building: &BuildingId) -> bool {
         self.buildings.get(building).is_some_and(|b| {
@@ -730,6 +771,9 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             draw::item(&mut c, shape, color, s / 2.0, s / 2.0, s * 0.64, !fine);
         }
         Art::Badge { starved } => draw::badge(&mut c, w as f32 / 2.0, starved),
+        Art::Fx(0) => draw::fx_dot(&mut c, w as f32),
+        Art::Fx(1) => draw::fx_ring(&mut c, w as f32),
+        Art::Fx(_) => draw::fx_bar(&mut c, w as f32, h as f32),
     }
     (w, h, c)
 }

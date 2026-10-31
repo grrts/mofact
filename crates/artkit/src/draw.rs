@@ -1372,3 +1372,25 @@ pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: 
     }
     notch(c, z, pose);
 }
+
+/// A soft white dot filling a `s`-pixel square, for smoke, dust and
+/// bubbles: tinted and faded per instance.
+pub fn fx_dot(c: &mut Canvas, s: f32) {
+    let r = s / 2.0;
+    for k in 0..8 {
+        let f = 1.0 - k as f32 / 8.0;
+        c.fill_circle(r, r, (r - 0.5) * f, [255, 255, 255, 34]);
+    }
+}
+
+/// A thin white ring filling a `s`-pixel square, for a stalled machine's
+/// pulse.
+pub fn fx_ring(c: &mut Canvas, s: f32) {
+    let w = (s * 0.07).max(1.0);
+    c.stroke_circle(s / 2.0, s / 2.0, s / 2.0 - w, pal::WHITE, w);
+}
+
+/// Plain white filling a `w`×`h` canvas, for progress bars and veils.
+pub fn fx_bar(c: &mut Canvas, w: f32, h: f32) {
+    c.fill_rect(0.0, 0.0, w, h, pal::WHITE);
+}

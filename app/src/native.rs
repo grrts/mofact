@@ -477,6 +477,8 @@ fn screenshots(
             &latest,
             0.5,
         );
+        // Animations as they stand 1.3 seconds in.
+        scene.animate(&look, renderer.atlases(), &camera, size, &latest, 1.3);
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
