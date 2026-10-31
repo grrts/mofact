@@ -419,7 +419,9 @@ mod tests {
                 "logistics",
                 "express-belts",
                 "fluid-handling",
-                "steam-power"
+                "steam-power",
+                "oil-processing",
+                "fast-assembly"
             ]
         );
     }

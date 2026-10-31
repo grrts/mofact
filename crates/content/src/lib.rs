@@ -406,7 +406,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len()
             ),
-            (16, 11, 19, 7)
+            (20, 14, 23, 9)
         );
         let circuit = c
             .recipes

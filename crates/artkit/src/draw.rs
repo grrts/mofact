@@ -1145,3 +1145,230 @@ pub fn engine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
         c.fill_rect(s * 0.255, s * 0.12, s * 0.05, s * 0.24, pal::PIPE);
     }
 }
+
+/// A pipe port on the edge of a machine `s` pixels across: a flanged stub
+/// at `(fx, fy)` in the machine's own frame, capped in its fluid's colour.
+fn port(c: &mut Canvas, s: f32, pose: &Pose, fx: f32, fy: f32, fluid: Rgba) {
+    let (x, y) = pose.local(s, fx, fy);
+    c.fill_circle(x, y, s * 0.075, pal::MACHINE_EDGE);
+    c.fill_circle(x, y, s * 0.058, pal::PIPE);
+    c.fill_circle(x, y, s * 0.034, fluid);
+}
+
+/// A 2×2 oil refinery: two distillation columns over a fired heater. Light
+/// oil leaves by the port on its front, tar by the port on its right, and
+/// the heater glows while it works.
+pub fn refinery(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, light: Rgba, tar: Rgba) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.05 + sh,
+            s * 0.05 + sh * 1.3,
+            s * 0.9,
+            s * 0.9,
+            s * 0.1,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.05, s * 0.05, s * 0.9, s * 0.9, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.07, s * 0.07, s * 0.86, s * 0.86, s * 0.08),
+        pal::CONCRETE,
+    );
+    if fine {
+        // Hazard stripes along the back, where the crude comes in.
+        for k in 0..6 {
+            let f = -0.4;
+            let a = pose.local(s, f, -0.36 + k as f32 * 0.14);
+            let b = pose.local(s, f + 0.05, -0.31 + k as f32 * 0.14);
+            c.line(&[a, b], pal::ACCENT, (s * 0.02).max(1.0));
+        }
+    }
+    // The fired heater at the back, glowing through its window when lit.
+    let (hx, hy) = pose.local(s, -0.22, 0.0);
+    let along = pose.dir % 2 == 0;
+    let (hw, hh) = if along {
+        (s * 0.2, s * 0.62)
+    } else {
+        (s * 0.62, s * 0.2)
+    };
+    fill(
+        c,
+        rr(hx - hw / 2.0, hy - hh / 2.0, hw, hh, s * 0.04),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(
+            hx - hw / 2.0 + s * 0.015,
+            hy - hh / 2.0 + s * 0.015,
+            hw - s * 0.03,
+            hh - s * 0.03,
+            s * 0.03,
+        ),
+        pal::MACHINE,
+    );
+    let (ww, wh) = if along {
+        (s * 0.08, s * 0.42)
+    } else {
+        (s * 0.42, s * 0.08)
+    };
+    let glow = if pose.working {
+        pal::FLAME[0]
+    } else {
+        pal::HEARTH
+    };
+    fill(c, rr(hx - ww / 2.0, hy - wh / 2.0, ww, wh, s * 0.02), glow);
+    if pose.working {
+        let (gw, gh) = if along {
+            (ww * 0.5, wh * 0.8)
+        } else {
+            (ww * 0.8, wh * 0.5)
+        };
+        fill(
+            c,
+            rr(hx - gw / 2.0, hy - gh / 2.0, gw, gh, s * 0.015),
+            pal::FLAME[1],
+        );
+    }
+    // Two columns, seen from above: a tall one for light oil, a squat one
+    // for tar, each ringed by its trays and capped by a walkway.
+    for (fy, r, cap) in [(-0.2, 0.17, light), (0.2, 0.14, tar)] {
+        let (x, y) = pose.local(s, 0.12, fy);
+        shadow(c, ellipse(x + sh * 0.8, y + sh, r * s, r * s));
+        c.fill_circle(x, y, r * s, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, (r - 0.02) * s, pal::PIPE);
+        c.fill_circle(
+            x - r * s * 0.25,
+            y - r * s * 0.25,
+            r * s * 0.45,
+            pal::PIPE_HI,
+        );
+        c.fill_circle(x, y, (r - 0.02) * s * 0.62, pal::PIPE);
+        c.stroke_circle(
+            x,
+            y,
+            (r - 0.02) * s * 0.78,
+            pal::MACHINE_EDGE,
+            (s * 0.012).max(1.0),
+        );
+        c.fill_circle(x, y, r * s * 0.32, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, r * s * 0.22, cap);
+        if fine {
+            for k in 0..6 {
+                let a = k as f32 / 6.0 * TAU;
+                bolt(
+                    c,
+                    x + a.cos() * r * s * 0.86,
+                    y + a.sin() * r * s * 0.86,
+                    s * 0.01,
+                );
+            }
+        }
+    }
+    // A pipe from each column to its port.
+    let w = (s * 0.045).max(1.0);
+    let front = pose.local(s, 0.44, 0.0);
+    c.line(
+        &[pose.local(s, 0.12, -0.2), pose.local(s, 0.44, -0.2), front],
+        pal::MACHINE_EDGE,
+        w * 1.4,
+    );
+    c.line(
+        &[pose.local(s, 0.12, -0.2), pose.local(s, 0.44, -0.2), front],
+        pal::PIPE,
+        w,
+    );
+    let right = pose.local(s, 0.12, 0.44);
+    c.line(
+        &[pose.local(s, 0.12, 0.2), right],
+        pal::MACHINE_EDGE,
+        w * 1.4,
+    );
+    c.line(&[pose.local(s, 0.12, 0.2), right], pal::PIPE, w);
+    port(c, s, pose, 0.44, 0.0, light);
+    port(c, s, pose, 0.12, 0.44, tar);
+    let (ax, ay) = pose.local(s, 0.37, 0.22);
+    arrow(c, ax, ay, pose.dir % 4, z * 0.32, pal::ACCENT);
+}
+
+/// A chemical plant: a round reaction vat holding its product's colour, a
+/// stirring paddle, and the outlet on its front. Bubbles rise while it works.
+pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: Option<Rgba>) {
+    let s = z;
+    let sh = z * 0.07;
+    shadow(
+        c,
+        rr(
+            s * 0.07 + sh,
+            s * 0.07 + sh * 1.3,
+            s * 0.86,
+            s * 0.86,
+            s * 0.16,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.07, s * 0.07, s * 0.86, s * 0.86, s * 0.16),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.8, s * 0.14),
+        pal::MACHINE,
+    );
+    fill(
+        c,
+        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.08, s * 0.04),
+        pal::MACHINE_HI,
+    );
+    // The vat, and what's in it.
+    let (vx, vy) = pose.local(s, -0.04, 0.0);
+    let liquid = product.unwrap_or(pal::PIPE_EMPTY);
+    c.fill_circle(vx, vy, s * 0.3, pal::MACHINE_EDGE);
+    c.fill_circle(vx, vy, s * 0.27, pal::PIPE);
+    c.fill_circle(vx, vy, s * 0.22, shade(liquid, -0.3));
+    c.fill_circle(vx - s * 0.03, vy - s * 0.03, s * 0.17, liquid);
+    if pose.working {
+        for (k, (bx, by)) in [(-0.08, -0.06), (0.07, 0.04), (-0.02, 0.1)]
+            .into_iter()
+            .enumerate()
+        {
+            let r = s * (0.025 + 0.012 * ((pose.t * 7.0 + k as f32 * 2.1).sin() + 1.0));
+            c.stroke_circle(
+                vx + bx * s,
+                vy + by * s,
+                r,
+                shade(liquid, 0.45),
+                (s * 0.015).max(1.0),
+            );
+        }
+    }
+    // The paddle across the vat, on its hub.
+    let a = pose.t * 3.0 + f32::from(pose.dir) * FRAC_PI_2;
+    let (dx, dy) = (a.cos() * s * 0.2, a.sin() * s * 0.2);
+    c.line(
+        &[(vx - dx, vy - dy), (vx + dx, vy + dy)],
+        pal::MACHINE_EDGE,
+        (s * 0.06).max(1.0),
+    );
+    c.line(
+        &[(vx - dx, vy - dy), (vx + dx, vy + dy)],
+        pal::PIPE_HI,
+        (s * 0.03).max(1.0),
+    );
+    c.fill_circle(vx, vy, s * 0.06, pal::MACHINE_EDGE);
+    c.fill_circle(vx, vy, s * 0.035, pal::ACCENT);
+    if fine {
+        for (bx, by) in [(0.17, 0.17), (0.83, 0.17), (0.17, 0.83), (0.83, 0.83)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+    notch(c, z, pose);
+}

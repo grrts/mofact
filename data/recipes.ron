@@ -58,4 +58,21 @@
         inputs: [(item: "water", count: 60), (item: "coal", count: 1)],
         outputs: [(item: "steam", count: 60)],
     ),
+    // Oil (T33). Refining makes two fluids at once, and stops when either
+    // backs up: light oil leaves by the front, tar by the right.
+    (
+        id: "refining", name: "Refining", category: "refining", seconds: 5.0,
+        inputs: [(item: "crude-oil", count: 100)],
+        outputs: [(item: "light-oil", count: 50), (item: "tar", count: 30)],
+    ),
+    (
+        id: "cracking", name: "Tar cracking", category: "chemistry", seconds: 3.0,
+        inputs: [(item: "tar", count: 40), (item: "water", count: 30)],
+        outputs: [(item: "light-oil", count: 30)],
+    ),
+    (
+        id: "plastic", name: "Plastic", category: "chemistry", seconds: 1.0,
+        inputs: [(item: "light-oil", count: 20), (item: "coal", count: 1)],
+        outputs: [(item: "plastic", count: 2)],
+    ),
 ]

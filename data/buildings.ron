@@ -52,4 +52,16 @@
     (id: "steam-engine", name: "Steam engine", size: (2, 2),
         role: Engine(kw: 300.0, fluid: "steam", per_second: 30.0),
         cost: [(item: "steel", count: 10), (item: "gear", count: 10), (item: "motor", count: 2)]),
+    // Oil (T33): an oil well pumps crude; a refinery splits it, light oil
+    // out of its front and tar out of its right, and takes crude from the
+    // back or left. A chemical plant cracks tar and makes plastic.
+    (id: "oil-well",  name: "Oil well",  size: (1, 1), role: Well(fluid: "crude-oil", per_second: 200.0), power: 150.0,
+        cost: [(item: "steel", count: 10), (item: "gear", count: 10), (item: "motor", count: 2)]),
+    (id: "refinery",  name: "Refinery",  size: (2, 2), role: Crafter(categories: ["refining"], speed: 1.0), power: 200.0,
+        cost: [(item: "steel", count: 15), (item: "brick", count: 10), (item: "circuit", count: 10)]),
+    (id: "chemical-plant", name: "Chemical plant", size: (1, 1), role: Crafter(categories: ["chemistry"], speed: 1.0), power: 120.0,
+        cost: [(item: "steel", count: 5), (item: "gear", count: 5), (item: "circuit", count: 5)]),
+    // Plastic's first use: an assembler twice as fast, light enough to need power.
+    (id: "fast-assembler", name: "Fast assembler", size: (1, 1), role: Crafter(categories: ["assembling"], speed: 2.0), power: 90.0,
+        cost: [(item: "plastic", count: 10), (item: "motor", count: 2), (item: "circuit", count: 10)]),
 ]

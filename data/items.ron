@@ -18,4 +18,10 @@
     // Fluids (T31) travel in pipes, never on belts or in stock.
     (id: "water",        name: "Water",        kind: Fluid, shape: Droplet, color: "water",      tier: 2),
     (id: "steam",        name: "Steam",        kind: Fluid, shape: Droplet, color: "steam",      tier: 2),
+    // Tier 3: oil (T33). A refinery splits crude into light oil and tar;
+    // cracking turns the tar into more light oil, and light oil makes plastic.
+    (id: "crude-oil",    name: "Crude oil",    kind: Fluid, shape: Droplet, color: "crude-oil",  tier: 3),
+    (id: "light-oil",    name: "Light oil",    kind: Fluid, shape: Droplet, color: "light-oil",  tier: 3),
+    (id: "tar",          name: "Tar",          kind: Fluid, shape: Droplet, color: "tar",        tier: 3),
+    (id: "plastic",      name: "Plastic",      kind: Solid, shape: Plate,   color: "plastic",    tier: 3),
 ]
