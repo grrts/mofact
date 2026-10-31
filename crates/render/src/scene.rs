@@ -231,6 +231,30 @@ impl Scene {
 }
 
 impl Scene {
+    /// Add see-through `ghosts` (building, tile, facing) of what a gesture
+    /// would build, on top of everything. Call after [`Scene::build`].
+    pub fn ghosts<'a>(
+        &mut self,
+        look: &Look,
+        atlases: &[Atlas],
+        ghosts: impl IntoIterator<Item = (&'a BuildingId, TilePos, Dir)>,
+    ) {
+        let atlas = &atlases[self.band];
+        for (building, tile, dir) in ghosts {
+            let Some(&(sprite, (w, h), tint)) = look.buildings.get(building) else {
+                continue;
+            };
+            let [r, g, b, _] = tint;
+            self.instances.push(Instance {
+                pos: [tile.x as f32, tile.y as f32],
+                size: [f32::from(w), f32::from(h)],
+                uv: atlas.get(sprite).unwrap_or([0.0; 4]),
+                tint: [r, g, b, 140],
+                turns: turns(dir),
+            });
+        }
+    }
+
     /// Lay `ore` (tile and ore item) on the ground, keeping what the camera sees.
     /// Call after [`Scene::build`], which picks the band.
     pub fn ore<'a>(
