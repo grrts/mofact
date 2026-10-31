@@ -765,6 +765,7 @@ impl Look {
     /// the atlas ran out of room.
     pub fn paint(&self, atlas: &mut Atlas, px: u32) -> bool {
         let mut ok = crate::atlas::sprites::paint_ore(atlas, px);
+        ok &= crate::atlas::sprites::paint_decor(atlas, px);
         let fine = px >= FINE_PX;
         for s in &self.sprites {
             let (w, h, canvas) = render(&s.art, s.tiles, s.tiles_high, px, fine);
@@ -793,11 +794,11 @@ impl Look {
     }
 }
 
-/// Each band's atlas is this many tiles on a side, padding included: 3,168
-/// pixels at the closest zoom, inside what every target GPU takes. Machines
+/// Each band's atlas is this many tiles on a side, padding included: 3,432
+/// pixels at the closest zoom, inside the 4,096 every target GPU takes. Machines
 /// have a sprite per recipe, state and direction, so this grows with content;
 /// when tier 3-4 fills it, turn machine bodies on the GPU instead.
-pub const ATLAS_TILES: u32 = 24;
+pub const ATLAS_TILES: u32 = 26;
 
 /// The side of the atlas for the band of `px` pixels a tile. Each sprite
 /// carries its padding, which is most of a tile's room in the smallest band,

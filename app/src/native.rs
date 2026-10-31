@@ -500,6 +500,8 @@ fn screenshots(
         scene.animate(&look, renderer.atlases(), &camera, size, &latest, 1.3);
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+        scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
+        scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
         let path = dir.join(format!("zoom-{ppt}.png"));
         write_png(&path, size, &pixels)?;
@@ -509,6 +511,36 @@ fn screenshots(
             scene.ore.len() + scene.instances.len(),
             scene.band
         );
+    }
+    // The world around the start and further out, on a phone held upright.
+    let size = (1080, 2340);
+    for (name, center, ppt) in [
+        ("world-start", camera.center, 48.0),
+        ("world-wide", camera.center, 20.0),
+        ("world-west", [-60.0, -10.0], 40.0),
+        ("world-north", [40.0, -110.0], 40.0),
+    ] {
+        let camera = Camera {
+            center,
+            pixels_per_tile: ppt,
+        };
+        scene.build(
+            &look,
+            renderer.atlases(),
+            &camera,
+            size,
+            &prev,
+            &latest,
+            0.5,
+        );
+        ore.fill(&camera, size);
+        scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+        scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
+        scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
+        let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
+        let path = dir.join(format!("{name}.png"));
+        write_png(&path, size, &pixels)?;
+        println!("{}", path.display());
     }
     // The HUD with each sheet open, on a small phone, a large phone and a
     // tablet (T40), each held both ways, with their notches and home
@@ -545,6 +577,8 @@ fn screenshots(
         );
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+        scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
+        scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
         for sheet in [
             "toolbar", "build", "research", "radial", "recipes", "problems",
         ] {

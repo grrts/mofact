@@ -1,5 +1,5 @@
-//! The ore the camera can see: generated chunks from the world lane, plus any
-//! ore a scenario placed by hand.
+//! The map the camera can see: terrain, decorations and ore from the world
+//! lane's generated chunks, plus any ore a scenario placed by hand.
 
 use mofact_core::content::{Content, IconShape};
 use mofact_core::geom::{ChunkPos, TilePos};
@@ -7,7 +7,7 @@ use mofact_core::ids::ItemId;
 use mofact_core::CHUNK_SIZE;
 use mofact_render::Camera;
 use mofact_world::{Chunk, Generator, WorldGen};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct OreMap {
     gen: WorldGen,
@@ -15,7 +15,12 @@ pub struct OreMap {
     /// The ore items, in the order the world generator numbers resources.
     items: Vec<ItemId>,
     chunks: HashMap<ChunkPos, Vec<(TilePos, ItemId)>>,
+    /// Each chunk's terrain number and shade, two bytes a tile, row by row.
+    ground: HashMap<ChunkPos, Box<[u8]>>,
+    decor: HashMap<ChunkPos, Vec<(TilePos, u8)>>,
     extra: Vec<(TilePos, ItemId)>,
+    /// Goes up with every chunk added.
+    version: u64,
 }
 
 impl OreMap {
@@ -32,7 +37,10 @@ impl OreMap {
             worker: None,
             items,
             chunks: HashMap::new(),
+            ground: HashMap::new(),
+            decor: HashMap::new(),
             extra,
+            version: 0,
         }
     }
 
@@ -50,6 +58,47 @@ impl OreMap {
             .filter_map(|(t, o)| Some((t, self.items.get(usize::from(o.resource))?.clone())))
             .collect();
         self.chunks.insert(chunk.pos, ores);
+        let placed: HashSet<TilePos> = self.extra.iter().map(|(t, _)| *t).collect();
+        let mut ground = Vec::with_capacity((CHUNK_SIZE * CHUNK_SIZE * 2) as usize);
+        let mut decor = Vec::new();
+        for (t, tile) in chunk.tiles() {
+            ground.extend_from_slice(&[tile.terrain as u8, tile.shade]);
+            // Scenario ore lies on clear ground.
+            if let Some(d) = tile.decor.filter(|_| !placed.contains(&t)) {
+                decor.push((t, d as u8));
+            }
+        }
+        self.ground.insert(chunk.pos, ground.into());
+        self.decor.insert(chunk.pos, decor);
+        self.version += 1;
+    }
+
+    /// Goes up whenever more of the map is generated.
+    pub fn version(&self) -> u64 {
+        self.version
+    }
+
+    /// The terrain number and shade at `t`, once its chunk is generated.
+    pub fn terrain(&self, t: TilePos) -> Option<(u8, u8)> {
+        let pos = ChunkPos {
+            x: t.x.div_euclid(CHUNK_SIZE),
+            y: t.y.div_euclid(CHUNK_SIZE),
+        };
+        let o = pos.origin();
+        let i = (((t.y - o.y) * CHUNK_SIZE + t.x - o.x) * 2) as usize;
+        self.ground.get(&pos).map(|g| (g[i], g[i + 1]))
+    }
+
+    /// The trees, bushes and stones in the chunks a camera sees, by kind.
+    pub fn decor(
+        &self,
+        camera: &Camera,
+        size: (u32, u32),
+    ) -> impl Iterator<Item = (TilePos, u8)> + '_ {
+        Self::visible(camera, size)
+            .filter_map(|pos| self.decor.get(&pos))
+            .flatten()
+            .copied()
     }
 
     /// Ask the worker for chunks coming into view and take the ones it finished.
