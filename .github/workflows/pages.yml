@@ -1,0 +1,98 @@
+name: Playable link
+
+# Keeps a playable build online at all times:
+#   main          -> https://grrts.github.io/mofact/
+#   pull request  -> https://grrts.github.io/mofact/pr/<number>/ (removed when the PR closes)
+# Everything is published to the gh-pages branch; Pages serves that branch.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+# Deploys share one branch, so they queue instead of racing.
+concurrency:
+  group: gh-pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    # Fork PRs get a read-only token, so they can't publish a preview.
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    env:
+      PR: ${{ github.event.pull_request.number }}
+      CLOSED: ${{ github.event.action == 'closed' }}
+      SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.SHA }}
+          path: src
+
+      - name: Check out gh-pages (or start it)
+        run: |
+          if git ls-remote --exit-code --heads "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" gh-pages >/dev/null; then
+            git clone --depth 1 --branch gh-pages "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git" site
+          else
+            git init -b gh-pages site
+            git -C site remote add origin "https://x-access-token:${{ github.token }}@github.com/${{ github.repository }}.git"
+          fi
+          touch site/.nojekyll
+
+      - name: Copy the build into place
+        run: |
+          if [ -n "$PR" ]; then dest="site/pr/$PR"; else dest="site"; fi
+          if [ "$CLOSED" = "true" ]; then
+            rm -rf "$dest"
+            exit 0
+          fi
+          mkdir -p "$dest"
+          # main owns the root but must not delete the PR previews under pr/.
+          find "$dest" -mindepth 1 -maxdepth 1 ! -name pr ! -name .git ! -name .nojekyll -exec rm -rf {} +
+          cp -R src/web/. "$dest/"
+          rm -f "$dest/README.md"
+          sed -i "s/__MOFACT_BUILD__/${SHA::7}/g" "$dest/index.html"
+
+      - name: Push gh-pages
+        run: |
+          cd site
+          git config user.name "github-actions[bot]"
+          git config user.email "41898+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          if git diff --cached --quiet; then echo "Nothing to deploy"; exit 0; fi
+          git commit -m "Deploy ${SHA::7}${PR:+ (PR #$PR)}"
+          git push origin gh-pages
+
+      - name: Make sure Pages serves gh-pages
+        # Needs admin rights the workflow token may not have; if it fails, set
+        # Settings > Pages > Source to "Deploy from a branch", gh-pages, / (root).
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1 \
+            || gh api -X POST "repos/${{ github.repository }}/pages" -f "source[branch]=gh-pages" -f "source[path]=/"
+
+      - name: Link the preview on the PR
+        if: github.event_name == 'pull_request' && github.event.action != 'closed'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          url="https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr/$PR/"
+          marker="<!-- mofact-preview -->"
+          body="$marker
+          **Play this PR:** $url
+          Build \`${SHA::7}\`. The link updates on every push and is removed when the PR closes. Pages can take a minute to refresh."
+          id=$(gh api "repos/${{ github.repository }}/issues/$PR/comments" --jq ".[] | select(.body | startswith(\"$marker\")) | .id" | head -1)
+          if [ -n "$id" ]; then
+            gh api -X PATCH "repos/${{ github.repository }}/issues/comments/$id" -f body="$body" >/dev/null
+          else
+            gh api -X POST "repos/${{ github.repository }}/issues/$PR/comments" -f body="$body" >/dev/null
+          fi
