@@ -54,6 +54,27 @@ pub fn load_dir(dir: &Path) -> Result<Content, LoadError> {
         recipes: read(&dir.join(FILES[1]))?,
         buildings: read(&dir.join(FILES[2]))?,
     };
+    checked(content)
+}
+
+/// Parse and check content from the text of the three files, in [`FILES`] order.
+/// For builds that embed `data/` instead of reading it, such as the web build.
+pub fn load_strs(items: &str, recipes: &str, buildings: &str) -> Result<Content, LoadError> {
+    checked(Content {
+        items: parse(FILES[0], items)?,
+        recipes: parse(FILES[1], recipes)?,
+        buildings: parse(FILES[2], buildings)?,
+    })
+}
+
+fn parse<T: serde::de::DeserializeOwned>(file: &str, text: &str) -> Result<T, LoadError> {
+    ron::from_str(text).map_err(|error| LoadError::Parse {
+        file: file.into(),
+        error,
+    })
+}
+
+fn checked(content: Content) -> Result<Content, LoadError> {
     let problems = check(&content);
     if problems.is_empty() {
         Ok(content)
