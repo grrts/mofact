@@ -96,6 +96,7 @@ dependencies = [
 name = "mofact-sim"
 version = "0.1.0"
 dependencies = [
+ "mofact-content",
  "mofact-core",
 ]
 
