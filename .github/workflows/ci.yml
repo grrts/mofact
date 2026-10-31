@@ -41,3 +41,4 @@ jobs:
       - run: cargo build --workspace --all-targets
       - run: cargo test --workspace
       - run: cargo run -p mofact
+      - run: cargo run -p mofact-balance -- data

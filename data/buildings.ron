@@ -1,0 +1,12 @@
+// Buildings. `size` is (width, height) in tiles; `cost` is paid from the hub's stock.
+[
+    (id: "hub",       name: "Hub",       size: (3, 3), role: Hub, cost: []),
+    (id: "belt",      name: "Belt",      size: (1, 1), role: Belt(tiles_per_second: 2.0),
+        cost: [(item: "iron-plate", count: 1)]),
+    (id: "drill",     name: "Drill",     size: (1, 1), role: Miner(seconds_per_ore: 1.2),
+        cost: [(item: "iron-plate", count: 6)]),
+    (id: "furnace",   name: "Furnace",   size: (1, 1), role: Crafter(categories: ["smelting"], speed: 1.0),
+        cost: [(item: "iron-plate", count: 5)]),
+    (id: "assembler", name: "Assembler", size: (1, 1), role: Crafter(categories: ["assembling"], speed: 1.0),
+        cost: [(item: "iron-plate", count: 8), (item: "copper-plate", count: 4)]),
+]

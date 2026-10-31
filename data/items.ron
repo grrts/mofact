@@ -1,0 +1,10 @@
+// Items and fluids. `color` is a key in the art kit's palette; `tier` is the research tier that first uses it.
+[
+    (id: "iron-ore",     name: "Iron ore",     kind: Solid, shape: Ore,     color: "iron-ore",   tier: 1),
+    (id: "copper-ore",   name: "Copper ore",   kind: Solid, shape: Ore,     color: "copper-ore", tier: 1),
+    (id: "iron-plate",   name: "Iron plate",   kind: Solid, shape: Plate,   color: "iron",       tier: 1),
+    (id: "copper-plate", name: "Copper plate", kind: Solid, shape: Plate,   color: "copper",     tier: 1),
+    (id: "gear",         name: "Gear",         kind: Solid, shape: Gear,    color: "iron",       tier: 1),
+    (id: "wire",         name: "Copper wire",  kind: Solid, shape: Wire,    color: "copper",     tier: 1),
+    (id: "circuit",      name: "Circuit",      kind: Solid, shape: Circuit, color: "circuit",    tier: 1),
+]

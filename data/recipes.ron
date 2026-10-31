@@ -1,0 +1,28 @@
+// Recipes. `seconds` is the craft time at crafting speed 1.0; `category` picks which buildings can craft it.
+[
+    (
+        id: "iron-plate", name: "Iron plate", category: "smelting", seconds: 1.2,
+        inputs: [(item: "iron-ore", count: 1)],
+        outputs: [(item: "iron-plate", count: 1)],
+    ),
+    (
+        id: "copper-plate", name: "Copper plate", category: "smelting", seconds: 1.2,
+        inputs: [(item: "copper-ore", count: 1)],
+        outputs: [(item: "copper-plate", count: 1)],
+    ),
+    (
+        id: "gear", name: "Gear", category: "assembling", seconds: 1.0,
+        inputs: [(item: "iron-plate", count: 2)],
+        outputs: [(item: "gear", count: 1)],
+    ),
+    (
+        id: "wire", name: "Wire", category: "assembling", seconds: 0.8,
+        inputs: [(item: "copper-plate", count: 1)],
+        outputs: [(item: "wire", count: 2)],
+    ),
+    (
+        id: "circuit", name: "Circuit", category: "assembling", seconds: 1.5,
+        inputs: [(item: "gear", count: 1), (item: "wire", count: 3)],
+        outputs: [(item: "circuit", count: 1)],
+    ),
+]

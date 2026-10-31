@@ -1,0 +1,16 @@
+[package]
+name = "mofact-content"
+description = "Loads, checks and hot reloads the content files in data/."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mofact-core.workspace = true
+ron.workspace = true
+serde.workspace = true
+
+[lints]
+workspace = true

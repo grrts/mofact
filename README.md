@@ -19,7 +19,7 @@ Each lane owns its own folder, so parallel work rarely touches the same files.
 | `crates/world` | World | Chunks, noise, biomes, resources, terrain |
 | `crates/render`, `crates/artkit` | Render and art | Renderer, atlases, zoom bands, building drawings |
 | `crates/ui`, `crates/input` | UI and input | Radial menu, sheets, lasso, camera, hotkeys |
-| `data/` | Content | Items, recipes, research, biomes (`*.ron`) |
+| `data/`, `crates/content` | Content | Items, recipes, research, biomes (`*.ron`) and their loader |
 | `tools/balance` | Content | Validator and balance report |
 | `app/`, `platform/*` | Platform | App shell, builds, saves, store, cloud |
 | `web/` | Platform | The playable web link (the prototype for now) |
