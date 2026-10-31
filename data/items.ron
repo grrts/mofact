@@ -15,4 +15,6 @@
     (id: "steel",        name: "Steel",        kind: Solid, shape: Plate,   color: "steel",      tier: 2),
     (id: "motor",        name: "Motor",        kind: Solid, shape: Gear,    color: "motor",      tier: 2),
     (id: "engineering-pack", name: "Engineering pack", kind: Solid, shape: Pack, color: "pack-engineering", tier: 2),
+    // Fluids (T31) travel in pipes, never on belts or in stock.
+    (id: "water",        name: "Water",        kind: Fluid, shape: Droplet, color: "water",      tier: 2),
 ]

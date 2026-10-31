@@ -15,6 +15,7 @@ pub use mofact_core as core;
 
 mod clock;
 pub mod entities;
+mod fluids;
 mod history;
 mod jobs;
 mod local;
@@ -34,17 +35,18 @@ pub use tables::UNIT;
 pub use thread::SimHandle;
 
 use entities::{Entities, Entity};
+use fluids::Fluids;
 use mofact_core::command::{Command, CommandError, CommandResult};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
 use mofact_core::snapshot::{
-    BeltItemView, EntityView, GridView, MachineState, ResearchView, Snapshot,
+    BeltItemView, EntityView, FluidView, GridView, MachineState, ResearchView, Snapshot,
 };
 use mofact_core::Tick;
 use power::Grids;
 use std::collections::HashMap;
-use tables::{ticks, Item, Recipe, Role, Tables};
+use tables::{ticks, Item, Recipe, Role, Tables, FLUID};
 
 /// Items a crafter holds in its output before it stops (the prototype's CAP).
 const OUT_CAP: u32 = 5;
@@ -86,6 +88,12 @@ enum State {
         right: bool,
     },
     Tunnel(Tunnel),
+    /// Pipes and tanks: their fluid is their segment's (see [`fluids`]).
+    Pipe,
+    /// One end of an underground pipe; it carries no items.
+    PipeTunnel(Tunnel),
+    Pump,
+    Well,
 }
 
 /// One end of an underground belt.
@@ -136,6 +144,7 @@ pub struct Sim {
     delivered: Vec<u64>,
     research: Research,
     grids: Grids,
+    fluids: Fluids,
 }
 
 /// Research progress, kept per research so switching loses nothing.
@@ -229,20 +238,34 @@ impl Sim {
         let name = |i: Item| self.tables.items[i as usize].clone();
         match self.states.get(id.0 as usize).and_then(Option::as_ref) {
             Some(State::Crafter(c)) => {
+                // Fluids count in whole units.
+                let units = |i: Item, n: u32| n / self.tables.scale(i);
                 let mut v: Vec<_> = c.recipe.map_or(Vec::new(), |r| {
                     let def = &self.tables.recipes[r as usize];
                     def.inputs
                         .iter()
                         .zip(&c.inputs)
-                        .map(|(&(i, _), &n)| (name(i), n))
+                        .map(|(&(i, _), &n)| (name(i), units(i, n)))
                         .collect()
                 });
                 if let (Some(i), true) = (c.out_item, c.out > 0) {
-                    v.push((name(i), c.out));
+                    v.push((name(i), units(i, c.out)));
                 }
                 v
             }
             Some(State::Miner { out: Some(i), .. }) => vec![(name(*i), 1)],
+            // A pipe shows its whole segment: that's what flows through it.
+            Some(State::Pipe | State::PipeTunnel(_)) => {
+                let seg = self.fluids.of.get(id.0 as usize).copied().flatten();
+                match seg.map(|s| self.fluids.segs[s as usize]) {
+                    Some(fluids::Segment {
+                        fluid: Some(f),
+                        amount,
+                        ..
+                    }) => vec![(name(f), (amount / FLUID) as u32)],
+                    _ => Vec::new(),
+                }
+            }
             Some(State::Belt { items, .. }) => {
                 let mut v: Vec<(ItemId, u32)> = Vec::new();
                 for &(i, _) in items {
@@ -321,15 +344,24 @@ impl Sim {
                 if b.cost.iter().any(|&(i, n)| self.stock[i as usize] < n) {
                     return Err(CommandError::CannotAfford);
                 }
-                for &(i, n) in &b.cost {
-                    self.stock[i as usize] -= n;
-                }
+                let cost = b.cost.clone();
                 let state = self.initial_state(kind, recipe);
                 let id = self.entities.insert(entity).expect("footprint checked");
                 self.states.resize(id.0 as usize + 1, None);
                 self.states[id.0 as usize] = Some(state);
-                self.regrid(kind);
                 self.pair(id);
+                if self.refluid(kind).is_err() {
+                    // Joining two fluids: take it all back.
+                    self.unpair(id);
+                    self.entities.remove(id);
+                    self.states[id.0 as usize] = None;
+                    self.refluid(kind).expect("the world before held no mix");
+                    return Err(CommandError::FluidsMix);
+                }
+                for &(i, n) in &cost {
+                    self.stock[i as usize] -= n;
+                }
+                self.regrid(kind);
                 Ok((vec![Command::Remove { entity: id }], Some(id)))
             }
             Command::Remove { entity } => {
@@ -358,6 +390,8 @@ impl Sim {
                 self.entities.remove(*entity);
                 self.states[entity.0 as usize] = None;
                 self.regrid(e.kind);
+                // Splitting a segment never mixes fluids.
+                let _ = self.refluid(e.kind);
                 Ok((vec![undo], None))
             }
             Command::Rotate { entity, dir } => {
@@ -365,14 +399,26 @@ impl Sim {
                     .entities
                     .get_mut(*entity)
                     .ok_or(CommandError::NoSuchEntity)?;
+                let kind = e.kind;
                 let old = std::mem::replace(&mut e.dir, *dir);
                 // An underground end turned away from its pair finds a new one.
-                if self.tunnel(*entity).is_some() {
-                    self.unpair(*entity);
-                    if let Some(t) = self.tunnel_mut(*entity) {
-                        t.exit = false;
+                let repair = |sim: &mut Sim| {
+                    if sim.tunnel(*entity).is_some() {
+                        sim.unpair(*entity);
+                        if let Some(t) = sim.tunnel_mut(*entity) {
+                            t.exit = false;
+                        }
+                        sim.pair(*entity);
                     }
-                    self.pair(*entity);
+                };
+                repair(self);
+                if self.refluid(kind).is_err() {
+                    if let Some(e) = self.entities.get_mut(*entity) {
+                        e.dir = old;
+                    }
+                    repair(self);
+                    self.refluid(kind).expect("the world before held no mix");
+                    return Err(CommandError::FluidsMix);
                 }
                 Ok((
                     vec![Command::Rotate {
@@ -485,19 +531,24 @@ impl Sim {
                 right: false,
             },
             Role::Underground { .. } => State::Tunnel(Tunnel::default()),
+            Role::Pipe { .. } | Role::Tank { .. } => State::Pipe,
+            Role::UndergroundPipe { .. } => State::PipeTunnel(Tunnel::default()),
+            Role::Pump { .. } => State::Pump,
+            Role::Well { .. } => State::Well,
         }
     }
 
+    /// An underground belt or pipe end.
     fn tunnel(&self, id: EntityId) -> Option<&Tunnel> {
         match self.states.get(id.0 as usize)?.as_ref()? {
-            State::Tunnel(t) => Some(t),
+            State::Tunnel(t) | State::PipeTunnel(t) => Some(t),
             _ => None,
         }
     }
 
     fn tunnel_mut(&mut self, id: EntityId) -> Option<&mut Tunnel> {
         match self.states.get_mut(id.0 as usize)?.as_mut()? {
-            State::Tunnel(t) => Some(t),
+            State::Tunnel(t) | State::PipeTunnel(t) => Some(t),
             _ => None,
         }
     }
@@ -510,7 +561,9 @@ impl Sim {
         let Some(e) = self.entities.get(id).copied() else {
             return;
         };
-        let Role::Underground { reach, .. } = self.tables.buildings[e.kind as usize].role else {
+        let (Role::Underground { reach, .. } | Role::UndergroundPipe { reach, .. }) =
+            self.tables.buildings[e.kind as usize].role
+        else {
             return;
         };
         let find = |sim: &Sim, dir: Dir| {
@@ -563,6 +616,32 @@ impl Sim {
         tiles.max(1) as u32 * UNIT
     }
 
+    /// Rebuild the pipe segments if a building of `kind` is part of them.
+    /// Fails, changing nothing, if that would mix two fluids.
+    fn refluid(&mut self, kind: u16) -> Result<(), fluids::Mix> {
+        if fluids::capacity(&self.tables.buildings[kind as usize].role).is_some() {
+            let old = &self.fluids;
+            self.fluids = self.build_fluids(|slot| old.share(slot))?;
+        }
+        Ok(())
+    }
+
+    /// The pipe segments as the buildings stand, each member bringing `content`.
+    fn build_fluids(
+        &self,
+        content: impl Fn(usize) -> Option<(Item, u64)>,
+    ) -> Result<Fluids, fluids::Mix> {
+        Fluids::build(
+            &self.tables,
+            &self.entities,
+            |id| match self.states.get(id.0 as usize)?.as_ref()? {
+                State::PipeTunnel(t) => Some((t.exit, t.partner)),
+                _ => None,
+            },
+            content,
+        )
+    }
+
     /// Rebuild the power grids if a building of `kind` changes them.
     fn regrid(&mut self, kind: u16) {
         let b = &self.tables.buildings[kind as usize];
@@ -582,6 +661,7 @@ impl Sim {
             State::Miner { out, .. } => out.is_none(),
             State::Crafter(c) => c.working,
             State::Lab(lab) => lab.unit.is_some(),
+            State::Pump | State::Well => true,
             _ => false,
         }
     }
@@ -614,6 +694,7 @@ impl Sim {
     pub fn step(&mut self) {
         self.tick += 1;
         self.settle_grids();
+        self.fluids.refill_budgets();
         for i in 0..self.states.len() {
             let Some(mut state) = self.states[i].take() else {
                 continue;
@@ -633,7 +714,29 @@ impl Sim {
     fn step_one(&mut self, e: &Entity, state: &mut State, go: bool) {
         let front = e.pos.step(e.dir);
         match state {
-            State::Hub | State::Pole | State::Generator => {}
+            State::Hub | State::Pole | State::Generator | State::Pipe | State::PipeTunnel(_) => {}
+            State::Pump => {
+                let Role::Pump { per_tick } = self.tables.buildings[e.kind as usize].role else {
+                    return;
+                };
+                let from = self.fluids.toward(&self.entities, e.pos, e.dir.opposite());
+                let to = self.fluids.toward(&self.entities, e.pos, e.dir);
+                if let (true, Some(a), Some(b)) = (go, from, to) {
+                    let (a, b) = (a as usize, b as usize);
+                    if let (Some(f), true) = (self.fluids.segs[a].fluid, a != b) {
+                        let room = self.fluids.segs[b].room_for(f);
+                        let n = self.fluids.segs[a].take(f, per_tick.min(room));
+                        self.fluids.segs[b].give(f, n);
+                    }
+                }
+            }
+            State::Well => {
+                if let (true, Role::Well { fluid, per_tick }) =
+                    (go, &self.tables.buildings[e.kind as usize].role)
+                {
+                    self.fluids.fill(&self.entities, e, *fluid, *per_tick);
+                }
+            }
             State::Splitter { held, right } => {
                 if let Some(item) = *held {
                     let r = e.dir.rotate_cw();
@@ -709,19 +812,35 @@ impl Sim {
                     Role::Crafter { speed, .. } => *speed,
                     _ => 1.0,
                 };
+                let mut full = c.out >= OUT_CAP;
                 if let Some(r) = c.recipe {
-                    let def = &self.tables.recipes[r as usize];
+                    let t = &self.tables;
+                    let def = &t.recipes[r as usize];
+                    // Fluid inputs come from the pipes around, up to two crafts' worth.
+                    for (have, &(item, need)) in c.inputs.iter_mut().zip(&def.inputs) {
+                        let want = (need * t.scale(item) * 2).saturating_sub(*have);
+                        if t.fluid[item as usize] && want > 0 {
+                            let got = self.fluids.pull(&self.entities, e, item, u64::from(want));
+                            *have += got as u32;
+                        }
+                    }
                     let (out_item, out_n) = def.outputs[0];
+                    let out_n = out_n * t.scale(out_item);
                     let ready = def
                         .inputs
                         .iter()
                         .zip(&c.inputs)
-                        .all(|(&(_, need), &have)| have >= need);
-                    let fits = c.out + out_n <= OUT_CAP + 1
-                        && (c.out == 0 || c.out_item == Some(out_item));
+                        .all(|(&(i, need), &have)| have >= need * t.scale(i));
+                    let cap = if t.fluid[out_item as usize] {
+                        full = c.out >= out_n * 2;
+                        out_n * 2
+                    } else {
+                        OUT_CAP + 1
+                    };
+                    let fits = c.out + out_n <= cap && (c.out == 0 || c.out_item == Some(out_item));
                     if !c.working && ready && fits {
-                        for (have, &(_, need)) in c.inputs.iter_mut().zip(&def.inputs) {
-                            *have -= need;
+                        for (have, &(i, need)) in c.inputs.iter_mut().zip(&def.inputs) {
+                            *have -= need * t.scale(i);
                         }
                         c.working = true;
                         c.prog = 0;
@@ -740,11 +859,17 @@ impl Sim {
                 } else {
                     c.idle += 1;
                 }
-                c.blocked = if c.out >= OUT_CAP { c.blocked + 1 } else { 0 };
-                if let (true, Some(item)) = (c.out > 0, c.out_item) {
-                    if self.push(front, item, e.dir) {
+                c.blocked = if full { c.blocked + 1 } else { 0 };
+                match c.out_item {
+                    Some(item) if c.out > 0 && self.tables.fluid[item as usize] => {
+                        // Fluid goes out into the pipes on any side.
+                        let n = self.fluids.fill(&self.entities, e, item, u64::from(c.out));
+                        c.out -= n as u32;
+                    }
+                    Some(item) if c.out > 0 && self.push(front, item, e.dir) => {
                         c.out -= 1;
                     }
+                    _ => {}
                 }
                 if !c.fixed && !c.working && c.out == 0 && c.inputs.iter().all(|&n| n == 0) {
                     c.recipe = None;
@@ -793,6 +918,69 @@ impl Sim {
         }
     }
 
+    /// Whether the crafter in `slot` has a recipe that takes or makes a fluid.
+    fn uses_fluid(&self, slot: usize) -> bool {
+        match self.states.get(slot).and_then(Option::as_ref) {
+            Some(State::Crafter(Crafter {
+                recipe: Some(r), ..
+            })) => {
+                let def = &self.tables.recipes[*r as usize];
+                let fluid = |&(i, _): &(Item, u32)| self.tables.fluid[i as usize];
+                def.inputs.iter().any(fluid) || def.outputs.iter().any(fluid)
+            }
+            _ => false,
+        }
+    }
+
+    /// The sides `e` carries fluid across, to draw its pipe joins: bits by
+    /// direction, as in [`EntityView::links`].
+    fn links(&self, id: EntityId, e: &Entity) -> u8 {
+        let slot = id.0 as usize;
+        match self.states.get(slot).and_then(Option::as_ref) {
+            Some(State::Pump) => [e.dir, e.dir.opposite()]
+                .into_iter()
+                .filter(|&d| self.fluids.toward(&self.entities, e.pos, d).is_some())
+                .fold(0, |m, d| m | fluids::bit(d)),
+            Some(State::Well) => Dir::ALL
+                .into_iter()
+                .filter(|&d| self.fluids.toward(&self.entities, e.pos, d).is_some())
+                .fold(0, |m, d| m | fluids::bit(d)),
+            Some(State::Pipe | State::PipeTunnel(_)) => {
+                let open = self.fluids.open.get(slot).copied().unwrap_or(0);
+                let mut mask = 0;
+                for (d, tile) in fluids::edges(e) {
+                    let Some(other) = self
+                        .entities
+                        .at(tile)
+                        .filter(|_| open & fluids::bit(d) != 0)
+                    else {
+                        continue;
+                    };
+                    let o = other.0 as usize;
+                    let joins = match self.states.get(o).and_then(Option::as_ref) {
+                        Some(State::Pipe | State::PipeTunnel(_)) => self
+                            .fluids
+                            .open
+                            .get(o)
+                            .is_some_and(|m| m & fluids::bit(d.opposite()) != 0),
+                        Some(State::Pump) => self
+                            .entities
+                            .get(other)
+                            .is_some_and(|p| p.dir == d || p.dir == d.opposite()),
+                        Some(State::Well) => true,
+                        Some(State::Crafter(_)) => self.uses_fluid(o),
+                        _ => false,
+                    };
+                    if joins {
+                        mask |= fluids::bit(d);
+                    }
+                }
+                mask
+            }
+            _ => 0,
+        }
+    }
+
     /// Put one `item` straight into `entity`'s input, as a belt behind it
     /// would. False if it is full or doesn't take that item.
     pub fn feed(&mut self, entity: EntityId, item: &ItemId) -> bool {
@@ -832,7 +1020,13 @@ impl Sim {
                 *last = Some(item);
                 true
             }
-            State::Miner { .. } | State::Pole | State::Generator => false,
+            State::Miner { .. }
+            | State::Pole
+            | State::Generator
+            | State::Pipe
+            | State::PipeTunnel(_)
+            | State::Pump
+            | State::Well => false,
             State::Splitter { held, .. } => {
                 // Only from behind.
                 if dir != target.dir || held.is_some() {
@@ -1037,7 +1231,16 @@ impl Sim {
                 exit: matches!(
                     self.states[slot],
                     Some(State::Tunnel(Tunnel { exit: true, .. }))
+                        | Some(State::PipeTunnel(Tunnel { exit: true, .. }))
                 ),
+                fluid: self.fluids.of.get(slot).copied().flatten().and_then(|s| {
+                    let seg = &self.fluids.segs[s as usize];
+                    Some(FluidView {
+                        item: self.tables.items[seg.fluid? as usize].clone(),
+                        fill: seg.amount as f32 / seg.capacity.max(1) as f32,
+                    })
+                }),
+                links: self.links(id, e),
                 state,
                 progress,
             });

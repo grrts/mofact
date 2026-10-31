@@ -94,6 +94,33 @@ pub enum BuildingRole {
         tiles_per_second: f32,
         reach: u8,
     },
+    /// A pipe tile holding `capacity` units of fluid. Pipes join every
+    /// pipe, tank and fluid port beside them into one segment, which holds
+    /// one fluid; the longer a segment, the slower fluid moves through it.
+    Pipe {
+        capacity: f32,
+    },
+    /// A big store of fluid, joined into segments like a pipe on every side.
+    Tank {
+        capacity: f32,
+    },
+    /// One end of an underground pipe: pairs like an underground belt,
+    /// within `reach` tiles, and joins the segments at both ends.
+    UndergroundPipe {
+        reach: u8,
+    },
+    /// Moves up to `per_second` units of fluid from the segment behind it to
+    /// the one ahead, which may be any length. Splits segments, so it also
+    /// keeps two lines of different fluids apart.
+    Pump {
+        per_second: f32,
+    },
+    /// Draws `fluid` from the ground, `per_second` units into the segments
+    /// beside it.
+    Well {
+        fluid: ItemId,
+        per_second: f32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

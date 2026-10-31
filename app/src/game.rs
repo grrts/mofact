@@ -88,6 +88,7 @@ impl Game {
                     E::Locked => "That isn't unlocked yet.",
                     E::NoSuchEntity => "That's already gone.",
                     E::UnknownContent => "That isn't in this game's data.",
+                    E::FluidsMix => "That would mix two fluids.",
                 });
             }
         }

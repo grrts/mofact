@@ -80,6 +80,13 @@ pub fn analyse(content: &Content) -> Report {
         }
     }
 
+    // Fluids that wells draw from the ground are raw too.
+    for b in &content.buildings {
+        if let BuildingRole::Well { fluid, .. } = &b.role {
+            report.depth.insert(fluid.clone(), 0);
+        }
+    }
+
     // Reachability and depth, by relaxing until nothing changes.
     let mut best: HashMap<&ItemId, &RecipeDef> = HashMap::new();
     loop {
@@ -405,7 +412,8 @@ mod tests {
                 "motors",
                 "fast-belts",
                 "logistics",
-                "express-belts"
+                "express-belts",
+                "fluid-handling"
             ]
         );
     }

@@ -135,7 +135,7 @@ impl Scene {
                 continue;
             }
             let working = e.state == MachineState::Working;
-            let Some(sprite) = look.sprite(&e.building, e.dir, setting(e), working) else {
+            let Some(sprite) = look.linked(&e.building, e.dir, setting(e), working, e.links) else {
                 continue;
             };
             let instance = Instance {
@@ -150,6 +150,29 @@ impl Scene {
                 continue;
             }
             machines.push(instance);
+            // What a pipe or tank holds shows in its channel or window: the
+            // fluid's colour, fading in a pipe and shrinking in a tank as it
+            // runs low. An empty one shows dark, so a starved line stands out.
+            if let (Some((sprite, shrinks)), Some(f)) =
+                (look.fluid(&e.building, e.exit, e.links), &e.fluid)
+            {
+                let fill = f.fill.clamp(0.0, 1.0);
+                if fill > 0.0 {
+                    let color = look.item_color(&f.item).unwrap_or(palette::WHITE);
+                    let (k, a) = if shrinks {
+                        (fill.sqrt().max(0.15), 1.0)
+                    } else {
+                        (1.0, 0.4 + 0.6 * fill)
+                    };
+                    machines.push(Instance {
+                        pos: [x + w * (1.0 - k) / 2.0, y + h * (1.0 - k) / 2.0],
+                        size: [w * k, h * k],
+                        uv: uv(sprite),
+                        tint: [color[0], color[1], color[2], (255.0 * a) as u8],
+                        turns: instance.turns,
+                    });
+                }
+            }
             let status = match e.state {
                 MachineState::Starved | MachineState::NoPower => Some(look::STARVED),
                 MachineState::Blocked => Some(look::BLOCKED),
@@ -313,6 +336,8 @@ mod tests {
             ore: None,
             grid: None,
             exit: false,
+            fluid: None,
+            links: 0,
             state: MachineState::Idle,
             progress: 0.0,
         }
@@ -408,6 +433,8 @@ mod tests {
             ore: None,
             grid: None,
             exit: false,
+            fluid: None,
+            links: 0,
             state,
             progress: 0.0,
         };
@@ -429,6 +456,49 @@ mod tests {
         assert_eq!(starved[1].uv, uv(look::STARVED));
         assert!(starved[1].pos[0] > 2.5, "on the machine's right");
         assert_eq!(frame(MachineState::Blocked)[1].uv, uv(look::BLOCKED));
+    }
+
+    #[test]
+    fn pipes_show_what_they_hold_and_an_empty_one_shows_dark() {
+        use mofact_core::snapshot::FluidView;
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
+        let pipe = |fill: Option<f32>| EntityView {
+            id: EntityId(3),
+            building: "pipe".into(),
+            pos: TilePos::new(1, 0),
+            dir: Dir::East,
+            recipe: None,
+            ore: None,
+            grid: None,
+            exit: false,
+            fluid: fill.map(|fill| FluidView {
+                item: "water".into(),
+                fill,
+            }),
+            links: 1 | 4 | 8,
+            state: MachineState::Working,
+            progress: 0.0,
+        };
+        let mut frame = |fill| {
+            let snap = Snapshot {
+                entities: vec![pipe(fill)],
+                ..Default::default()
+            };
+            scene.build(&look, &atlases, &CAMERA, (640, 360), &snap, &snap, 1.0);
+            scene.instances.clone()
+        };
+        let uv = |name: &str| atlases[1].get(name).unwrap();
+        let empty = frame(None);
+        assert_eq!(empty.len(), 1, "an empty pipe draws its dark channel only");
+        assert_eq!(empty[0].uv, uv("pipe:13"), "joined east, west and north");
+        let full = frame(Some(1.0));
+        assert_eq!(full.len(), 2);
+        assert_eq!(full[1].uv, uv("pipe-fluid:13"));
+        let water = palette::item("water");
+        assert_eq!(full[1].tint, [water[0], water[1], water[2], 255]);
+        let low = frame(Some(0.1));
+        assert!(low[1].tint[3] < 140, "a pipe running low fades");
     }
 
     #[test]

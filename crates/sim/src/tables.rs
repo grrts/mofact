@@ -1,6 +1,6 @@
 //! Content interned into dense indices for the simulation (R1).
 
-use mofact_core::content::{BuildingRole, Content, Stack};
+use mofact_core::content::{BuildingRole, Content, ItemKind, Stack};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use std::collections::HashMap;
@@ -41,7 +41,31 @@ pub enum Role {
         per_tick: u32,
         reach: u8,
     },
+    /// Pipes and tanks hold `capacity` milli-units of fluid (see [`FLUID`]).
+    Pipe {
+        capacity: u64,
+    },
+    Tank {
+        capacity: u64,
+    },
+    UndergroundPipe {
+        reach: u8,
+        capacity: u64,
+    },
+    /// Moves `per_tick` milli-units a tick.
+    Pump {
+        per_tick: u64,
+    },
+    Well {
+        fluid: Item,
+        per_tick: u64,
+    },
 }
+
+/// Fluid amounts are fixed point: one unit of fluid is this many milli-units.
+pub const FLUID: u64 = 1000;
+/// What one end of an underground pipe holds, in fluid units.
+const UNDERGROUND_PIPE_UNITS: u64 = 100;
 
 /// One research, interned.
 #[derive(Clone, Debug)]
@@ -75,6 +99,8 @@ pub struct RecipeDef {
 #[derive(Clone, Debug, Default)]
 pub struct Tables {
     pub items: Vec<ItemId>,
+    /// Whether each item is a fluid.
+    pub fluid: Vec<bool>,
     pub recipes: Vec<RecipeDef>,
     pub buildings: Vec<Building>,
     pub research: Vec<ResearchDef>,
@@ -98,6 +124,10 @@ fn watts(kw: f32) -> u32 {
     (kw * 1000.0).round().max(0.0) as u32
 }
 
+fn milli(units: f32) -> u64 {
+    (units * FLUID as f32).round().max(0.0) as u64
+}
+
 pub fn ticks(seconds: f32) -> u32 {
     (seconds * TICKS_PER_SECOND as f32).round().max(1.0) as u32
 }
@@ -108,6 +138,7 @@ impl Tables {
         let mut t = Tables::default();
         for (i, item) in content.items.iter().enumerate() {
             t.items.push(item.id.clone());
+            t.fluid.push(item.kind == ItemKind::Fluid);
             t.item_index.insert(item.id.clone(), i as Item);
         }
         let stacks = |t: &Tables, list: &[Stack]| -> Vec<(Item, u32)> {
@@ -158,6 +189,28 @@ impl Tables {
                     supply: *supply,
                 },
                 BuildingRole::Generator { kw } => Role::Generator { watts: watts(*kw) },
+                BuildingRole::Pipe { capacity } => Role::Pipe {
+                    capacity: milli(*capacity),
+                },
+                BuildingRole::Tank { capacity } => Role::Tank {
+                    capacity: milli(*capacity),
+                },
+                BuildingRole::UndergroundPipe { reach } => Role::UndergroundPipe {
+                    reach: *reach,
+                    capacity: UNDERGROUND_PIPE_UNITS * FLUID,
+                },
+                BuildingRole::Pump { per_second } => Role::Pump {
+                    per_tick: milli(*per_second) / TICKS_PER_SECOND as u64,
+                },
+                // Checked content names a fluid; anything else makes a well that gives nothing.
+                BuildingRole::Well { fluid, per_second } => Role::Well {
+                    fluid: t.item(fluid).unwrap_or(0),
+                    per_tick: if t.item(fluid).is_some() {
+                        milli(*per_second) / TICKS_PER_SECOND as u64
+                    } else {
+                        0
+                    },
+                },
             };
             t.buildings.push(Building {
                 id: b.id.clone(),
@@ -215,5 +268,14 @@ impl Tables {
 
     pub fn building(&self, id: &BuildingId) -> Option<u16> {
         self.building_index.get(id).copied()
+    }
+
+    /// How many of `item` make one unit in a recipe: [`FLUID`] for fluids, else 1.
+    pub fn scale(&self, item: Item) -> u32 {
+        if self.fluid[item as usize] {
+            FLUID as u32
+        } else {
+            1
+        }
     }
 }

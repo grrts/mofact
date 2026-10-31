@@ -248,6 +248,10 @@ pub struct Hud {
     unit: f32,
     /// The toolbar slot of the tool in hand in the last frame.
     current: Option<usize>,
+    /// Whether a long press may open the radial menu: only with the hand
+    /// or a building in hand, since with belts or remove a finger held
+    /// still is the start of a drag.
+    radial_ok: bool,
 }
 
 impl Hud {
@@ -285,11 +289,12 @@ impl Hud {
     }
 
     /// Call once a frame before drawing. A finger held still on the world
-    /// for [`LONG_PRESS`] by `now` opens the radial build menu where it is;
+    /// for [`LONG_PRESS`] by `now` opens the radial build menu where it is,
+    /// if the hand or a building was in hand in the last frame drawn;
     /// the game must then drop the gesture that finger started.
     pub fn poll(&mut self, now: Instant) -> Vec<Action> {
         match &self.tap {
-            Some(tap) if now.saturating_duration_since(tap.at) >= LONG_PRESS => {
+            Some(tap) if self.radial_ok && now.saturating_duration_since(tap.at) >= LONG_PRESS => {
                 self.radial = Some(tap.start);
                 self.tap = None;
                 self.selected = None;
@@ -489,6 +494,7 @@ impl Hud {
             [w - m - bw, h - m - bh, bw, bh]
         };
         self.current = tool_index(view.tool);
+        self.radial_ok = matches!(view.tool, Tool::Hand | Tool::Place(_));
         self.toolbar(view, o, bar, portrait);
         // The bottom-right corner of the free area, where the thumb is.
         let corner = if portrait {
@@ -1371,6 +1377,27 @@ impl Hud {
             BuildingRole::Generator { kw } => Some(kw),
             _ => None,
         });
+        // Pipes, tanks and underground pipes show what they hold instead of a state.
+        let plumbing = def.is_some_and(|d| {
+            matches!(
+                d.role,
+                BuildingRole::Pipe { .. }
+                    | BuildingRole::Tank { .. }
+                    | BuildingRole::UndergroundPipe { .. }
+            )
+        });
+        let pump = def.is_some_and(|d| matches!(d.role, BuildingRole::Pump { .. }));
+        let well = def.and_then(|d| match &d.role {
+            BuildingRole::Well { fluid, .. } => Some(fluid),
+            _ => None,
+        });
+        let fluid_name = |id: &mofact_core::ids::ItemId| {
+            view.content
+                .items
+                .iter()
+                .find(|i| &i.id == id)
+                .map_or(id.as_str().to_owned(), |i| i.name.clone())
+        };
         // Poles and generators have no state of their own to show.
         let wired = pole || generator.is_some();
         let grid = e.grid.and_then(|g| view.snapshot.grids.get(g as usize));
@@ -1419,7 +1446,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
-        if !belt && !hub && !wired {
+        if !belt && !hub && !wired && !plumbing {
             let (label, color) = state(e.state);
             let spx = 12.0 * u;
             let sw = o.measure(label, spx) + 16.0 * u;
@@ -1468,6 +1495,19 @@ impl Hud {
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
+            } else if plumbing || pump || well.is_some() {
+                let text = match (&e.fluid, well) {
+                    (_, Some(f)) => format!("Draws {} from the ground", fluid_name(f)),
+                    _ if pump => "Pushes fluid the way its arrow points".to_string(),
+                    (Some(f), _) => format!(
+                        "{} · {:.0}% full",
+                        fluid_name(&f.item),
+                        f.fill.clamp(0.0, 1.0) * 100.0
+                    ),
+                    (None, _) => "Empty: nothing is flowing in".to_string(),
+                };
+                let px = fit(o, &text, px, r[2] - 2.0 * pad);
+                o.text(&text, [x, base], px, MUTED);
             } else if let Some(rd) = recipe {
                 // Each item opens the recipe browser.
                 let stacks =
@@ -1499,7 +1539,15 @@ impl Hud {
             y += row + 4.0 * u;
             let bw = r[2] - 2.0 * pad;
             o.panel([left, y], [bw, 6.0 * u], 3.0 * u, RAISED);
-            if !hub && !wired && e.progress > 0.0 {
+            if let (true, Some(f)) = (plumbing, &e.fluid) {
+                let color = view.look.item_color(&f.item).unwrap_or(TEXT);
+                o.panel(
+                    [left, y],
+                    [bw * f.fill.clamp(0.0, 1.0), 6.0 * u],
+                    3.0 * u,
+                    color,
+                );
+            } else if !hub && !wired && !plumbing && e.progress > 0.0 {
                 let fill = state(e.state).1;
                 o.panel(
                     [left, y],

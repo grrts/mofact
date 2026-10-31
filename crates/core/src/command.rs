@@ -44,6 +44,8 @@ pub enum CommandError {
     NoSuchEntity,
     /// The id isn't in the loaded content.
     UnknownContent,
+    /// It would join two pipe segments holding different fluids.
+    FluidsMix,
 }
 
 /// The outcome of applying one command, sent back to the main thread.

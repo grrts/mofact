@@ -924,3 +924,179 @@ fn underground_belts_pass_under_buildings() {
     let other = place(&mut sim, "underground-belt", 7, 5, Dir::East, None);
     assert!(!view(&sim, far).exit && !view(&sim, other).exit);
 }
+
+/// Fluid handling researched and plenty to build with.
+fn plumbing(content: &Content) -> Sim {
+    let mut sim = Sim::with_content(content);
+    for r in ["steel-working", "motors", "fluid-handling"] {
+        sim.complete_research(&r.into());
+    }
+    for i in [
+        "iron-plate",
+        "copper-plate",
+        "gear",
+        "wire",
+        "motor",
+        "steel",
+    ] {
+        sim.add_stock(&item(i), 100_000);
+    }
+    sim
+}
+
+/// A powered pole at `x`,`y` with `turbines` wind turbines beside it.
+fn power_at(sim: &mut Sim, x: i32, y: i32, turbines: i32) {
+    place(sim, "pole", x, y, Dir::East, None);
+    for t in 0..turbines {
+        place(sim, "wind-turbine", x - 1 + 2 * t, y, Dir::East, None);
+    }
+}
+
+/// Water in the tank at the end of a well, `len` tiles of pipe and a pump.
+fn water_through(len: i32, seconds: u32) -> u32 {
+    let mut sim = plumbing(&content());
+    place(&mut sim, "water-well", 0, 0, Dir::East, None);
+    power_at(&mut sim, 0, 2, 2);
+    for x in 1..=len {
+        place(&mut sim, "pipe", x, 0, Dir::East, None);
+    }
+    place(&mut sim, "pump", len + 1, 0, Dir::East, None);
+    power_at(&mut sim, len + 1, 2, 1);
+    let tank = place(&mut sim, "tank", len + 2, 0, Dir::East, None);
+    run(&mut sim, 1); // let the line fill (the tank holds 2500)
+    let before = sim.inventory(tank).first().map_or(0, |s| s.1);
+    run(&mut sim, seconds);
+    sim.inventory(tank).first().map_or(0, |s| s.1) - before
+}
+
+#[test]
+fn a_long_pipe_delivers_less() {
+    let short = water_through(2, 2);
+    let long = water_through(200, 2);
+    // The well gives 600 a second; two tiles of pipe pass all of it.
+    assert!((1150..=1250).contains(&short), "short line: {short}");
+    // 200 tiles let out about 110 a second.
+    assert!((180..=260).contains(&long), "long line: {long}");
+}
+
+#[test]
+fn a_pump_restores_flow_on_a_long_line() {
+    let mut sim = plumbing(&content());
+    place(&mut sim, "water-well", 0, 0, Dir::East, None);
+    power_at(&mut sim, 0, 2, 2);
+    for x in 1..=200 {
+        // A pump every 40 tiles splits the line into short segments.
+        let pump = x % 40 == 0 && x < 200;
+        let b = if pump { "pump" } else { "pipe" };
+        place(&mut sim, b, x, 0, Dir::East, None);
+        if pump {
+            power_at(&mut sim, x, 2, 1);
+        }
+    }
+    place(&mut sim, "pump", 201, 0, Dir::East, None);
+    power_at(&mut sim, 201, 2, 1);
+    let tank = place(&mut sim, "tank", 202, 0, Dir::East, None);
+    run(&mut sim, 2);
+    let before = sim.inventory(tank).first().map_or(0, |s| s.1);
+    run(&mut sim, 2);
+    let got = sim.inventory(tank).first().map_or(0, |s| s.1) - before;
+    assert!(got > 600, "pumped line: {got}");
+}
+
+#[test]
+fn pipes_never_mix_two_fluids() {
+    use mofact_core::content::{BuildingDef, BuildingRole, IconShape, ItemDef, ItemKind};
+    let mut content = content();
+    content.items.push(ItemDef {
+        id: item("oil"),
+        name: "Oil".into(),
+        kind: ItemKind::Fluid,
+        shape: IconShape::Droplet,
+        color: "coal".into(),
+        tier: 2,
+    });
+    content.buildings.push(BuildingDef {
+        id: "oil-well".into(),
+        name: "Oil well".into(),
+        size: (1, 1),
+        role: BuildingRole::Well {
+            fluid: item("oil"),
+            per_second: 100.0,
+        },
+        cost: Vec::new(),
+        power: 0.0,
+    });
+    let mut sim = plumbing(&content);
+    place(&mut sim, "oil-well", 0, 0, Dir::East, None);
+    place(&mut sim, "pipe", 1, 0, Dir::East, None);
+    place(&mut sim, "water-well", 4, 0, Dir::East, None);
+    power_at(&mut sim, 4, 2, 2);
+    place(&mut sim, "pipe", 3, 0, Dir::East, None);
+    run(&mut sim, 1);
+    let plates = sim.stock(&item("iron-plate"));
+    let joined = sim.apply(&Command::Place {
+        building: "pipe".into(),
+        pos: TilePos::new(2, 0),
+        dir: Dir::East,
+        recipe: None,
+    });
+    assert_eq!(joined, CommandResult::Refused(CommandError::FluidsMix));
+    assert_eq!(sim.stock(&item("iron-plate")), plates, "nothing paid");
+    assert_eq!(sim.entity_at(TilePos::new(2, 0)), None);
+    // A pump between them is fine: it can't push oil into water.
+    place(&mut sim, "pump", 2, 0, Dir::East, None);
+    run(&mut sim, 1);
+    let water = sim.entity_at(TilePos::new(3, 0)).unwrap();
+    assert_eq!(sim.inventory(water)[0].0, item("water"));
+}
+
+#[test]
+fn underground_pipes_join_their_ends() {
+    let mut sim = plumbing(&content());
+    place(&mut sim, "water-well", 0, 0, Dir::East, None);
+    power_at(&mut sim, 0, 2, 2);
+    place(&mut sim, "underground-pipe", 1, 0, Dir::East, None);
+    place(&mut sim, "furnace", 3, 0, Dir::East, None); // in the way above ground
+    place(&mut sim, "underground-pipe", 8, 0, Dir::East, None);
+    let end = place(&mut sim, "pipe", 9, 0, Dir::East, None);
+    run(&mut sim, 1);
+    assert_eq!(sim.inventory(end)[0].0, item("water"));
+    let snap = sim.snapshot();
+    let view = snap.entities.iter().find(|e| e.id == end).unwrap();
+    assert!(view.fluid.as_ref().is_some_and(|f| f.fill > 0.0));
+    assert_eq!(
+        view.links,
+        fluids::bit(Dir::West),
+        "joined to the exit only"
+    );
+}
+
+#[test]
+fn fluid_survives_saves_and_rebuilds() {
+    let mut sim = plumbing(&content());
+    place(&mut sim, "water-well", 0, 0, Dir::East, None);
+    power_at(&mut sim, 0, 2, 2);
+    for x in 1..=4 {
+        place(&mut sim, "pipe", x, 0, Dir::East, None);
+    }
+    let tank = place(&mut sim, "tank", 5, 0, Dir::East, None);
+    run(&mut sim, 1);
+    let well = sim.entity_at(TilePos::new(0, 0)).unwrap();
+    sim.apply(&Command::Remove { entity: well });
+    let held = sim.inventory(tank)[0].1;
+    assert!(held > 400, "{held}");
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let after = loaded.inventory(tank)[0].1;
+    assert!(held.abs_diff(after) <= 1, "{held} then {after}");
+    // Cutting the line keeps what each side held, less the cut pipe's share
+    // (100 of the line's 2900).
+    let cut = sim.entity_at(TilePos::new(2, 0)).unwrap();
+    sim.apply(&Command::Remove { entity: cut });
+    let left = sim.inventory(sim.entity_at(TilePos::new(1, 0)).unwrap())[0].1;
+    let right = sim.inventory(tank)[0].1;
+    assert!(
+        left + right + 2 >= held - held / 25,
+        "{left} + {right} of {held}"
+    );
+}
