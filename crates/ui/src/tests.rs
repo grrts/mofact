@@ -329,6 +329,16 @@ fn unaffordable_tools_say_so_in_red() {
 fn the_research_sheet_picks_what_labs_study() {
     let mut f = Fixture::new();
     f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(
+        !f.hud.hits.iter().any(|(_, h)| *h == Hit::Research),
+        "no research button before there is a lab"
+    );
+    let mut lab = f.snapshot.entities[1].clone();
+    lab.id = EntityId(90);
+    lab.building = "lab".into();
+    lab.pos = TilePos::new(20, 20);
+    f.snapshot.entities.push(lab);
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
     let button = f.find(&Hit::Research);
     assert_eq!(f.tap(centre(button)), (true, vec![]));
     assert!(f.hud.researching());

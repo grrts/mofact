@@ -31,6 +31,8 @@ const PRESSED: Rgba = [0x3a, 0x44, 0x4f, 0xff];
 const TEXT: Rgba = [0xe9, 0xed, 0xf0, 0xff];
 const MUTED: Rgba = [0x8a, 0x95, 0xa1, 0xff];
 const WORKING: Rgba = [0x63, 0xd4, 0x8a, 0xff];
+/// The height of the status chips under the stock, in points.
+const CHIP_H: f32 = 36.0;
 /// A finger that moves further than this (in points) is dragging, not tapping.
 const TAP_SLOP: f32 = 12.0;
 const TOAST_FOR: Duration = Duration::from_millis(2500);
@@ -579,16 +581,39 @@ impl Hud {
             [bar[0] - gap, h - m]
         };
 
+        // The top of the screen stays small on a phone: the stock, one row
+        // of status chips (research, problems), the goal card, then a tip.
         let top = self.stock(view, o, [m, m]);
-        // The sound button leads the research row.
-        let left = self.sound_button(o, [m, top + gap]) + gap;
-        let top = self.research_button(view, o, [left, top + gap], corner[0] - left);
-        let top = self.goal_card(view, o, [m, top + gap], corner[0] - m);
+        // The sound button keeps the top-right corner, clear of the thumb.
+        let right = corner[0] - 36.0 * u;
+        self.sound_button(o, [right, m]);
+        let right = right - gap;
         self.found = problems::find(view);
         if self.found.is_empty() {
             self.problems = false;
         }
-        let top = self.problems_button(o, [m, top + gap], corner[0] - m);
+        // The chips share the stock's row while there is room beside it.
+        let stock_end = self
+            .hits
+            .iter()
+            .filter(|(_, h)| matches!(h, Hit::Item(_)))
+            .map(|(r, _)| r[0] + r[2])
+            .fold(m, f32::max);
+        let beside = stock_end + 8.0 * u;
+        let room = right - beside;
+        let (row, start, end) = if room >= 220.0 * u {
+            (m, beside, right)
+        } else {
+            (top.max(m + 36.0 * u) + gap, m, corner[0])
+        };
+        let x = self.research_button(view, o, [start, row], end - start);
+        let x = self.problems_button(o, [x, row], end - x);
+        let top = if x > start {
+            top.max(row + CHIP_H * u)
+        } else {
+            top
+        };
+        let top = self.goal_card(view, o, [m, top + gap], corner[0] - m);
         let mut tip_y = top + gap;
         if let Some((text, at, ink)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
@@ -598,11 +623,15 @@ impl Hud {
                 self.toast = None;
             }
         }
+        // With the hand and a goal on screen, the goal card already says
+        // what to do next; the general tip would only push the map down.
+        let hand_with_goal = *view.tool == Tool::Hand && view.snapshot.goal.is_some();
         if selected.is_none()
             && !self.research
             && !self.more
             && !self.problems
             && self.browse.is_none()
+            && !hand_with_goal
         {
             self.tip(view, o, [m, tip_y], corner[0] - m);
         }
@@ -982,9 +1011,21 @@ impl Hud {
             def.title
         );
         let px = fit(o, &text, px, width - 40.0 * u - cw);
-        let w = (o.measure(&text, px) + cw + 40.0 * u).min(width);
-        let fill = if self.hint { PRESSED } else { RAISED };
-        o.panel(at, [w, h], 10.0 * u, fill);
+        // The hint sits inside the card, so goal and hint read as one thing.
+        let hint_px = 14.0 * u;
+        let line = 20.0 * u;
+        let lines = if self.hint {
+            wrap(o, &def.hint, hint_px, width - 28.0 * u)
+        } else {
+            Vec::new()
+        };
+        let w = if lines.is_empty() {
+            (o.measure(&text, px) + cw + 40.0 * u).min(width)
+        } else {
+            width
+        };
+        let total = h + lines.len() as f32 * line + if lines.is_empty() { 0.0 } else { 8.0 * u };
+        o.panel(at, [w, total], 10.0 * u, RAISED);
         let base = at[1] + (h - 6.0 * u + o.cap_height(px)) / 2.0;
         o.text(&text, [at[0] + 14.0 * u, base], px, palette::ACCENT);
         o.text(&count, [at[0] + w - 14.0 * u - cw, base], 14.0 * u, MUTED);
@@ -1002,49 +1043,47 @@ impl Hud {
             1.5 * u,
             WORKING,
         );
-        self.hits.push(([at[0], at[1], w, h], Hit::Goal));
-        let mut bottom = at[1] + h;
-        if self.hint {
-            bottom = chip(o, &def.hint, [at[0], bottom + 6.0 * u], width, u, TEXT);
-            // The hint is part of the card: a tap on it folds it away too.
-            self.hits
-                .push(([at[0], at[1] + h, width, bottom - at[1] - h], Hit::Goal));
+        for (i, l) in lines.iter().enumerate() {
+            let y = at[1] + h + 4.0 * u + o.cap_height(hint_px) + i as f32 * line;
+            o.text(l, [at[0] + 14.0 * u, y], hint_px, TEXT);
         }
-        bottom
+        // A tap anywhere on the card folds the hint away or brings it back.
+        self.hits.push(([at[0], at[1], w, total], Hit::Goal));
+        at[1] + total
     }
 
     /// The problems button, under the research button, when anything is
     /// stuck. Returns its bottom edge.
     fn problems_button(&mut self, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
         if self.found.is_empty() {
-            return at[1] - 10.0 * self.unit;
+            return at[0];
         }
         let u = self.unit;
-        let h = 36.0 * u;
+        let h = CHIP_H * u;
         let n: usize = self.found.iter().map(|p| p.at.len()).sum();
         let text = if n == 1 {
-            "1 problem: tap to see it".to_string()
+            "1 problem".to_string()
         } else {
-            format!("{n} problems: tap to see them")
+            format!("{n} problems")
         };
-        let px = fit(o, &text, 14.0 * u, width - 28.0 * u);
-        let w = (o.measure(&text, px) + 28.0 * u).min(width);
+        let px = fit(o, &text, 14.0 * u, width - 32.0 * u);
+        let w = (o.measure(&text, px) + 38.0 * u).min(width);
         let fill = if self.problems { PRESSED } else { RAISED };
         o.panel(at, [w, h], h / 2.0, fill);
         o.panel(
-            [at[0] + 10.0 * u, at[1] + (h - 8.0 * u) / 2.0],
-            [8.0 * u, 8.0 * u],
-            4.0 * u,
+            [at[0] + 12.0 * u, at[1] + (h - 9.0 * u) / 2.0],
+            [9.0 * u, 9.0 * u],
+            4.5 * u,
             palette::STARVE,
         );
         o.text(
             &text,
-            [at[0] + 24.0 * u, at[1] + (h + o.cap_height(px)) / 2.0],
+            [at[0] + 28.0 * u, at[1] + (h + o.cap_height(px)) / 2.0],
             px,
             TEXT,
         );
         self.hits.push(([at[0], at[1], w, h], Hit::Problems));
-        at[1] + h
+        at[0] + w + 8.0 * u
     }
 
     /// The problems list, bottom-left at `at`, at most `room` tall: one line
@@ -1119,29 +1158,33 @@ impl Hud {
     }
 
     fn research_button(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
-        if view.content.research.is_empty() {
-            return at[1] - 6.0 * self.unit;
+        let r = &view.snapshot.research;
+        // Research means nothing until there is a lab to do it, so the
+        // button waits for the first lab (or research already under way).
+        let has_lab = view.snapshot.entities.iter().any(|e| {
+            view.building(&e.building)
+                .is_some_and(|b| matches!(b.role, BuildingRole::Lab { .. }))
+        });
+        if view.content.research.is_empty() || !(has_lab || r.current.is_some() || self.research) {
+            return at[0];
         }
         let u = self.unit;
-        let h = 36.0 * u;
-        let px = 14.0 * u;
-        let r = &view.snapshot.research;
+        let h = CHIP_H * u;
         let current = r
             .current
             .as_ref()
             .and_then(|id| view.content.research.iter().find(|d| &d.id == id));
         let (text, ink) = match current {
             Some(d) => (
-                format!("Research: {} {}/{}", d.name, r.progress.0, r.progress.1),
+                format!("{} {}/{}", d.name, r.progress.0, r.progress.1),
                 TEXT,
             ),
-            None if view.content.research.iter().any(|d| view.research_ready(d)) => (
-                "Research: pick what labs study".to_string(),
-                palette::ACCENT,
-            ),
-            None => ("Research: all done".to_string(), MUTED),
+            None if view.content.research.iter().any(|d| view.research_ready(d)) => {
+                ("Pick research".to_string(), palette::ACCENT)
+            }
+            None => ("Research done".to_string(), MUTED),
         };
-        let px = fit(o, &text, px, width - 28.0 * u);
+        let px = fit(o, &text, 14.0 * u, width - 28.0 * u);
         let w = (o.measure(&text, px) + 28.0 * u).min(width);
         let fill = if self.research { PRESSED } else { RAISED };
         o.panel(at, [w, h], h / 2.0, fill);
@@ -1161,7 +1204,7 @@ impl Hud {
             ink,
         );
         self.hits.push(([at[0], at[1], w, h], Hit::Research));
-        at[1] + h
+        at[0] + w + 8.0 * u
     }
 
     /// The recipe browser for `item`, bottom-left at `at`, at most `room`
@@ -1413,6 +1456,9 @@ impl Hud {
                 !matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. }) && !on_bar(&b.id)
             })
             .collect();
+        // What can be built now comes first; locked buildings follow.
+        let mut list = list;
+        list.sort_by_key(|b| !view.building_open(&b.id));
         let inner = width - 2.0 * pad;
         let cols = ((inner + gap) / (96.0 * u + gap)).floor().max(1.0) as usize;
         let cw = (inner - gap * (cols - 1) as f32) / cols as f32;
