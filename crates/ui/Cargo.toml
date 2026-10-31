@@ -11,6 +11,7 @@ publish.workspace = true
 mofact-core.workspace = true
 mofact-input.workspace = true
 mofact-render.workspace = true
+web-time = "1"
 
 [dev-dependencies]
 mofact-content.workspace = true

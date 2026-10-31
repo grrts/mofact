@@ -74,20 +74,33 @@ pub struct Gpu {
 impl Gpu {
     /// Open the GPU that can present to `surface`, created from `instance`.
     pub fn new(instance: wgpu::Instance, surface: &wgpu::Surface<'_>) -> Result<Self, GpuError> {
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::LowPower,
-            compatible_surface: Some(surface),
-            ..Default::default()
-        }))
-        .map_err(GpuError::NoAdapter)?;
-        let (device, queue) = pollster::block_on(adapter.request_device(&wgpu::DeviceDescriptor {
-            label: Some("mofact"),
-            // Phones and WebGL-class GPUs are the floor (R46).
-            required_limits:
-                wgpu::Limits::downlevel_webgl2_defaults().using_resolution(adapter.limits()),
-            ..Default::default()
-        }))
-        .map_err(GpuError::NoDevice)?;
+        pollster::block_on(Self::open(instance, surface))
+    }
+
+    /// [`Gpu::new`] for the browser, which can only wait for the GPU by
+    /// awaiting it.
+    pub async fn open(
+        instance: wgpu::Instance,
+        surface: &wgpu::Surface<'_>,
+    ) -> Result<Self, GpuError> {
+        let adapter = instance
+            .request_adapter(&wgpu::RequestAdapterOptions {
+                power_preference: wgpu::PowerPreference::LowPower,
+                compatible_surface: Some(surface),
+                ..Default::default()
+            })
+            .await
+            .map_err(GpuError::NoAdapter)?;
+        let (device, queue) = adapter
+            .request_device(&wgpu::DeviceDescriptor {
+                label: Some("mofact"),
+                // Phones and WebGL-class GPUs are the floor (R46).
+                required_limits: wgpu::Limits::downlevel_webgl2_defaults()
+                    .using_resolution(adapter.limits()),
+                ..Default::default()
+            })
+            .await
+            .map_err(GpuError::NoDevice)?;
         Ok(Self {
             instance,
             adapter,

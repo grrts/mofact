@@ -44,10 +44,22 @@ jobs:
         if: env.CLOSED != 'true'
         with:
           workspaces: src
-      - name: Build the engine for the web
+      - name: Build the game for the web
         if: env.CLOSED != 'true'
         working-directory: src
         run: cargo build --release -p mofact-web --target wasm32-unknown-unknown
+      - name: Install wasm-bindgen
+        if: env.CLOSED != 'true'
+        working-directory: src
+        # The CLI must match the wasm-bindgen crate the build used exactly.
+        run: |
+          version=$(cargo metadata --format-version 1 --locked | jq -r '.packages[] | select(.name == "wasm-bindgen") | .version')
+          name="wasm-bindgen-${version}-x86_64-unknown-linux-musl"
+          if curl -sSfL "https://github.com/wasm-bindgen/wasm-bindgen/releases/download/${version}/${name}.tar.gz" | tar -xz; then
+            echo "$PWD/${name}" >> "$GITHUB_PATH"
+          else
+            cargo install --locked wasm-bindgen-cli --version "$version"
+          fi
 
       - name: Check out gh-pages (or start it)
         run: |
@@ -70,7 +82,7 @@ jobs:
           # main owns the root but must not delete the PR previews under pr/.
           find "$dest" -mindepth 1 -maxdepth 1 ! -name pr ! -name .git ! -name .nojekyll -exec rm -rf {} +
           cp -R src/web/. "$dest/"
-          cp src/target/wasm32-unknown-unknown/release/mofact_web.wasm "$dest/mofact.wasm"
+          wasm-bindgen --target web --no-typescript --out-dir "$dest" src/target/wasm32-unknown-unknown/release/mofact_web.wasm
           rm -f "$dest/README.md"
           sed -i "s/__MOFACT_BUILD__/${SHA::7}/g" "$dest/index.html"
 

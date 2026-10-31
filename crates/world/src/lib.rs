@@ -195,14 +195,33 @@ impl Fnv {
 
 /// Generates chunks on a worker thread. Ask for chunks near the player or a
 /// building with [`request`](Self::request) and collect them with [`ready`](Self::ready).
+///
+/// The browser has no threads to give it, so there each chunk is made as it
+/// is asked for, and is ready at once.
 pub struct Generator {
     tx: Option<Sender<ChunkPos>>,
     rx: Receiver<Chunk>,
     asked: HashSet<ChunkPos>,
     worker: Option<std::thread::JoinHandle<()>>,
+    /// Where chunks go when they are made inline, and how to make them.
+    #[cfg(target_arch = "wasm32")]
+    inline: (Sender<Chunk>, WorldGen),
 }
 
 impl Generator {
+    #[cfg(target_arch = "wasm32")]
+    pub fn spawn(gen: WorldGen) -> Self {
+        let (done, rx) = mpsc::channel();
+        Self {
+            tx: None,
+            rx,
+            asked: HashSet::new(),
+            worker: None,
+            inline: (done, gen),
+        }
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn(gen: WorldGen) -> Self {
         let (tx, jobs) = mpsc::channel::<ChunkPos>();
         let (done, rx) = mpsc::channel();
@@ -227,6 +246,8 @@ impl Generator {
     /// Queue a chunk unless it was already asked for.
     pub fn request(&mut self, pos: ChunkPos) {
         if self.asked.insert(pos) {
+            #[cfg(target_arch = "wasm32")]
+            let _ = self.inline.0.send(generate(&self.inline.1, pos));
             if let Some(tx) = &self.tx {
                 let _ = tx.send(pos);
             }

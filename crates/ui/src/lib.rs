@@ -21,7 +21,7 @@ use mofact_input::{Pointer, Tool, MOUSE_PAN};
 use mofact_render::look;
 use mofact_render::palette::{self, Rgba};
 use mofact_render::{Look, Overlay};
-use std::time::{Duration, Instant};
+use web_time::{Duration, Instant};
 
 pub use mofact_core as core;
 

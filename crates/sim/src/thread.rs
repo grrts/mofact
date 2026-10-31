@@ -93,6 +93,11 @@ impl SimHandle {
     pub fn set_paused(&self, paused: bool) {
         let _ = self.tx.send(Msg::Pause(paused));
     }
+
+    /// Run the ticks that are due. The thread does this by itself, so here
+    /// it does nothing; it exists so callers can treat this and
+    /// [`LocalSim`](crate::LocalSim) alike.
+    pub fn pump(&self) {}
 }
 
 impl SimHandle {
