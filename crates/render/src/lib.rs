@@ -11,6 +11,7 @@
 //! band that fits the camera.
 
 pub mod atlas;
+mod fx;
 pub mod look;
 pub mod overlay;
 pub mod palette;
