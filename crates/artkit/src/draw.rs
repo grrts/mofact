@@ -742,3 +742,260 @@ pub fn underground(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
         }
     }
 }
+
+/// The sides a pipe joins, from a mask of bits (east 1, south 2, west 4,
+/// north 8). One joined on no side is drawn as a stub running east to west.
+fn arms(links: u8) -> impl Iterator<Item = (f32, f32)> {
+    let links = if links & 15 == 0 { 5 } else { links };
+    DIRS.into_iter()
+        .enumerate()
+        .filter(move |(i, _)| links & (1 << i) != 0)
+        .map(|(_, d)| d)
+}
+
+/// A run from the tile's centre to the side `d`, `w` of a tile wide.
+fn arm(c: &mut Canvas, z: f32, (dx, dy): (f32, f32), w: f32, col: Rgba) {
+    let (h, r) = (z * 0.5, z * w / 2.0);
+    let (x0, x1) = (
+        h + dx.min(0.0) * h - r * dy.abs(),
+        h + dx.max(0.0) * h + r * dy.abs(),
+    );
+    let (y0, y1) = (
+        h + dy.min(0.0) * h - r * dx.abs(),
+        h + dy.max(0.0) * h + r * dx.abs(),
+    );
+    c.fill_rect(x0, y0, x1 - x0, y1 - y0, col);
+}
+
+/// The channel down a pipe's middle, where its fluid shows.
+const CHANNEL: f32 = 0.18;
+
+/// A pipe tile joined on the sides set in `links` (bits east 1, south 2,
+/// west 4, north 8): a steel run with a dark channel down its middle. An
+/// empty pipe shows the channel dark; [`pipe_fluid`] fills it.
+pub fn pipe(c: &mut Canvas, z: f32, fine: bool, links: u8) {
+    let h = z * 0.5;
+    let sh = z * 0.06;
+    c.save();
+    c.translate(sh, sh * 1.3);
+    for d in arms(links) {
+        arm(c, z, d, 0.5, pal::SHADOW);
+    }
+    c.restore();
+    for d in arms(links) {
+        arm(c, z, d, 0.5, pal::MACHINE_EDGE);
+    }
+    c.fill_circle(h, h, z * 0.25, pal::MACHINE_EDGE);
+    for d in arms(links) {
+        arm(c, z, d, 0.42, pal::PIPE);
+    }
+    c.fill_circle(h, h, z * 0.21, pal::PIPE);
+    if fine {
+        // A lit edge along each run, and a flange where it meets the next tile.
+        for (dx, dy) in arms(links) {
+            let (ex, ey) = (h + dx * z * 0.42, h + dy * z * 0.42);
+            let (fw, fl) = (z * 0.08, z * 0.54);
+            if dx != 0.0 {
+                c.fill_rect(ex - fw / 2.0, h - fl / 2.0, fw, fl, pal::MACHINE_EDGE);
+                c.fill_rect(
+                    ex - fw / 2.0 + 1.0,
+                    h - fl / 2.0 + 1.0,
+                    fw - 2.0,
+                    fl - 2.0,
+                    pal::PIPE_HI,
+                );
+            } else {
+                c.fill_rect(h - fl / 2.0, ey - fw / 2.0, fl, fw, pal::MACHINE_EDGE);
+                c.fill_rect(
+                    h - fl / 2.0 + 1.0,
+                    ey - fw / 2.0 + 1.0,
+                    fl - 2.0,
+                    fw - 2.0,
+                    pal::PIPE_HI,
+                );
+            }
+        }
+    }
+    for d in arms(links) {
+        arm(c, z, d, CHANNEL + 0.05, pal::MACHINE_EDGE);
+    }
+    c.fill_circle(h, h, z * (CHANNEL + 0.05) / 2.0, pal::MACHINE_EDGE);
+    pipe_channel(c, z, links, pal::PIPE_EMPTY);
+}
+
+fn pipe_channel(c: &mut Canvas, z: f32, links: u8, col: Rgba) {
+    for d in arms(links) {
+        arm(c, z, d, CHANNEL, col);
+    }
+    c.fill_circle(z * 0.5, z * 0.5, z * CHANNEL / 2.0, col);
+}
+
+/// The fluid in a pipe joined on `links`, in white to be tinted by the
+/// fluid's colour and faded by how full the pipe is.
+pub fn pipe_fluid(c: &mut Canvas, z: f32, links: u8) {
+    pipe_channel(c, z, links, pal::WHITE);
+}
+
+/// The window in a tank's lid, as a fraction of its 2×2 footprint.
+const TANK_WINDOW: f32 = 0.3;
+
+/// A 2×2 storage tank seen from above: a round steel drum on a square
+/// footing, with pipe stubs out of each side and a window on what it holds.
+pub fn tank(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z * 2.0;
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let sh = z * 0.08;
+    // A square footing the pipes around it join onto.
+    shadow(
+        c,
+        rr(
+            s * 0.04 + sh,
+            s * 0.04 + sh * 1.3,
+            s * 0.92,
+            s * 0.92,
+            s * 0.16,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.04, s * 0.04, s * 0.92, s * 0.92, s * 0.16),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.14),
+        pal::MACHINE,
+    );
+    shadow(c, ellipse(cx + sh * 0.5, cy + sh * 0.6, s * 0.42, s * 0.42));
+    c.fill_circle(cx, cy, s * 0.42, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.39, pal::PIPE);
+    c.fill_circle(cx, cy, s * 0.33, shade(pal::PIPE, -0.2));
+    if fine {
+        c.stroke_circle(cx, cy, s * 0.36, pal::PIPE_HI, (z * 0.03).max(1.0));
+        for k in 0..8 {
+            let a = k as f32 / 8.0 * TAU;
+            bolt(
+                c,
+                cx + a.cos() * s * 0.365,
+                cy + a.sin() * s * 0.365,
+                z * 0.035,
+            );
+        }
+    }
+    c.fill_circle(cx, cy, s * (TANK_WINDOW + 0.025), pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * TANK_WINDOW, pal::PIPE_EMPTY);
+}
+
+/// What a tank holds, as a white disc filling its window, to be tinted and
+/// drawn smaller as the tank empties.
+pub fn tank_fluid(c: &mut Canvas, z: f32) {
+    let s = z * 2.0;
+    c.fill_circle(s / 2.0, s / 2.0, s * TANK_WINDOW, pal::WHITE);
+}
+
+/// A pump facing east: a pipe through a motor housing, with an arrow for
+/// the way it pushes.
+pub fn pump(c: &mut Canvas, z: f32, fine: bool) {
+    pipe(c, z, fine, 5);
+    let s = z;
+    let sh = z * 0.07;
+    shadow(
+        c,
+        rr(
+            s * 0.2 + sh,
+            s * 0.14 + sh * 1.3,
+            s * 0.6,
+            s * 0.72,
+            s * 0.12,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.2, s * 0.14, s * 0.6, s * 0.72, s * 0.12),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.24, s * 0.18, s * 0.52, s * 0.64, s * 0.1),
+        pal::MACHINE,
+    );
+    c.fill_circle(s * 0.5, s * 0.5, s * 0.2, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.5, s * 0.5, s * 0.17, pal::MACHINE_HI);
+    arrow(c, s * 0.5, s * 0.5, 0, s * 0.4, pal::ACCENT);
+    if fine {
+        for (bx, by) in [(0.3, 0.24), (0.7, 0.24), (0.3, 0.76), (0.7, 0.76)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+}
+
+/// One end of an underground pipe facing east. An entrance takes the pipe
+/// in from the west and goes down under a cap on its eastern half; an exit
+/// is the same turned around.
+pub fn underground_pipe(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
+    pipe(c, z, fine, if exit { 1 } else { 4 });
+    let s = z;
+    let sh = z * 0.07;
+    let cx = if exit { s * 0.38 } else { s * 0.62 };
+    shadow(c, ellipse(cx + sh, s * 0.5 + sh * 1.3, s * 0.32, s * 0.32));
+    c.fill_circle(cx, s * 0.5, s * 0.32, pal::MACHINE_EDGE);
+    c.fill_circle(cx, s * 0.5, s * 0.28, pal::MACHINE);
+    c.fill_circle(cx, s * 0.5, s * 0.16, pal::MACHINE_EDGE);
+    c.fill_circle(cx, s * 0.5, s * 0.12, pal::PIPE);
+    if fine {
+        for k in 0..4 {
+            let a = k as f32 / 4.0 * TAU + PI / 4.0;
+            bolt(
+                c,
+                cx + a.cos() * s * 0.22,
+                s * 0.5 + a.sin() * s * 0.22,
+                s * 0.025,
+            );
+        }
+    }
+}
+
+/// A water well: a concrete pad with a wellhead and its valve wheel.
+pub fn well(c: &mut Canvas, z: f32, fine: bool, water: Rgba) {
+    let s = z;
+    let sh = z * 0.07;
+    shadow(
+        c,
+        rr(
+            s * 0.06 + sh,
+            s * 0.06 + sh * 1.3,
+            s * 0.88,
+            s * 0.88,
+            s * 0.14,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.14),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.8, s * 0.12),
+        pal::CONCRETE,
+    );
+    c.fill_circle(s * 0.5, s * 0.5, s * 0.3, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.5, s * 0.5, s * 0.26, water);
+    c.fill_circle(s * 0.5, s * 0.5, s * 0.16, shade(water, -0.35));
+    c.stroke_circle(s * 0.5, s * 0.5, s * 0.2, pal::ACCENT, (z * 0.05).max(1.0));
+    c.line(
+        &[(s * 0.3, s * 0.5), (s * 0.7, s * 0.5)],
+        pal::ACCENT,
+        (z * 0.04).max(1.0),
+    );
+    c.line(
+        &[(s * 0.5, s * 0.3), (s * 0.5, s * 0.7)],
+        pal::ACCENT,
+        (z * 0.04).max(1.0),
+    );
+    if fine {
+        for (bx, by) in [(0.18, 0.18), (0.82, 0.18), (0.18, 0.82), (0.82, 0.82)] {
+            bolt(c, bx * s, by * s, s * 0.03);
+        }
+    }
+}

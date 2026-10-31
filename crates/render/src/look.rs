@@ -24,6 +24,8 @@ pub const ORE: &str = "ore-tile";
 /// The badges over a machine that is waiting for input or can't get rid of its output.
 pub const STARVED: &str = "badge:starved";
 pub const BLOCKED: &str = "badge:blocked";
+/// The fluid in a pipe joined on a set of sides, `pipe-fluid:<links>`.
+const PIPE_FLUID: &str = "pipe-fluid";
 
 /// What a sprite in the catalogue is a picture of.
 #[derive(Clone, Debug, PartialEq)]
@@ -35,6 +37,23 @@ enum Art {
     Splitter,
     Underground {
         exit: bool,
+    },
+    /// A pipe joined on the sides in `links` (bits east 1, south 2, west 4, north 8).
+    Pipe {
+        links: u8,
+    },
+    /// The fluid inside a pipe, in white for tinting.
+    PipeFluid {
+        links: u8,
+    },
+    Tank,
+    TankFluid,
+    Pump,
+    UndergroundPipe {
+        exit: bool,
+    },
+    Well {
+        fluid: Rgba,
     },
     Drill {
         ore: Rgba,
@@ -72,6 +91,13 @@ enum Kind {
     /// as belts are.
     Splitter,
     Underground,
+    /// Pipes are painted once per set of joined sides and never turned.
+    Pipe,
+    Tank,
+    /// Pumps and underground pipes face east and are turned, as belts are.
+    Pump,
+    UndergroundPipe,
+    Well,
 }
 
 #[derive(Clone, Debug)]
@@ -100,6 +126,8 @@ pub struct Look {
     sprites: Vec<Sprite>,
     buildings: HashMap<BuildingId, BuildingLook>,
     items: HashMap<ItemId, (usize, Rgba)>,
+    /// The first of the sixteen pipe-fluid sprites, one per set of sides.
+    pipe_fluid: usize,
 }
 
 fn shape(s: IconShape) -> Shape {
@@ -149,6 +177,11 @@ impl Look {
             (1, 1),
             Art::Badge { starved: false },
         );
+        look.pipe_fluid = look.sprites.len();
+        for links in 0..16u8 {
+            let art = Art::PipeFluid { links };
+            push(&mut look, format!("{PIPE_FLUID}:{links}"), (1, 1), art);
+        }
         for i in &content.items {
             look.items
                 .insert(i.id.clone(), (look.sprites.len(), palette::item(&i.color)));
@@ -167,6 +200,11 @@ impl Look {
                 BuildingRole::Generator { .. } => (Kind::Generator, Vec::new()),
                 BuildingRole::Splitter => (Kind::Splitter, Vec::new()),
                 BuildingRole::Underground { .. } => (Kind::Underground, Vec::new()),
+                BuildingRole::Pipe { .. } => (Kind::Pipe, Vec::new()),
+                BuildingRole::Tank { .. } => (Kind::Tank, Vec::new()),
+                BuildingRole::Pump { .. } => (Kind::Pump, Vec::new()),
+                BuildingRole::UndergroundPipe { .. } => (Kind::UndergroundPipe, Vec::new()),
+                BuildingRole::Well { .. } => (Kind::Well, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -202,12 +240,39 @@ impl Look {
                 Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
                 Kind::Generator => push(&mut look, id.to_owned(), b.size, Art::Turbine),
                 Kind::Splitter => push(&mut look, id.to_owned(), b.size, Art::Splitter),
-                Kind::Underground => {
+                Kind::Underground | Kind::UndergroundPipe => {
                     for exit in [false, true] {
                         let end = if exit { "exit" } else { "entrance" };
-                        let art = Art::Underground { exit };
+                        let art = if kind == Kind::Underground {
+                            Art::Underground { exit }
+                        } else {
+                            Art::UndergroundPipe { exit }
+                        };
                         push(&mut look, format!("{id}:{end}"), b.size, art);
                     }
+                }
+                Kind::Pipe => {
+                    for links in 0..16u8 {
+                        push(
+                            &mut look,
+                            format!("{id}:{links}"),
+                            b.size,
+                            Art::Pipe { links },
+                        );
+                    }
+                }
+                Kind::Tank => {
+                    push(&mut look, id.to_owned(), b.size, Art::Tank);
+                    push(&mut look, format!("{id}:fluid"), b.size, Art::TankFluid);
+                }
+                Kind::Pump => push(&mut look, id.to_owned(), b.size, Art::Pump),
+                Kind::Well => {
+                    let fluid = match &b.role {
+                        BuildingRole::Well { fluid, .. } => item_look(fluid).map(|l| l.1),
+                        _ => None,
+                    };
+                    let fluid = fluid.unwrap_or(palette::item("water"));
+                    push(&mut look, id.to_owned(), b.size, Art::Well { fluid });
                 }
                 _ => {
                     let none = std::iter::once(None);
@@ -296,9 +361,16 @@ impl Look {
     /// Whether `building` is drawn facing east and turned by its direction:
     /// belts, splitters and underground belts. Items ride across these.
     pub fn turns(&self, building: &BuildingId) -> bool {
-        self.buildings
-            .get(building)
-            .is_some_and(|b| matches!(b.kind, Kind::Belt | Kind::Splitter | Kind::Underground))
+        self.buildings.get(building).is_some_and(|b| {
+            matches!(
+                b.kind,
+                Kind::Belt
+                    | Kind::Splitter
+                    | Kind::Underground
+                    | Kind::Pump
+                    | Kind::UndergroundPipe
+            )
+        })
     }
 
     /// Whether `building` shows a status badge when it stalls.
@@ -312,8 +384,58 @@ impl Look {
                     | Kind::Generator
                     | Kind::Splitter
                     | Kind::Underground
+                    | Kind::Pipe
+                    | Kind::Tank
+                    | Kind::UndergroundPipe
             )
         })
+    }
+
+    /// The sprite that draws `building` joined to pipes on `links` (bits
+    /// east 1, south 2, west 4, north 8); for anything but a pipe, the same
+    /// as [`Look::sprite`].
+    pub fn linked(
+        &self,
+        building: &BuildingId,
+        dir: Dir,
+        setting: Option<&str>,
+        working: bool,
+        links: u8,
+    ) -> Option<&str> {
+        let b = self.buildings.get(building)?;
+        if b.kind != Kind::Pipe {
+            return self.sprite(building, dir, setting, working);
+        }
+        let at = b.base + usize::from(links & 15);
+        self.sprites.get(at).map(|s| s.name.as_str())
+    }
+
+    /// The white sprite that shows the fluid inside `building`, drawn over
+    /// it and turned with it, and whether it shrinks as it empties (a tank's
+    /// window) rather than fading (a pipe's channel).
+    pub fn fluid(&self, building: &BuildingId, exit: bool, links: u8) -> Option<(&str, bool)> {
+        let b = self.buildings.get(building)?;
+        let links = match b.kind {
+            Kind::Pipe if links & 15 == 0 => 5,
+            Kind::Pipe => links & 15,
+            // An underground pipe faces east and is turned: its pipe is on
+            // the west for an entrance, the east for an exit.
+            Kind::UndergroundPipe => {
+                if exit {
+                    1
+                } else {
+                    4
+                }
+            }
+            Kind::Tank => {
+                let at = b.base + 1;
+                return self.sprites.get(at).map(|s| (s.name.as_str(), true));
+            }
+            _ => return None,
+        };
+        self.sprites
+            .get(self.pipe_fluid + usize::from(links))
+            .map(|s| (s.name.as_str(), false))
     }
 
     /// The sprite that draws `building` facing `dir`, set to `setting` (a
@@ -330,7 +452,12 @@ impl Look {
         let at = match b.kind {
             Kind::Belt => return Some(BELT),
             Kind::Hub | Kind::Pole | Kind::Generator | Kind::Splitter => b.base,
-            Kind::Underground => b.base + usize::from(setting == Some("exit")),
+            Kind::Tank | Kind::Pump | Kind::Well => b.base,
+            // A pipe on its own, as an icon or a ghost, runs east to west.
+            Kind::Pipe => b.base + 5,
+            Kind::Underground | Kind::UndergroundPipe => {
+                b.base + usize::from(setting == Some("exit"))
+            }
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -417,6 +544,13 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
         Art::Splitter => draw::splitter(&mut c, z, fine),
         Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
+        Art::Pipe { links } => draw::pipe(&mut c, z, fine, links),
+        Art::PipeFluid { links } => draw::pipe_fluid(&mut c, z, links),
+        Art::Tank => draw::tank(&mut c, z, fine),
+        Art::TankFluid => draw::tank_fluid(&mut c, z),
+        Art::Pump => draw::pump(&mut c, z, fine),
+        Art::UndergroundPipe { exit } => draw::underground_pipe(&mut c, z, fine, exit),
+        Art::Well { fluid } => draw::well(&mut c, z, fine, fluid),
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
         Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
         Art::Assembler { product, ref pose } => draw::assembler(&mut c, z, product, fine, pose),

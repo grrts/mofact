@@ -31,4 +31,17 @@
         cost: [(item: "iron-plate", count: 1), (item: "wire", count: 2)]),
     (id: "wind-turbine", name: "Wind turbine", size: (1, 1), role: Generator(kw: 60.0),
         cost: [(item: "iron-plate", count: 10), (item: "gear", count: 5), (item: "wire", count: 5)]),
+    // Fluids (T31): pipes, tanks and underground pipes join into segments
+    // holding one fluid each; pumps move fluid between segments, and long
+    // segments slow the flow. `capacity` and `per_second` are fluid units.
+    (id: "pipe",      name: "Pipe",      size: (1, 1), role: Pipe(capacity: 100.0),
+        cost: [(item: "iron-plate", count: 1)]),
+    (id: "underground-pipe", name: "Underground pipe", size: (1, 1), role: UndergroundPipe(reach: 10),
+        cost: [(item: "iron-plate", count: 10)]),
+    (id: "tank",      name: "Tank",      size: (2, 2), role: Tank(capacity: 2500.0),
+        cost: [(item: "iron-plate", count: 20), (item: "steel", count: 5)]),
+    (id: "pump",      name: "Pump",      size: (1, 1), role: Pump(per_second: 1200.0), power: 30.0,
+        cost: [(item: "motor", count: 1), (item: "iron-plate", count: 2)]),
+    (id: "water-well", name: "Water well", size: (1, 1), role: Well(fluid: "water", per_second: 600.0), power: 90.0,
+        cost: [(item: "iron-plate", count: 10), (item: "gear", count: 5), (item: "motor", count: 1)]),
 ]

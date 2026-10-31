@@ -17,6 +17,8 @@ fn snapshot() -> Snapshot {
         ore: None,
         grid: None,
         exit: false,
+        fluid: None,
+        links: 0,
         state: MachineState::Starved,
         progress: 0.4,
     };
@@ -409,6 +411,8 @@ fn a_pole_sheet_shows_its_grid() {
         ore: None,
         grid: Some(0),
         exit: false,
+        fluid: None,
+        links: 0,
         state: MachineState::Working,
         progress: 0.0,
     });
@@ -519,6 +523,26 @@ fn a_long_press_opens_the_radial_menu_and_any_building_is_two_taps_away() {
         y: 900.0,
     });
     assert!(f.hud.poll(Instant::now() + LONG_PRESS).is_empty());
+    f.hud.pointer(Pointer::Up { id: 4 });
+
+    // With belts or remove in hand, a finger held still starts a drag, so
+    // no menu opens over it; with a building in hand, it does.
+    for (tool, opens) in [
+        (Tool::Belt, false),
+        (Tool::Remove, false),
+        (Tool::Place("drill".into()), true),
+    ] {
+        f.hud.radial = None;
+        f.draw((1080, 2340), 3.0, &tool);
+        f.hud.pointer(Pointer::Down {
+            id: 5,
+            x: 500.0,
+            y: 900.0,
+        });
+        f.hud.poll(Instant::now() + LONG_PRESS);
+        assert_eq!(f.hud.radial_open(), opens, "{tool:?}");
+        f.hud.pointer(Pointer::Up { id: 5 });
+    }
 }
 
 #[test]

@@ -39,9 +39,24 @@ pub struct EntityView {
     /// For an underground belt, whether this end is the exit.
     #[serde(default)]
     pub exit: bool,
+    /// For a pipe, tank or underground pipe: what its segment holds.
+    #[serde(default)]
+    pub fluid: Option<FluidView>,
+    /// For anything that carries fluid, the sides it connects on, as bits
+    /// by [`Dir`] index (east 1, south 2, west 4, north 8).
+    #[serde(default)]
+    pub links: u8,
     pub state: MachineState,
     /// Craft progress, 0.0 to 1.0.
     pub progress: f32,
+}
+
+/// The fluid in a pipe segment.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FluidView {
+    pub item: ItemId,
+    /// How full the segment is, 0.0 to 1.0.
+    pub fill: f32,
 }
 
 /// One item on a belt, positioned along the belt tile.

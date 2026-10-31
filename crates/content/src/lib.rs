@@ -105,6 +105,12 @@ fn read<T: serde::de::DeserializeOwned>(file: &Path) -> Result<T, LoadError> {
 pub fn check(content: &Content) -> Vec<String> {
     let mut problems = Vec::new();
     let mut items = HashSet::new();
+    let fluids: HashSet<&str> = content
+        .items
+        .iter()
+        .filter(|i| i.kind == mofact_core::content::ItemKind::Fluid)
+        .map(|i| i.id.as_str())
+        .collect();
     for item in &content.items {
         if !items.insert(item.id.as_str()) {
             problems.push(format!("item `{}` is defined twice", item.id));
@@ -159,6 +165,12 @@ pub fn check(content: &Content) -> Vec<String> {
             problems.push(format!("{owner} has a zero size"));
         }
         stacks(&owner, &b.cost, &mut problems);
+        if let Some(f) = b.cost.iter().find(|s| fluids.contains(s.item.as_str())) {
+            problems.push(format!(
+                "{owner} costs fluid `{}`, which stock can't hold",
+                f.item
+            ));
+        }
         if b.power < 0.0 || b.power.is_nan() {
             problems.push(format!("{owner} draws negative power"));
         }
@@ -168,6 +180,30 @@ pub fn check(content: &Content) -> Vec<String> {
             }
             BuildingRole::Generator { kw } if kw <= 0.0 || kw.is_nan() => {
                 problems.push(format!("{owner} is a generator that gives nothing"));
+            }
+            BuildingRole::Pipe { capacity } | BuildingRole::Tank { capacity }
+                if capacity <= 0.0 || capacity.is_nan() =>
+            {
+                problems.push(format!("{owner} holds no fluid"));
+            }
+            BuildingRole::UndergroundPipe { reach: 0 } => {
+                problems.push(format!(
+                    "{owner} is an underground pipe that reaches nothing"
+                ));
+            }
+            BuildingRole::Pump { per_second } if per_second <= 0.0 || per_second.is_nan() => {
+                problems.push(format!("{owner} is a pump that moves nothing"));
+            }
+            BuildingRole::Well {
+                ref fluid,
+                per_second,
+            } => {
+                if !fluids.contains(fluid.as_str()) {
+                    problems.push(format!("{owner} draws `{fluid}`, which isn't a fluid"));
+                }
+                if per_second <= 0.0 || per_second.is_nan() {
+                    problems.push(format!("{owner} is a well that gives nothing"));
+                }
             }
             _ => {}
         }
@@ -318,7 +354,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len()
             ),
-            (14, 10, 12, 5)
+            (15, 10, 17, 6)
         );
         let circuit = c
             .recipes

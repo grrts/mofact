@@ -1,4 +1,4 @@
-//! Save format v2 (T11, R54): a versioned binary file. v2 adds research
+//! Save format v5 (T11, R54): a versioned binary file. v2 adds research
 //! progress and labs (T28).
 //!
 //! A save is the magic bytes `MOFACT`, a little-endian `u16` format version,
@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 4;
+pub const VERSION: u16 = 5;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -117,6 +117,17 @@ enum SavedState {
         partner: Option<u32>,
         items: Vec<(ItemId, u32)>,
     },
+    /// A pipe or tank, and its share of its segment's fluid in milli-units.
+    Pipe {
+        content: Option<(ItemId, u64)>,
+    },
+    PipeTunnel {
+        exit: bool,
+        partner: Option<u32>,
+        content: Option<(ItemId, u64)>,
+    },
+    Pump,
+    Well,
 }
 
 /// Bring an older payload up to [`VERSION`].
@@ -135,9 +146,10 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: None,
             })
         }
-        // Versions 3 and 4 added poles and generators, then splitters and
-        // underground belts: new variants only, so a version 2 payload reads as it is.
-        2..=4 => postcard::from_bytes(payload).map_err(corrupt),
+        // Versions 3 to 5 added poles and generators, then splitters and
+        // underground belts, then fluids: new variants only, so a version 2
+        // payload reads as it is.
+        2..=5 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -191,6 +203,16 @@ impl Sim {
                         partner: tu.partner.map(|p| p.0),
                         items: tu.items.iter().map(|&(i, p)| (item(i), p)).collect(),
                     },
+                    State::Pipe => SavedState::Pipe {
+                        content: self.fluids.share(id.0 as usize).map(|(f, n)| (item(f), n)),
+                    },
+                    State::PipeTunnel(tu) => SavedState::PipeTunnel {
+                        exit: tu.exit,
+                        partner: tu.partner.map(|p| p.0),
+                        content: self.fluids.share(id.0 as usize).map(|(f, n)| (item(f), n)),
+                    },
+                    State::Pump => SavedState::Pump,
+                    State::Well => SavedState::Well,
                 };
                 let saved = Saved {
                     building: t.buildings[e.kind as usize].id.clone(),
@@ -293,6 +315,8 @@ impl Sim {
             .as_ref()
             .and_then(|id| research(id, &mut warnings))
             .filter(|&r| !sim.research.done[r as usize]);
+        // What each pipe brought, to fill the segments once they are built.
+        let mut fluid = std::collections::HashMap::new();
         for (slot, s) in world.entities {
             let Some(kind) = t.building(&s.building) else {
                 warnings.push(format!("building `{}` no longer exists", s.building));
@@ -384,6 +408,35 @@ impl Sim {
                         .filter_map(|(i, p)| Some((item(i, &mut warnings)?, *p)))
                         .collect(),
                 }),
+                (SavedState::Pipe { content }, Role::Pipe { .. } | Role::Tank { .. }) => {
+                    if let Some((f, n)) = content {
+                        if let Some(f) = item(&f, &mut warnings) {
+                            fluid.insert(slot as usize, (f, n));
+                        }
+                    }
+                    State::Pipe
+                }
+                (
+                    SavedState::PipeTunnel {
+                        exit,
+                        partner,
+                        content,
+                    },
+                    Role::UndergroundPipe { .. },
+                ) => {
+                    if let Some((f, n)) = content {
+                        if let Some(f) = item(&f, &mut warnings) {
+                            fluid.insert(slot as usize, (f, n));
+                        }
+                    }
+                    State::PipeTunnel(Tunnel {
+                        exit,
+                        partner: partner.map(mofact_core::ids::EntityId),
+                        items: Vec::new(),
+                    })
+                }
+                (SavedState::Pump, Role::Pump { .. }) => State::Pump,
+                (SavedState::Well, Role::Well { .. }) => State::Well,
                 _ => {
                     warnings.push(format!(
                         "building `{}` changed role; rebuilt empty",
@@ -423,6 +476,13 @@ impl Sim {
             }
         }
         sim.rebuild_grids();
+        sim.fluids = match sim.build_fluids(|slot| fluid.get(&slot).copied()) {
+            Ok(f) => f,
+            Err(_) => {
+                warnings.push("pipes held two fluids in one line; emptied them".into());
+                sim.build_fluids(|_| None).expect("empty pipes can't mix")
+            }
+        };
         Ok((sim, warnings))
     }
 }
