@@ -24,12 +24,12 @@
 <body>
 <canvas id="game" tabindex="0"></canvas>
 <div id="status">Loading Mofact…</div>
-<div id="build">build dc71caa</div>
+<div id="build">build 21b504a</div>
 <script type="module">
 // The page is only a canvas: the game is the same Rust app the phones run,
 // compiled to WebAssembly (platform/web). Each deploy stamps its commit into
 // these URLs, so a new build is fetched fresh instead of served from cache.
-const build = 'dc71caa';
+const build = '21b504a';
 const status = document.getElementById('status');
 try {
   const { default: init, start } = await import(`./mofact_web.js?v=${build}`);
