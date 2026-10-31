@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 mofact-core.workspace = true
+serde.workspace = true
+postcard = { version = "1", default-features = false, features = ["alloc"] }
 
 [lints]
 workspace = true

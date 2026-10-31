@@ -27,6 +27,7 @@ struct Snapshots {
 enum Msg {
     Command(Command),
     Pause(bool),
+    Save(Sender<Vec<u8>>),
 }
 
 /// Owns the simulation thread. Dropping it stops the thread.
@@ -94,6 +95,19 @@ impl SimHandle {
     }
 }
 
+impl SimHandle {
+    /// Ask for a save of the world between two ticks. The bytes arrive on the
+    /// returned channel within a tick, without the main thread waiting.
+    pub fn save(&self) -> Receiver<Vec<u8>> {
+        let (tx, rx) = mpsc::channel();
+        let _ = self.tx.send(Msg::Save(tx));
+        if let Some(t) = &self.thread {
+            t.thread().unpark();
+        }
+        rx
+    }
+}
+
 impl Drop for SimHandle {
     fn drop(&mut self) {
         self.stop.store(true, Ordering::Relaxed);
@@ -124,6 +138,9 @@ fn run(
         loop {
             match rx.try_recv() {
                 Ok(Msg::Command(c)) => queued.push(c),
+                Ok(Msg::Save(reply)) => {
+                    let _ = reply.send(sim.save());
+                }
                 Ok(Msg::Pause(p)) => {
                     paused = p;
                     stepper.reset();
@@ -156,6 +173,14 @@ fn run(
 mod tests {
     use super::*;
     use std::time::Duration;
+
+    #[test]
+    fn saves_arrive_without_stopping_the_clock_even_when_paused() {
+        let handle = SimHandle::spawn(Sim::new());
+        handle.set_paused(true);
+        let bytes = handle.save().recv_timeout(Duration::from_secs(1)).unwrap();
+        assert!(bytes.starts_with(crate::save::MAGIC));
+    }
 
     #[test]
     fn keeps_sixty_ticks_a_second_while_frames_drop() {

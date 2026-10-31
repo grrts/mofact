@@ -108,6 +108,19 @@ fn gear_assembler_runs_at_the_input_rate() {
 fn full_circuit_chain_runs_at_the_gear_rate() {
     // The prototype's last goal: gears and wire belted into one circuit assembler.
     // 25 gears a minute limit it to 25 circuits a minute; spare wire backs up.
+    let mut sim = circuit_chain();
+    let r = rate(&mut sim, "circuit", 3);
+    assert!((24.0..=25.5).contains(&r), "{r} circuits per minute");
+    let wire_line = sim.snapshot();
+    let starving = wire_line
+        .entities
+        .iter()
+        .filter(|e| e.state == MachineState::Starved)
+        .count();
+    assert_eq!(starving, 0, "the gear-limited chain has nothing starving");
+}
+
+fn circuit_chain() -> Sim {
     let mut sim = Sim::with_content(&content());
     sim.add_stock(&item("iron-plate"), 500);
     sim.add_stock(&item("copper-plate"), 100);
@@ -135,16 +148,79 @@ fn full_circuit_chain_runs_at_the_gear_rate() {
     place(&mut sim, "belt", 9, 11, Dir::East, None);
     place(&mut sim, "assembler", 10, 11, Dir::East, Some("circuit"));
     belts(&mut sim, 11..=29, 11, Dir::East);
+    sim
+}
 
-    let r = rate(&mut sim, "circuit", 3);
-    assert!((24.0..=25.5).contains(&r), "{r} circuits per minute");
-    let wire_line = sim.snapshot();
-    let starving = wire_line
-        .entities
-        .iter()
-        .filter(|e| e.state == MachineState::Starved)
-        .count();
-    assert_eq!(starving, 0, "the gear-limited chain has nothing starving");
+#[test]
+fn a_loaded_save_plays_on_exactly_like_the_original() {
+    let mut sim = circuit_chain();
+    let removed = sim.entity_at(TilePos::new(7, 13)).unwrap();
+    assert!(matches!(
+        sim.apply(&Command::Remove { entity: removed }),
+        CommandResult::Applied { .. }
+    ));
+    run(&mut sim, 40);
+    let bytes = sim.save();
+    let (mut loaded, warnings) = Sim::load(&content(), &bytes).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(
+        loaded.save(),
+        bytes,
+        "saving a loaded world gives the same bytes"
+    );
+    assert_eq!(
+        loaded.entity_at(TilePos::new(8, 13)),
+        sim.entity_at(TilePos::new(8, 13)),
+        "ids kept"
+    );
+    run(&mut sim, 30);
+    run(&mut loaded, 30);
+    assert_eq!(loaded.snapshot(), sim.snapshot());
+    assert_eq!(
+        loaded.delivered(&item("circuit")),
+        sim.delivered(&item("circuit"))
+    );
+    assert!(sim.delivered(&item("circuit")) > 0);
+}
+
+#[test]
+fn damaged_and_future_saves_are_refused() {
+    use crate::save::{LoadError, MAGIC};
+    let c = content();
+    let bytes = circuit_chain().save();
+    assert_eq!(Sim::load(&c, b"PNG...").err(), Some(LoadError::NotASave));
+    assert!(matches!(
+        Sim::load(&c, &bytes[..bytes.len() / 2]),
+        Err(LoadError::Corrupt(_))
+    ));
+    let mut future = MAGIC.to_vec();
+    future.extend_from_slice(&99u16.to_le_bytes());
+    assert_eq!(Sim::load(&c, &future).err(), Some(LoadError::TooNew(99)));
+}
+
+#[test]
+fn saves_survive_content_changes() {
+    let bytes = circuit_chain().save();
+    let mut c = content();
+    c.buildings.retain(|b| b.id != BuildingId::from("drill"));
+    c.items.retain(|i| i.id != item("copper-ore"));
+    let (sim, warnings) = Sim::load(&c, &bytes).unwrap();
+    assert!(
+        warnings.iter().any(|w| w.contains("`drill`")),
+        "{warnings:?}"
+    );
+    assert!(
+        warnings.iter().any(|w| w.contains("`copper-ore`")),
+        "{warnings:?}"
+    );
+    assert!(
+        sim.entity_at(TilePos::new(0, 10)).is_none(),
+        "drills dropped"
+    );
+    assert!(
+        sim.entity_at(TilePos::new(30, 9)).is_some(),
+        "the hub stays"
+    );
 }
 
 #[test]
