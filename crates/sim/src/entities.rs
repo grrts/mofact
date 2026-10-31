@@ -110,6 +110,17 @@ impl Entities {
         Some(id)
     }
 
+    /// Place an entity at a given id, as when loading a save. Ids must come in
+    /// increasing order; skipped ids stay empty. Returns false, changing
+    /// nothing, if a tile is taken or the id is already used.
+    pub fn insert_at(&mut self, id: EntityId, entity: Entity) -> bool {
+        if (id.0 as usize) < self.slots.len() || !self.is_free(&entity) {
+            return false;
+        }
+        self.slots.resize(id.0 as usize, None);
+        self.insert(entity) == Some(id)
+    }
+
     /// Remove an entity, returning it.
     pub fn remove(&mut self, id: EntityId) -> Option<Entity> {
         let entity = self.slots.get_mut(id.0 as usize)?.take()?;

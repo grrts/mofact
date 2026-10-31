@@ -9,8 +9,13 @@
 //! and back halfway through. CI runs it to prove the shell works on a real
 //! (software) GPU. `mofact --screenshot DIR` writes the scene at three zooms
 //! as PNGs instead of opening a window. `--scenario FILE` starts from one of
-//! the headless scenarios (the starter line by default).
+//! the headless scenarios instead of the saved game.
+//!
+//! The game autosaves every 30 seconds and on going to the background, to
+//! `--save FILE` (by default the platform's per-user data folder), and opens
+//! that save next time.
 
+mod autosave;
 mod ore;
 mod surface;
 
@@ -22,7 +27,7 @@ use mofact_ui as _;
 use ore::OreMap;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::mouse::MouseButton;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::{Duration, Instant};
 
@@ -203,7 +208,9 @@ impl App {
 struct Args {
     frames: Option<u64>,
     screenshot: Option<String>,
-    scenario: String,
+    /// A scenario named on the command line starts fresh instead of loading the save.
+    scenario: Option<String>,
+    save: Option<String>,
     data: String,
     seed: u64,
 }
@@ -212,7 +219,8 @@ fn args() -> Result<Args, String> {
     let mut args = Args {
         frames: None,
         screenshot: None,
-        scenario: "scenarios/starter-line.ron".into(),
+        scenario: None,
+        save: None,
         data: "data".into(),
         seed: 42,
     };
@@ -228,13 +236,14 @@ fn args() -> Result<Args, String> {
                 let n = it.next().ok_or("--seed needs a number")?;
                 args.seed = n.parse().map_err(|_| format!("bad seed `{n}`"))?;
             }
-            "--scenario" => args.scenario = it.next().ok_or("--scenario needs a file")?,
+            "--scenario" => args.scenario = Some(it.next().ok_or("--scenario needs a file")?),
+            "--save" => args.save = Some(it.next().ok_or("--save needs a file")?),
             "--screenshot" => {
                 args.screenshot = Some(it.next().ok_or("--screenshot needs a folder")?)
             }
             other => {
                 return Err(format!(
-                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --scenario FILE, --seed N, --data DIR)"
+                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --scenario FILE, --save FILE, --seed N, --data DIR)"
                 ))
             }
         }
@@ -255,10 +264,30 @@ fn main() -> ExitCode {
 fn run() -> Result<(), String> {
     let args = args()?;
     let content = mofact_content::load_dir(Path::new(&args.data)).map_err(|e| e.to_string())?;
-    let scenario = std::fs::read_to_string(&args.scenario)
-        .map_err(|e| format!("{}: {e}", args.scenario))
+    let scenario_file = args
+        .scenario
+        .clone()
+        .unwrap_or_else(|| "scenarios/starter-line.ron".into());
+    let scenario = std::fs::read_to_string(&scenario_file)
+        .map_err(|e| format!("{scenario_file}: {e}"))
         .and_then(|text| mofact_headless::parse(&text))?;
-    let sim = mofact_headless::build(&content, &scenario)?;
+    let save_path = match &args.save {
+        Some(p) => PathBuf::from(p),
+        None => sdl3::filesystem::get_pref_path("mofact", "mofact")
+            .map(|d| d.join("autosave.mofact"))
+            .unwrap_or_else(|_| PathBuf::from("autosave.mofact")),
+    };
+    let saved = match (&args.scenario, &args.screenshot) {
+        (None, None) => autosave::load(&save_path, &content),
+        _ => None,
+    };
+    let sim = match saved {
+        Some(sim) => {
+            println!("mofact: continuing {}", save_path.display());
+            sim
+        }
+        None => mofact_headless::build(&content, &scenario)?,
+    };
     let camera = framing(&content, &sim);
     let placed = scenario
         .ore
@@ -285,6 +314,7 @@ fn run() -> Result<(), String> {
         app.target.as_ref().map(Target::format),
     );
 
+    let mut saves = autosave::Autosave::new(save_path);
     let mut presented = 0u64;
     let mut cycled = false;
     let mut second = (Instant::now(), 0u32);
@@ -295,11 +325,19 @@ fn run() -> Result<(), String> {
                 continue;
             }
             match event {
-                Event::Quit { .. } | Event::AppTerminating { .. } => return Ok(()),
-                Event::AppWillEnterBackground { .. } => app.suspend(),
+                Event::Quit { .. } | Event::AppTerminating { .. } => {
+                    return saves.now(&app.sim);
+                }
+                Event::AppWillEnterBackground { .. } => {
+                    app.suspend();
+                    report(saves.now(&app.sim));
+                }
                 Event::AppDidEnterForeground { .. } => app.resume()?,
                 Event::Window { win_event, .. } => match win_event {
-                    WindowEvent::Minimized | WindowEvent::Hidden => app.suspend(),
+                    WindowEvent::Minimized | WindowEvent::Hidden => {
+                        app.suspend();
+                        report(saves.now(&app.sim));
+                    }
                     WindowEvent::Restored | WindowEvent::Shown | WindowEvent::Maximized => {
                         app.resume()?
                     }
@@ -315,6 +353,7 @@ fn run() -> Result<(), String> {
             }
         }
 
+        report(saves.update(&app.sim));
         if app.background {
             // Nothing to draw: sleep instead of spinning, to save the battery.
             std::thread::sleep(Duration::from_millis(50));
@@ -338,8 +377,12 @@ fn run() -> Result<(), String> {
                 // Exercise the background path the way a phone would.
                 let before = app.sim.latest().tick;
                 app.suspend();
+                saves.now(&app.sim)?;
                 std::thread::sleep(Duration::from_millis(200));
                 let during = app.sim.latest().tick;
+                if autosave::load(saves.path(), &content).is_none() {
+                    return Err("the background save did not load back".into());
+                }
                 app.resume()?;
                 if during > before + 1 {
                     return Err(format!(
@@ -350,12 +393,20 @@ fn run() -> Result<(), String> {
             }
             if presented >= frames {
                 println!(
-                    "presented {presented} frames, tick {}, went to the background and back",
-                    app.sim.latest().tick
+                    "presented {presented} frames, tick {}, went to the background and back, saved to {}",
+                    app.sim.latest().tick,
+                    saves.path().display()
                 );
                 return Ok(());
             }
         }
+    }
+}
+
+/// Saving must never crash the game; say what went wrong and play on.
+fn report(result: Result<(), String>) {
+    if let Err(e) = result {
+        eprintln!("mofact: {e}");
     }
 }
 
