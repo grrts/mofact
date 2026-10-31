@@ -42,4 +42,17 @@
         buildings: ["boiler", "steam-engine"],
         recipes: ["steam"],
     ),
+    (
+        id: "oil-processing", name: "Oil processing", tier: 3, requires: ["steam-power"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 40, seconds: 20.0,
+        buildings: ["oil-well", "refinery", "chemical-plant"],
+        recipes: ["refining", "cracking", "plastic"],
+    ),
+    (
+        id: "fast-assembly", name: "Fast assembly", tier: 3, requires: ["oil-processing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 30, seconds: 20.0,
+        buildings: ["fast-assembler"],
+    ),
 ]

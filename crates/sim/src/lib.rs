@@ -128,8 +128,9 @@ struct Crafter {
     /// Chosen by the player; otherwise picked from the first input and cleared when empty.
     fixed: bool,
     inputs: Vec<u32>,
-    out: u32,
-    out_item: Option<Item>,
+    /// What is waiting to leave, one slot per recipe output in order. A slot
+    /// keeps its item until empty, so a recipe change drains the old output.
+    outs: Vec<(Item, u32)>,
     prog: u32,
     working: bool,
     idle: u32,
@@ -256,8 +257,8 @@ impl Sim {
                         .map(|(&(i, _), &n)| (name(i), units(i, n)))
                         .collect()
                 });
-                if let (Some(i), true) = (c.out_item, c.out > 0) {
-                    v.push((name(i), units(i, c.out)));
+                for &(i, n) in c.outs.iter().filter(|o| o.1 > 0) {
+                    v.push((name(i), units(i, n)));
                 }
                 v
             }
@@ -453,8 +454,7 @@ impl Sim {
                 // As in the prototype, switching recipe discards what was loaded for the old one.
                 *c = Crafter {
                     fixed: new.is_some(),
-                    out: c.out,
-                    out_item: c.out_item,
+                    outs: std::mem::take(&mut c.outs),
                     ..Crafter::default()
                 };
                 c.recipe = new;
@@ -523,14 +523,29 @@ impl Sim {
                 out: None,
                 waiting: 0,
             },
-            Role::Crafter { .. } => State::Crafter(Crafter {
-                recipe,
-                fixed: recipe.is_some(),
-                inputs: recipe.map_or(Vec::new(), |r| {
-                    vec![0; self.tables.recipes[r as usize].inputs.len()]
-                }),
-                ..Crafter::default()
-            }),
+            Role::Crafter { recipes, .. } => {
+                // A machine with one recipe and nothing solid to choose it
+                // by (a refinery) is set to that recipe from the start.
+                let t = &self.tables;
+                let recipe = recipe.or(match recipes[..] {
+                    [only]
+                        if t.recipes[only as usize]
+                            .inputs
+                            .iter()
+                            .all(|&(i, _)| t.fluid[i as usize]) =>
+                    {
+                        Some(only)
+                    }
+                    _ => None,
+                });
+                State::Crafter(Crafter {
+                    recipe,
+                    fixed: recipe.is_some(),
+                    inputs: recipe
+                        .map_or(Vec::new(), |r| vec![0; t.recipes[r as usize].inputs.len()]),
+                    ..Crafter::default()
+                })
+            }
             Role::Lab { .. } => State::Lab(Lab::default()),
             Role::Pole { .. } => State::Pole,
             Role::Generator { .. } => State::Generator,
@@ -863,40 +878,57 @@ impl Sim {
                     Role::Crafter { speed, .. } => *speed,
                     _ => 1.0,
                 };
-                let mut full = c.out >= OUT_CAP;
+                let t = &self.tables;
+                // Fluid outputs leave by the front, then the right, then the
+                // left; fluid inputs come in by any other side.
+                let sides = [e.dir, e.dir.rotate_cw(), e.dir.opposite().rotate_cw()];
+                let fluid_outs = c.recipe.map_or(0, |r| {
+                    let outs = &t.recipes[r as usize].outputs;
+                    outs.iter().filter(|o| t.fluid[o.0 as usize]).count()
+                });
+                let used = &sides[..fluid_outs.min(sides.len())];
+                // Any one full output stops the machine: a refinery whose tar
+                // backs up stops making light oil too.
+                let mut full = c
+                    .outs
+                    .iter()
+                    .any(|&(i, n)| !t.fluid[i as usize] && n >= OUT_CAP);
                 if let Some(r) = c.recipe {
-                    let t = &self.tables;
                     let def = &t.recipes[r as usize];
-                    // Fluid inputs come from the pipes on any side but the
-                    // front, up to two crafts' worth.
-                    let out_side = e.dir;
                     for (have, &(item, need)) in c.inputs.iter_mut().zip(&def.inputs) {
                         let want = (need * t.scale(item) * 2).saturating_sub(*have);
                         if t.fluid[item as usize] && want > 0 {
                             let got = self.fluids.pull(
                                 &self.entities,
                                 e,
-                                |d| d != out_side,
+                                |d| !used.contains(&d),
                                 item,
                                 u64::from(want),
                             );
                             *have += got as u32;
                         }
                     }
-                    let (out_item, out_n) = def.outputs[0];
-                    let out_n = out_n * t.scale(out_item);
                     let ready = def
                         .inputs
                         .iter()
                         .zip(&c.inputs)
                         .all(|(&(i, need), &have)| have >= need * t.scale(i));
-                    let cap = if t.fluid[out_item as usize] {
-                        full = c.out >= out_n * 2;
-                        out_n * 2
-                    } else {
-                        OUT_CAP + 1
-                    };
-                    let fits = c.out + out_n <= cap && (c.out == 0 || c.out_item == Some(out_item));
+                    let mut fits = true;
+                    for (k, &(item, n)) in def.outputs.iter().enumerate() {
+                        let n = n * t.scale(item);
+                        let (held, have) = c.outs.get(k).copied().unwrap_or((item, 0));
+                        let cap = if t.fluid[item as usize] {
+                            full |= have >= n * 2;
+                            n * 2
+                        } else {
+                            OUT_CAP + 1
+                        };
+                        // An output that can't take another craft's worth
+                        // holds the machine up as surely as a full one.
+                        let fit = have + n <= cap && (have == 0 || held == item);
+                        full |= !fit;
+                        fits &= fit;
+                    }
                     if !c.working && ready && fits {
                         for (have, &(i, need)) in c.inputs.iter_mut().zip(&def.inputs) {
                             *have -= need * t.scale(i);
@@ -909,8 +941,12 @@ impl Sim {
                         c.idle = 0;
                         if c.prog >= ticks(def.seconds / speed) {
                             c.working = false;
-                            c.out += out_n;
-                            c.out_item = Some(out_item);
+                            if c.outs.len() < def.outputs.len() {
+                                c.outs.resize(def.outputs.len(), (0, 0));
+                            }
+                            for (slot, &(item, n)) in c.outs.iter_mut().zip(&def.outputs) {
+                                *slot = (item, slot.1 + n * t.scale(item));
+                            }
                         }
                     } else {
                         c.idle += 1;
@@ -919,28 +955,36 @@ impl Sim {
                     c.idle += 1;
                 }
                 c.blocked = if full { c.blocked + 1 } else { 0 };
-                match c.out_item {
-                    Some(item) if c.out > 0 && self.tables.fluid[item as usize] => {
-                        // Fluid goes out the front only, so it can't run
-                        // back into an input line that has run dry.
-                        let out_side = e.dir;
-                        let n = self.fluids.fill(
-                            &self.entities,
-                            e,
-                            |d| d == out_side,
-                            item,
-                            u64::from(c.out),
-                        );
-                        c.out -= n as u32;
+                // Fluids go out their own sides, so they can't run back into
+                // an input line that has run dry. One solid leaves per tick,
+                // the first output first.
+                let mut rank = 0;
+                let mut pushed = false;
+                for k in 0..c.outs.len() {
+                    let (item, n) = c.outs[k];
+                    if self.tables.fluid[item as usize] {
+                        let side = sides[rank.min(sides.len() - 1)];
+                        rank += 1;
+                        if n > 0 {
+                            let got = self.fluids.fill(
+                                &self.entities,
+                                e,
+                                |d| d == side,
+                                item,
+                                u64::from(n),
+                            );
+                            c.outs[k].1 -= got as u32;
+                        }
+                    } else if n > 0 && !pushed && self.push(front, item, e.dir) {
+                        c.outs[k].1 -= 1;
+                        pushed = true;
                     }
-                    Some(item) if c.out > 0 && self.push(front, item, e.dir) => {
-                        c.out -= 1;
-                    }
-                    _ => {}
                 }
-                if !c.fixed && !c.working && c.out == 0 && c.inputs.iter().all(|&n| n == 0) {
+                let empty = c.outs.iter().all(|o| o.1 == 0);
+                if !c.fixed && !c.working && empty && c.inputs.iter().all(|&n| n == 0) {
                     c.recipe = None;
                     c.inputs.clear();
+                    c.outs.clear();
                 }
             }
             State::Lab(lab) => {

@@ -59,6 +59,15 @@ enum Art {
         pose: Pose,
     },
     Engine,
+    Refinery {
+        pose: Pose,
+        light: Rgba,
+        tar: Rgba,
+    },
+    ChemicalPlant {
+        product: Option<Rgba>,
+        pose: Pose,
+    },
     Drill {
         ore: Rgba,
         pose: Pose,
@@ -105,6 +114,19 @@ enum Kind {
     /// Boilers are crafters, painted per direction and lit or cold.
     Boiler,
     Engine,
+    /// Refineries and chemical plants are crafters too, lit while working.
+    Refinery,
+    ChemicalPlant,
+}
+
+impl Kind {
+    /// Whether it looks different while working: a fire or a stir.
+    fn lights(self) -> bool {
+        matches!(
+            self,
+            Kind::Furnace | Kind::Boiler | Kind::Refinery | Kind::ChemicalPlant
+        )
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -230,12 +252,16 @@ impl Look {
                         .map(|r| r.id.as_str().to_owned())
                         .collect();
                     let smelts = categories.iter().any(|c| c == "smelting");
-                    let boils = categories.iter().any(|c| c == "boiling");
+                    let has = |k: &str| categories.iter().any(|c| c == k);
                     (
                         if smelts {
                             Kind::Furnace
-                        } else if boils {
+                        } else if has("boiling") {
                             Kind::Boiler
+                        } else if has("refining") {
+                            Kind::Refinery
+                        } else if has("chemistry") {
+                            Kind::ChemicalPlant
                         } else {
                             Kind::Assembler
                         },
@@ -292,11 +318,19 @@ impl Look {
                         .chain(recipes.iter().map(|r| Some(r.as_str())))
                         .collect();
                     for setting in &choices {
-                        let product = setting
-                            .and_then(|r| content.recipes.iter().find(|d| d.id.as_str() == r))
-                            .and_then(|d| d.outputs.first())
-                            .and_then(|s| item_look(&s.item));
-                        for working in [false, true] {
+                        let def = setting
+                            .and_then(|r| content.recipes.iter().find(|d| d.id.as_str() == r));
+                        let output = |k: usize| {
+                            def.and_then(|d| d.outputs.get(k))
+                                .and_then(|s| item_look(&s.item))
+                        };
+                        let product = output(0);
+                        let states: &[bool] = if kind.lights() {
+                            &[false, true]
+                        } else {
+                            &[false]
+                        };
+                        for &working in states {
                             for (d, _) in Dir::ALL.iter().enumerate() {
                                 let pose = Pose {
                                     dir: d as u8,
@@ -324,6 +358,16 @@ impl Look {
                                         pose,
                                     },
                                     Kind::Boiler => Art::Boiler { pose },
+                                    Kind::Refinery => Art::Refinery {
+                                        pose,
+                                        light: output(0)
+                                            .map_or(palette::item("light-oil"), |p| p.1),
+                                        tar: output(1).map_or(palette::item("tar"), |p| p.1),
+                                    },
+                                    Kind::ChemicalPlant => Art::ChemicalPlant {
+                                        product: product.map(|p| p.1),
+                                        pose,
+                                    },
                                     Kind::Lab => Art::Assembler {
                                         product: Some((Shape::Pack, palette::item("pack-survey"))),
                                         pose: Pose {
@@ -475,9 +519,14 @@ impl Look {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
                     .map_or(0, |i| i + 1);
-                // Only furnaces and boilers look different while working.
-                let lit = usize::from(working && matches!(b.kind, Kind::Furnace | Kind::Boiler));
-                b.base + (r * 2 + lit) * 4 + dir_index(dir)
+                // Assemblers, drills and labs look the same while working,
+                // so they have no lit sprites.
+                let (states, lit) = if b.kind.lights() {
+                    (2, usize::from(working))
+                } else {
+                    (1, 0)
+                };
+                b.base + (r * states + lit) * 4 + dir_index(dir)
             }
         };
         self.sprites.get(at).map(|s| s.name.as_str())
@@ -566,6 +615,14 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Well { fluid } => draw::well(&mut c, z, fine, fluid),
         Art::Boiler { ref pose } => draw::boiler(&mut c, z, fine, pose),
         Art::Engine => draw::engine(&mut c, z, fine, 0.3),
+        Art::Refinery {
+            ref pose,
+            light,
+            tar,
+        } => draw::refinery(&mut c, z, fine, pose, light, tar),
+        Art::ChemicalPlant { product, ref pose } => {
+            draw::chemical_plant(&mut c, z, fine, pose, product)
+        }
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
         Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
         Art::Assembler { product, ref pose } => draw::assembler(&mut c, z, product, fine, pose),

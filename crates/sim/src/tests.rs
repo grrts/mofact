@@ -939,6 +939,7 @@ fn plumbing(content: &Content) -> Sim {
         "motor",
         "brick",
         "steel",
+        "circuit",
     ] {
         sim.add_stock(&item(i), 100_000);
     }
@@ -1006,28 +1007,9 @@ fn a_pump_restores_flow_on_a_long_line() {
 
 #[test]
 fn pipes_never_mix_two_fluids() {
-    use mofact_core::content::{BuildingDef, BuildingRole, IconShape, ItemDef, ItemKind};
-    let mut content = content();
-    content.items.push(ItemDef {
-        id: item("oil"),
-        name: "Oil".into(),
-        kind: ItemKind::Fluid,
-        shape: IconShape::Droplet,
-        color: "coal".into(),
-        tier: 2,
-    });
-    content.buildings.push(BuildingDef {
-        id: "oil-well".into(),
-        name: "Oil well".into(),
-        size: (1, 1),
-        role: BuildingRole::Well {
-            fluid: item("oil"),
-            per_second: 100.0,
-        },
-        cost: Vec::new(),
-        power: 0.0,
-    });
-    let mut sim = plumbing(&content);
+    let mut sim = plumbing(&content());
+    sim.complete_research(&"oil-processing".into());
+    power_at(&mut sim, 0, -2, 3);
     place(&mut sim, "oil-well", 0, 0, Dir::East, None);
     place(&mut sim, "pipe", 1, 0, Dir::East, None);
     place(&mut sim, "water-well", 4, 0, Dir::East, None);
@@ -1229,4 +1211,99 @@ fn goals_come_one_at_a_time_and_pay_out_when_met() {
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(loaded.goal(), 2);
     assert_eq!(loaded.save(), sim.save());
+}
+
+/// What a tank or pipe holds, in whole units.
+fn held(sim: &Sim, id: EntityId) -> u32 {
+    sim.inventory(id).first().map_or(0, |s| s.1)
+}
+
+fn state_of(sim: &Sim, id: EntityId) -> MachineState {
+    sim.snapshot()
+        .entities
+        .into_iter()
+        .find(|e| e.id == id)
+        .unwrap()
+        .state
+}
+
+#[test]
+fn a_refinery_stops_when_one_output_backs_up() {
+    let mut sim = plumbing(&content());
+    sim.complete_research(&"oil-processing".into());
+    // Crude in from the west; the refinery faces east, so light oil goes
+    // out its front into a tank, and tar out its right into one pipe.
+    place(&mut sim, "oil-well", 0, 0, Dir::East, None);
+    place(&mut sim, "pipe", 1, 0, Dir::East, None);
+    let refinery = place(&mut sim, "refinery", 2, 0, Dir::East, None);
+    place(&mut sim, "pipe", 4, 0, Dir::East, None);
+    let light = place(&mut sim, "tank", 5, 0, Dir::East, None);
+    let tar = place(&mut sim, "pipe", 2, 2, Dir::East, None);
+    place(&mut sim, "pole", 0, 2, Dir::East, None);
+    for (x, y) in [(-2, 3), (-1, 3), (0, 3), (1, 3), (-2, 4), (-1, 4), (0, 4)] {
+        place(&mut sim, "wind-turbine", x, y, Dir::East, None);
+    }
+
+    // It sets itself to refining, and makes both at once.
+    run(&mut sim, 12);
+    assert_eq!(state_of(&sim, refinery), MachineState::Working);
+    assert!(held(&sim, light) > 0, "no light oil");
+    assert!(held(&sim, tar) > 0, "no tar");
+
+    // One pipe of tar fills after a few crafts, and with it the refinery
+    // stops, though the light oil tank has plenty of room.
+    run(&mut sim, 40);
+    assert_eq!(state_of(&sim, refinery), MachineState::Blocked);
+    let before = held(&sim, light);
+    assert!(before < 1000, "light oil tank: {before}");
+    run(&mut sim, 10);
+    assert_eq!(held(&sim, light), before, "light oil kept coming");
+    let names: Vec<_> = sim.inventory(refinery).into_iter().map(|s| s.0).collect();
+    assert!(names.contains(&item("tar")), "{names:?}");
+
+    // Both outputs survive a save.
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.inventory(refinery), sim.inventory(refinery));
+    assert_eq!(state_of(&loaded, refinery), MachineState::Blocked);
+
+    // Give the tar somewhere to go and the light oil flows again.
+    place(&mut sim, "tank", 2, 3, Dir::East, None);
+    run(&mut sim, 12);
+    assert_ne!(state_of(&sim, refinery), MachineState::Blocked);
+    assert!(held(&sim, light) > before, "still stopped");
+}
+
+#[test]
+fn tar_from_a_refinery_cracks_into_more_light_oil() {
+    let mut sim = plumbing(&content());
+    sim.complete_research(&"oil-processing".into());
+    place(&mut sim, "oil-well", 0, 0, Dir::East, None);
+    place(&mut sim, "pipe", 1, 0, Dir::East, None);
+    place(&mut sim, "refinery", 2, 0, Dir::East, None);
+    let light = place(&mut sim, "tank", 4, 0, Dir::East, None);
+    // Tar goes out the refinery's right into a chemical plant facing
+    // south, which takes water from the west and sends light oil south.
+    place(&mut sim, "pipe", 2, 2, Dir::East, None);
+    let plant = place(
+        &mut sim,
+        "chemical-plant",
+        2,
+        3,
+        Dir::South,
+        Some("cracking"),
+    );
+    place(&mut sim, "water-well", 0, 3, Dir::East, None);
+    place(&mut sim, "pipe", 1, 3, Dir::East, None);
+    let cracked = place(&mut sim, "tank", 2, 4, Dir::East, None);
+    place(&mut sim, "pole", 0, 1, Dir::East, None);
+    for x in -2..=-1 {
+        for y in -1..=3 {
+            place(&mut sim, "wind-turbine", x, y, Dir::East, None);
+        }
+    }
+    run(&mut sim, 60);
+    assert!(held(&sim, light) > 0, "no light oil from the refinery");
+    assert!(held(&sim, cracked) > 0, "no light oil from the tar");
+    assert_ne!(state_of(&sim, plant), MachineState::Blocked);
 }

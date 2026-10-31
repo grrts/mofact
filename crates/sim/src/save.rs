@@ -1,4 +1,4 @@
-//! Save format v5 (T11, R54): a versioned binary file. v2 adds research
+//! Save format v8 (T11, R54): a versioned binary file. v2 adds research
 //! progress and labs (T28).
 //!
 //! A save is the magic bytes `MOFACT`, a little-endian `u16` format version,
@@ -11,7 +11,7 @@
 //! every save ever written keeps loading.
 
 use crate::entities::Entity;
-use crate::tables::Role;
+use crate::tables::{Role, Tables};
 use crate::{Crafter, Lab, Sim, State, Tunnel};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 7;
+pub const VERSION: u16 = 8;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -103,17 +103,7 @@ enum SavedState {
         out: Option<ItemId>,
         waiting: u32,
     },
-    Crafter {
-        recipe: Option<RecipeId>,
-        fixed: bool,
-        inputs: Vec<u32>,
-        out: u32,
-        out_item: Option<ItemId>,
-        prog: u32,
-        working: bool,
-        idle: u32,
-        blocked: u32,
-    },
+    Crafter(SavedCrafter),
     // New variants go at the end, so older saves still decode.
     Lab {
         packs: Vec<(ItemId, u32)>,
@@ -146,6 +136,24 @@ enum SavedState {
     Engine {
         share: u32,
     },
+    /// A crafter with more than one output; the first is in the crafter,
+    /// the rest follow in recipe order.
+    CrafterOuts(SavedCrafter, Vec<(ItemId, u32)>),
+}
+
+/// A crafter, with its first output. Encodes the same as the struct variant
+/// that versions 1 to 7 wrote.
+#[derive(Serialize, Deserialize)]
+struct SavedCrafter {
+    recipe: Option<RecipeId>,
+    fixed: bool,
+    inputs: Vec<u32>,
+    out: u32,
+    out_item: Option<ItemId>,
+    prog: u32,
+    working: bool,
+    idle: u32,
+    blocked: u32,
 }
 
 /// Bring an older payload up to [`VERSION`].
@@ -182,9 +190,61 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 goal: Some(String::new()),
             })
         }
-        7 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 8 adds crafters with several outputs: a new variant only.
+        7 | 8 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
+}
+
+/// A saved crafter, with its outputs after the first. Anything the content
+/// no longer has is dropped with a warning.
+fn load_crafter(
+    t: &Tables,
+    c: SavedCrafter,
+    rest: Vec<(ItemId, u32)>,
+    warnings: &mut Vec<String>,
+) -> State {
+    let recipe = c.recipe.and_then(|r| {
+        let found = t.recipe(&r);
+        if found.is_none() {
+            warnings.push(format!("recipe `{r}` no longer exists"));
+        }
+        found
+    });
+    let want = recipe.map_or(0, |r| t.recipes[r as usize].inputs.len());
+    let inputs = if c.inputs.len() == want {
+        c.inputs
+    } else {
+        vec![0; want]
+    };
+    let mut item = |id: &ItemId| {
+        let i = t.item(id);
+        if i.is_none() {
+            warnings.push(format!("item `{id}` no longer exists"));
+        }
+        i
+    };
+    let first = c.out_item.as_ref().and_then(&mut item);
+    let mut outs = Vec::new();
+    if recipe.is_some() {
+        if let Some(i) = first {
+            outs.push((i, c.out));
+        }
+        for (id, n) in &rest {
+            // A lost item keeps its slot, empty, so later outputs stay in order.
+            outs.push(item(id).map_or((0, 0), |i| (i, *n)));
+        }
+    }
+    State::Crafter(Crafter {
+        recipe,
+        fixed: c.fixed && recipe.is_some(),
+        inputs,
+        outs,
+        prog: c.prog,
+        working: c.working,
+        idle: c.idle,
+        blocked: c.blocked,
+    })
 }
 
 impl Sim {
@@ -207,17 +267,27 @@ impl Sim {
                         out: out.map(item),
                         waiting: *waiting,
                     },
-                    State::Crafter(c) => SavedState::Crafter {
-                        recipe: c.recipe.map(|r| t.recipes[r as usize].id.clone()),
-                        fixed: c.fixed,
-                        inputs: c.inputs.clone(),
-                        out: c.out,
-                        out_item: c.out_item.map(item),
-                        prog: c.prog,
-                        working: c.working,
-                        idle: c.idle,
-                        blocked: c.blocked,
-                    },
+                    State::Crafter(c) => {
+                        let first = c.outs.first().copied();
+                        let saved = SavedCrafter {
+                            recipe: c.recipe.map(|r| t.recipes[r as usize].id.clone()),
+                            fixed: c.fixed,
+                            inputs: c.inputs.clone(),
+                            out: first.map_or(0, |o| o.1),
+                            out_item: first.map(|o| item(o.0)),
+                            prog: c.prog,
+                            working: c.working,
+                            idle: c.idle,
+                            blocked: c.blocked,
+                        };
+                        match c.outs.get(1..) {
+                            Some(rest) if !rest.is_empty() => SavedState::CrafterOuts(
+                                saved,
+                                rest.iter().map(|&(i, n)| (item(i), n)).collect(),
+                            ),
+                            _ => SavedState::Crafter(saved),
+                        }
+                    }
                     State::Lab(lab) => SavedState::Lab {
                         packs: lab.packs.iter().map(|&(i, n)| (item(i), n)).collect(),
                         unit: lab
@@ -391,44 +461,11 @@ impl Sim {
                     out: opt(&out, &mut warnings),
                     waiting,
                 },
-                (
-                    SavedState::Crafter {
-                        recipe,
-                        fixed,
-                        inputs,
-                        out,
-                        out_item,
-                        prog,
-                        working,
-                        idle,
-                        blocked,
-                    },
-                    Role::Crafter { .. },
-                ) => {
-                    let recipe = recipe.and_then(|r| {
-                        let found = t.recipe(&r);
-                        if found.is_none() {
-                            warnings.push(format!("recipe `{r}` no longer exists"));
-                        }
-                        found
-                    });
-                    let want = recipe.map_or(0, |r| t.recipes[r as usize].inputs.len());
-                    let inputs = if inputs.len() == want {
-                        inputs
-                    } else {
-                        vec![0; want]
-                    };
-                    State::Crafter(Crafter {
-                        recipe,
-                        fixed: fixed && recipe.is_some(),
-                        inputs,
-                        out: if recipe.is_some() { out } else { 0 },
-                        out_item: opt(&out_item, &mut warnings),
-                        prog,
-                        working,
-                        idle,
-                        blocked,
-                    })
+                (SavedState::Crafter(c), Role::Crafter { .. }) => {
+                    load_crafter(&t, c, Vec::new(), &mut warnings)
+                }
+                (SavedState::CrafterOuts(c, rest), Role::Crafter { .. }) => {
+                    load_crafter(&t, c, rest, &mut warnings)
                 }
                 (SavedState::Lab { packs, unit, idle }, Role::Lab { .. }) => State::Lab(Lab {
                     packs: packs
