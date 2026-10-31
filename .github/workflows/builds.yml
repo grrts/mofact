@@ -79,6 +79,9 @@ jobs:
   ios:
     name: iOS
     runs-on: macos-latest
+    env:
+      # Matches MinimumOSVersion in Info.plist; SDL (via CMake) and Rust must agree.
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
