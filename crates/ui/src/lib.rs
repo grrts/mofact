@@ -204,6 +204,8 @@ enum Hit {
     Done,
     /// The problems button: opens or closes the problems list.
     Problems,
+    /// The goal card: shows or hides how to meet it.
+    Goal,
     /// A line of the problems list, by its place in it.
     Problem(usize),
     /// A panel: it takes the touch, so nothing builds underneath.
@@ -243,6 +245,9 @@ pub struct Hud {
     more: bool,
     /// Whether the problems list is open.
     problems: bool,
+    /// Whether the goal card shows how to meet it, and the goal it last showed.
+    hint: bool,
+    goal_seen: Option<u16>,
     /// What's stuck, as of the last frame drawn.
     found: Vec<Problem>,
     /// The line last jumped to and which of its places, so another tap
@@ -256,7 +261,8 @@ pub struct Hud {
     hits: Vec<(Rect, Hit)>,
     press: Option<Press>,
     tap: Option<Tap>,
-    toast: Option<(String, Instant)>,
+    /// A short message, when it went up, and its colour.
+    toast: Option<(String, Instant, Rgba)>,
     /// Pixels per point in the last frame.
     unit: f32,
     /// The toolbar slot of the tool in hand in the last frame.
@@ -337,7 +343,7 @@ impl Hud {
 
     /// Show a short message, such as why a build was refused.
     pub fn toast(&mut self, text: impl Into<String>) {
-        self.toast = Some((text.into(), Instant::now()));
+        self.toast = Some((text.into(), Instant::now(), palette::STARVE));
     }
 
     fn hit(&self, p: [f32; 2]) -> Option<&Hit> {
@@ -484,6 +490,10 @@ impl Hud {
                 self.browse = None;
                 Vec::new()
             }
+            Hit::Goal => {
+                self.hint = !self.hint;
+                Vec::new()
+            }
             Hit::Problems => {
                 self.problems = !self.problems;
                 self.research = false;
@@ -550,16 +560,17 @@ impl Hud {
 
         let top = self.stock(view, o, [m, m]);
         let top = self.research_button(view, o, [m, top + gap], corner[0] - m);
+        let top = self.goal_card(view, o, [m, top + gap], corner[0] - m);
         self.found = problems::find(view);
         if self.found.is_empty() {
             self.problems = false;
         }
         let top = self.problems_button(o, [m, top + gap], corner[0] - m);
         let mut tip_y = top + gap;
-        if let Some((text, at)) = &self.toast {
+        if let Some((text, at, ink)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
-                let text = text.clone();
-                tip_y = chip(o, &text, [m, tip_y], corner[0] - m, u, palette::STARVE) + gap;
+                let (text, ink) = (text.clone(), *ink);
+                tip_y = chip(o, &text, [m, tip_y], corner[0] - m, u, ink) + gap;
             } else {
                 self.toast = None;
             }
@@ -875,6 +886,67 @@ impl Hud {
 
     /// The research button under the stock: what labs study and how far
     /// along. Returns the bottom edge.
+    /// The goal the player is on, under the research button: what it wants,
+    /// how far along it is and, until tapped away, how to do it. A new goal
+    /// says so in a toast. Returns its bottom edge.
+    fn goal_card(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
+        let u = self.unit;
+        let Some(g) = &view.snapshot.goal else {
+            return at[1] - 10.0 * u;
+        };
+        let Some(def) = view.content.goals.get(g.index as usize) else {
+            return at[1] - 10.0 * u;
+        };
+        if self.goal_seen != Some(g.index) {
+            if self.goal_seen.is_some_and(|seen| seen < g.index) {
+                let text = format!("Goal met! Next: {}", def.title);
+                self.toast = Some((text, Instant::now(), WORKING));
+            }
+            self.goal_seen = Some(g.index);
+            self.hint = true;
+        }
+        let h = 44.0 * u;
+        let px = 14.0 * u;
+        let count = format!("{}/{}", g.have, g.need);
+        let cw = o.measure(&count, px);
+        let text = format!(
+            "Goal {} of {}: {}",
+            g.index + 1,
+            view.content.goals.len(),
+            def.title
+        );
+        let px = fit(o, &text, px, width - 40.0 * u - cw);
+        let w = (o.measure(&text, px) + cw + 40.0 * u).min(width);
+        let fill = if self.hint { PRESSED } else { RAISED };
+        o.panel(at, [w, h], 10.0 * u, fill);
+        let base = at[1] + (h - 6.0 * u + o.cap_height(px)) / 2.0;
+        o.text(&text, [at[0] + 14.0 * u, base], px, palette::ACCENT);
+        o.text(&count, [at[0] + w - 14.0 * u - cw, base], 14.0 * u, MUTED);
+        let bar = w - 28.0 * u;
+        let done = g.have as f32 / g.need.max(1) as f32;
+        o.panel(
+            [at[0] + 14.0 * u, at[1] + h - 9.0 * u],
+            [bar, 3.0 * u],
+            1.5 * u,
+            PANEL,
+        );
+        o.panel(
+            [at[0] + 14.0 * u, at[1] + h - 9.0 * u],
+            [bar * done.clamp(0.0, 1.0), 3.0 * u],
+            1.5 * u,
+            WORKING,
+        );
+        self.hits.push(([at[0], at[1], w, h], Hit::Goal));
+        let mut bottom = at[1] + h;
+        if self.hint {
+            bottom = chip(o, &def.hint, [at[0], bottom + 6.0 * u], width, u, TEXT);
+            // The hint is part of the card: a tap on it folds it away too.
+            self.hits
+                .push(([at[0], at[1] + h, width, bottom - at[1] - h], Hit::Goal));
+        }
+        bottom
+    }
+
     /// The problems button, under the research button, when anything is
     /// stuck. Returns its bottom edge.
     fn problems_button(&mut self, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {

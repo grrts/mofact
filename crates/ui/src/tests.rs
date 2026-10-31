@@ -33,6 +33,7 @@ fn snapshot() -> Snapshot {
         stock: vec![("copper-plate".into(), 2), ("iron-plate".into(), 30)],
         research: Default::default(),
         grids: Vec::new(),
+        goal: None,
     }
 }
 
@@ -654,4 +655,40 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
     f.snapshot.grids.clear();
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     assert!(!f.hud.hits.iter().any(|(_, h)| *h == Hit::Problems));
+}
+
+#[test]
+fn the_goal_card_shows_how_far_along_and_says_when_a_goal_is_met() {
+    use mofact_core::snapshot::GoalView;
+    let mut f = Fixture::new();
+    f.snapshot.goal = Some(GoalView {
+        index: 0,
+        have: 12,
+        need: 50,
+    });
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let card = f.find(&Hit::Goal);
+    assert!(f.hud.hint, "a new goal says how to do it");
+    // A tap folds the hint away, another brings it back.
+    f.tap(centre(card));
+    assert!(!f.hud.hint);
+    f.tap(centre(card));
+    assert!(f.hud.hint);
+    f.tap(centre(card));
+
+    // The next goal: a toast, and its hint shows again.
+    f.snapshot.goal = Some(GoalView {
+        index: 1,
+        have: 1,
+        need: 3,
+    });
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let (text, _, _) = f.hud.toast.clone().expect("a toast");
+    assert_eq!(text, "Goal met! Next: Have 3 drills");
+    assert!(f.hud.hint);
+
+    // All done: no card.
+    f.snapshot.goal = None;
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == Hit::Goal));
 }

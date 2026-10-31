@@ -1179,3 +1179,54 @@ fn engines_burn_only_for_what_the_wind_does_not_give() {
         "{warming} then {g:?}"
     );
 }
+
+#[test]
+fn goals_come_one_at_a_time_and_pay_out_when_met() {
+    let mut sim = Sim::with_content(&content());
+    sim.add_stock(&item("iron-plate"), 1000);
+    let hub = place(&mut sim, "hub", 0, 0, Dir::East, None);
+    let goal = |sim: &Sim| sim.snapshot().goal.unwrap();
+    assert_eq!(
+        goal(&sim),
+        GoalView {
+            index: 0,
+            have: 0,
+            need: 50
+        }
+    );
+    for _ in 0..49 {
+        sim.feed(hub, &item("iron-plate"));
+    }
+    run(&mut sim, 1);
+    assert_eq!(goal(&sim).have, 49);
+    sim.feed(hub, &item("iron-plate"));
+    run(&mut sim, 1);
+    // On to three drills; the first goal pays nothing.
+    assert_eq!(
+        goal(&sim),
+        GoalView {
+            index: 1,
+            have: 0,
+            need: 3
+        }
+    );
+    // Drills built before their goal still count.
+    let plates = sim.stock(&item("iron-plate"));
+    for x in 0..3 {
+        sim.set_ore(TilePos::new(10 + x * 2, 0), &item("iron-ore"));
+        place(&mut sim, "drill", 10 + x * 2, 0, Dir::East, None);
+    }
+    let cost = plates - sim.stock(&item("iron-plate"));
+    run(&mut sim, 1);
+    assert_eq!(goal(&sim).index, 2);
+    assert_eq!(
+        sim.stock(&item("iron-plate")),
+        plates - cost + 30,
+        "the drills goal gives 30 plates"
+    );
+    // The goal survives a save.
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.goal(), 2);
+    assert_eq!(loaded.save(), sim.save());
+}

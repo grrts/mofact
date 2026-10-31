@@ -41,12 +41,12 @@ use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
 use mofact_core::snapshot::{
-    BeltItemView, EntityView, FluidView, GridView, MachineState, ResearchView, Snapshot,
+    BeltItemView, EntityView, FluidView, GoalView, GridView, MachineState, ResearchView, Snapshot,
 };
 use mofact_core::Tick;
 use power::Grids;
 use std::collections::HashMap;
-use tables::{ticks, Item, Recipe, Role, Tables, FLUID};
+use tables::{ticks, Goal, Item, Recipe, Role, Tables, FLUID};
 
 /// Items a crafter holds in its output before it stops (the prototype's CAP).
 const OUT_CAP: u32 = 5;
@@ -150,6 +150,9 @@ pub struct Sim {
     research: Research,
     grids: Grids,
     fluids: Fluids,
+    /// The goal the player is on: an index into the content's goals, which
+    /// is their count once all are met.
+    goal: u16,
 }
 
 /// Research progress, kept per research so switching loses nothing.
@@ -718,6 +721,10 @@ impl Sim {
     /// Advance the world by one tick. Entities step in id order, so the result is deterministic.
     pub fn step(&mut self) {
         self.tick += 1;
+        // Goals move on twice a second; nobody needs it sooner.
+        if self.tick % 30 == 0 {
+            self.check_goals();
+        }
         self.settle_grids();
         self.fluids.refill_budgets();
         for i in 0..self.states.len() {
@@ -1361,7 +1368,50 @@ impl Sim {
                 .map(|r| t.research[r].id.clone())
                 .collect(),
         };
+        snap.goal = self.goal_progress().map(|(have, need)| GoalView {
+            index: self.goal,
+            have,
+            need,
+        });
         snap
+    }
+
+    /// The goal the player is on, from 0; the number of goals once all are met.
+    pub fn goal(&self) -> u16 {
+        self.goal
+    }
+
+    /// The current goal's id, for saves; none once all are met.
+    fn goal_id(&self) -> Option<String> {
+        let ids = &self.tables.goal_ids;
+        ids.get(self.goal as usize).cloned()
+    }
+
+    /// How far along the current goal is, as (have, need); none once all are met.
+    fn goal_progress(&self) -> Option<(u32, u32)> {
+        let (goal, _) = self.tables.goals.get(self.goal as usize)?;
+        Some(match *goal {
+            Goal::Deliver(item, n) => (self.delivered[item as usize].min(n) as u32, n as u32),
+            Goal::Build(kind, n) => {
+                let have = self.entities.iter().filter(|(_, e)| e.kind == kind).count();
+                ((have as u32).min(n), n)
+            }
+            Goal::Research(r) => (u32::from(self.research.done[r as usize]), 1),
+            Goal::Never => (0, 1),
+        })
+    }
+
+    /// Move past every goal that is met, paying out their rewards.
+    fn check_goals(&mut self) {
+        while let Some((have, need)) = self.goal_progress() {
+            if have < need {
+                break;
+            }
+            for &(item, n) in &self.tables.goals[self.goal as usize].1 {
+                self.stock[item as usize] += n;
+            }
+            self.goal += 1;
+        }
     }
 }
 

@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 6;
+pub const VERSION: u16 = 7;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -55,6 +55,20 @@ struct World {
     /// Entities by slot, so ids stay the same across a save and load.
     entities: Vec<(u32, Saved)>,
     /// Units done per research, and whether it is finished.
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    /// The goal the player is on, by id; none once all are met.
+    goal: Option<String>,
+}
+
+/// Versions 2 to 6: the same, before goals.
+#[derive(Deserialize)]
+struct WorldV6 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
     research: Vec<(ResearchId, u32, bool)>,
     current: Option<ResearchId>,
 }
@@ -148,12 +162,27 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 entities: v1.entities,
                 research: Vec::new(),
                 current: None,
+                goal: Some(String::new()),
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
         // underground belts, then fluids, then engines: new variants only,
-        // so a version 2 payload reads as it is.
-        2..=6 => postcard::from_bytes(payload).map_err(corrupt),
+        // so a version 2 payload reads as it is. Version 7 adds goals; an
+        // older game starts at the first, and moves past what it has done.
+        2..=6 => {
+            let v6: WorldV6 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v6.tick,
+                stock: v6.stock,
+                delivered: v6.delivered,
+                ore: v6.ore,
+                entities: v6.entities,
+                research: v6.research,
+                current: v6.current,
+                goal: Some(String::new()),
+            })
+        }
+        7 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -262,6 +291,7 @@ impl Sim {
                 .research
                 .current
                 .map(|r| t.research[r as usize].id.clone()),
+            goal: self.goal_id(),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -320,6 +350,22 @@ impl Sim {
             .as_ref()
             .and_then(|id| research(id, &mut warnings))
             .filter(|&r| !sim.research.done[r as usize]);
+        // An empty id, from a save older than goals, starts at the first;
+        // a goal the content no longer has starts over too, and the sim
+        // moves past what's already done.
+        sim.goal = match &world.goal {
+            None => content.goals.len() as u16,
+            Some(id) => content
+                .goals
+                .iter()
+                .position(|g| &g.id == id)
+                .unwrap_or_else(|| {
+                    if !id.is_empty() {
+                        warnings.push(format!("goal `{id}` is gone; goals start over"));
+                    }
+                    0
+                }) as u16,
+        };
         // What each pipe brought, to fill the segments once they are built.
         let mut fluid = std::collections::HashMap::new();
         for (slot, s) in world.entities {

@@ -79,6 +79,19 @@ pub struct Snapshot {
     /// Each power grid: poles linked by wire and what they cover.
     #[serde(default)]
     pub grids: Vec<GridView>,
+    /// The goal the player is on, if any are left.
+    #[serde(default)]
+    pub goal: Option<GoalView>,
+}
+
+/// The current goal and how far along it is.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct GoalView {
+    /// Its place in the content's goals, from 0.
+    pub index: u16,
+    /// How much of what it wants is done, of how much.
+    pub have: u32,
+    pub need: u32,
 }
 
 /// One power grid this tick.
