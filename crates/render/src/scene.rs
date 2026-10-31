@@ -434,7 +434,7 @@ mod tests {
             &snap(0.5),
             1.0,
         );
-        let px = renderer.capture(&gpu, size, &camera, &scene, crate::FLOOR);
+        let px = renderer.capture(&gpu, size, &camera, &scene, None, crate::FLOOR);
         let at = |x: u32, y: u32| {
             let i = ((y * size.0 + x) * 4) as usize;
             [px[i], px[i + 1], px[i + 2]]
@@ -484,6 +484,35 @@ mod tests {
         assert_eq!(scene.ore.len(), 1, "the far tile is culled");
         assert_eq!(scene.ore[0].pos, [3.0, 2.0]);
         assert_eq!(scene.ore[0].tint, palette::item("iron-ore"));
+    }
+
+    /// Needs a GPU.
+    #[test]
+    #[ignore = "needs a GPU"]
+    fn the_overlay_draws_over_the_world_in_pixels() {
+        let gpu = crate::Gpu::headless().expect("a GPU");
+        let mut renderer = crate::Renderer::new(&gpu, atlases());
+        let mut overlay = crate::Overlay::new();
+        overlay.panel([10.0, 10.0], [60.0, 30.0], 6.0, palette::ACCENT);
+        let w = overlay.text("Mofact", [80.0, 36.0], 24.0, palette::WHITE);
+        let scene = Scene::default();
+        let size = (160, 48);
+        let px = renderer.capture(&gpu, size, &CAMERA, &scene, Some(&overlay), crate::FLOOR);
+        let at = |x: u32, y: u32| {
+            let i = ((y * size.0 + x) * 4) as usize;
+            [px[i], px[i + 1], px[i + 2]]
+        };
+        assert_eq!(at(40, 25), [0xff, 0xd1, 0x66], "inside the panel");
+        assert_ne!(
+            at(11, 11),
+            [0xff, 0xd1, 0x66],
+            "the rounded corner lets the ground through"
+        );
+        let lit = (80..80 + w as u32)
+            .flat_map(|x| (12..36).map(move |y| (x, y)))
+            .filter(|&(x, y)| at(x, y)[0] > 200)
+            .count();
+        assert!(lit > 100, "the text drew {lit} bright pixels");
     }
 
     /// The CPU side of 10,000 sprites; prints the time per frame.
