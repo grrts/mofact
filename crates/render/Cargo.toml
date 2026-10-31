@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 mofact-core.workspace = true
 mofact-artkit.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
 
 [lints]
 workspace = true
