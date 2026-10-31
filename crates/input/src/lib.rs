@@ -3,17 +3,25 @@
 //! The platform shell turns its events into [`Pointer`] events in screen
 //! pixels, and [`CameraControl`] turns those into a camera: one finger or a
 //! mouse drag pans, two fingers pinch-zoom about their midpoint, and the wheel
-//! zooms about the cursor (T15). Build tools arrive in T20.
+//! zooms about the cursor (T15). [`build`] turns the rest into build
+//! commands (T20).
 //!
 //! Pointer events are plain data, so a session can be recorded and replayed:
 //! the replay tests below drive the same code the app does.
 
+pub mod build;
+
+pub use build::{Builder, Ghost, Ground, Occupant, Tool};
 pub use mofact_core as core;
 
+use mofact_core::command::Command;
+use mofact_core::geom::TilePos;
 use serde::{Deserialize, Serialize};
 
-/// The pointer id the mouse uses; touches use their finger ids.
+/// The pointer id the mouse's left button uses; touches use their finger ids.
 pub const MOUSE: u64 = u64::MAX;
+/// The right or middle mouse button: always moves the camera, whatever the tool.
+pub const MOUSE_PAN: u64 = u64::MAX - 1;
 
 /// One input event, in screen pixels with y down.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -149,6 +157,67 @@ impl CameraControl {
         for i in 0..2 {
             self.center[i] = self.center[i].clamp(self.bounds.0[i], self.bounds.1[i]);
         }
+    }
+}
+
+/// Routes pointers to the camera or the build tools, as the prototype does:
+/// with a tool chosen, one finger (or the left button) builds and two fingers
+/// still pan and zoom; with the hand, everything moves the camera.
+#[derive(Debug)]
+pub struct Controls {
+    pub camera: CameraControl,
+    pub builder: Builder,
+    /// The pointer building right now, and where it last was.
+    building: Option<(u64, [f32; 2])>,
+}
+
+impl Controls {
+    pub fn new(camera: CameraControl) -> Self {
+        Self {
+            camera,
+            builder: Builder::default(),
+            building: None,
+        }
+    }
+
+    fn tile(&self, x: f32, y: f32) -> TilePos {
+        let [wx, wy] = self.camera.world_at([x, y]);
+        TilePos::new(wx.floor() as i32, wy.floor() as i32)
+    }
+
+    /// Handle one pointer event; returns the commands it builds.
+    pub fn handle(&mut self, event: Pointer, ground: &dyn Ground) -> Vec<Command> {
+        match (event, self.building) {
+            (Pointer::Down { id, x, y }, None)
+                if !self.camera.busy() && id != MOUSE_PAN && self.builder.tool != Tool::Hand =>
+            {
+                self.building = Some((id, [x, y]));
+                let tile = self.tile(x, y);
+                return self.builder.start(tile, ground);
+            }
+            (Pointer::Down { .. }, Some((first, [fx, fy]))) => {
+                // A second finger: stop building and hand both to the camera.
+                self.builder.cancel();
+                self.building = None;
+                self.camera.handle(Pointer::Down {
+                    id: first,
+                    x: fx,
+                    y: fy,
+                });
+                self.camera.handle(event);
+            }
+            (Pointer::Move { id, x, y }, Some((b, _))) if id == b => {
+                self.building = Some((id, [x, y]));
+                let tile = self.tile(x, y);
+                return self.builder.drag(tile, ground);
+            }
+            (Pointer::Up { id }, Some((b, _))) if id == b => {
+                self.building = None;
+                return self.builder.end(ground);
+            }
+            _ => self.camera.handle(event),
+        }
+        Vec::new()
     }
 }
 
@@ -298,6 +367,92 @@ mod tests {
             y: 0.0,
         });
         assert_eq!(c.center[0], 10.0);
+    }
+
+    #[test]
+    fn one_finger_builds_two_fingers_pan_and_the_hand_only_pans() {
+        struct Empty;
+        impl Ground for Empty {
+            fn at(&self, _: TilePos) -> Option<build::Occupant> {
+                None
+            }
+        }
+        let mut c = Controls::new(camera());
+        c.builder.set_tool(Tool::Belt);
+        // Screen centre is world (0, 0); 32 px a tile.
+        c.handle(
+            Down {
+                id: 1,
+                x: 400.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Move {
+                id: 1,
+                x: 496.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        let built = c.handle(Up { id: 1 }, &Empty);
+        assert_eq!(built.len(), 4, "tiles 0 to 3: {built:?}");
+        assert_eq!(c.camera.center, [0.0, 0.0], "building doesn't pan");
+
+        c.handle(
+            Down {
+                id: 1,
+                x: 400.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Down {
+                id: 2,
+                x: 500.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Move {
+                id: 2,
+                x: 600.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(Up { id: 2 }, &Empty);
+        assert!(
+            c.handle(Up { id: 1 }, &Empty).is_empty(),
+            "a pinch builds nothing"
+        );
+        assert!(c.camera.pixels_per_tile > 32.0);
+
+        let before = c.camera.center;
+        c.handle(
+            Down {
+                id: MOUSE_PAN,
+                x: 400.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Move {
+                id: MOUSE_PAN,
+                x: 300.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        assert!(c.handle(Up { id: MOUSE_PAN }, &Empty).is_empty());
+        assert!(
+            c.camera.center[0] > before[0],
+            "right drag pans even with a tool"
+        );
     }
 
     #[test]

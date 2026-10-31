@@ -16,16 +16,20 @@
 //! that save next time.
 
 mod autosave;
+mod built;
 mod ore;
+#[cfg(test)]
+mod replay;
 mod surface;
 
 use mofact_core::content::Content;
-use mofact_input::{CameraControl, Pointer, MOUSE};
+use mofact_input::{CameraControl, Controls, Pointer, Tool, MOUSE, MOUSE_PAN};
 use mofact_render::{scene, wgpu, Camera, Frame, Gpu, Look, Renderer, Scene, Target, FLOOR};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui as _;
 use ore::OreMap;
 use sdl3::event::{Event, WindowEvent};
+use sdl3::keyboard::Keycode;
 use sdl3::mouse::MouseButton;
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -41,7 +45,10 @@ struct App {
     look: Look,
     scene: Scene,
     ore: OreMap,
-    control: CameraControl,
+    controls: Controls,
+    built: built::Built,
+    /// The mouse button held, as a pointer id.
+    mouse: u64,
     /// When the latest snapshot arrived, for smoothing between ticks.
     latest: (u64, Instant),
     /// The platform has taken the window away, or it is minimised.
@@ -54,6 +61,7 @@ impl App {
         sim: Sim,
         look: Look,
         ore: OreMap,
+        built: built::Built,
         camera: Camera,
     ) -> Result<Self, String> {
         let window = video
@@ -68,8 +76,11 @@ impl App {
         let gpu = Gpu::new(instance, &surface).map_err(|e| e.to_string())?;
         let (w, h) = window.size_in_pixels();
         let target = Target::new(&gpu, surface, w, h).map_err(|e| e.to_string())?;
-        let control =
-            CameraControl::new(camera.center, camera.pixels_per_tile, [w as f32, h as f32]);
+        let controls = Controls::new(CameraControl::new(
+            camera.center,
+            camera.pixels_per_tile,
+            [w as f32, h as f32],
+        ));
         Ok(Self {
             target: Some(target),
             renderer: Renderer::new(&gpu, scene::atlases()),
@@ -79,7 +90,9 @@ impl App {
             look,
             scene: Scene::default(),
             ore,
-            control,
+            controls,
+            built,
+            mouse: MOUSE,
             latest: (0, Instant::now()),
             background: false,
         })
@@ -116,8 +129,8 @@ impl App {
         }
         let alpha = (self.latest.1.elapsed().as_secs_f32() / mofact_core::TICK_SECONDS).min(1.0);
         let camera = Camera {
-            center: self.control.center,
-            pixels_per_tile: self.control.pixels_per_tile,
+            center: self.controls.camera.center,
+            pixels_per_tile: self.controls.camera.pixels_per_tile,
         };
         let atlases = self.renderer.atlases();
         self.scene.build(
@@ -137,11 +150,33 @@ impl App {
             target.size(),
             self.ore.tiles(),
         );
+        let ghosts = self.controls.builder.ghosts();
+        self.scene.ghosts(
+            &self.look,
+            atlases,
+            ghosts.iter().map(|g| (&g.building, g.tile, g.dir)),
+        );
         target.draw(&self.gpu, &mut self.renderer, &camera, &self.scene)
     }
 
+    /// Keys, as in the prototype: 1 to 6 pick hand, belt, drill, furnace,
+    /// assembler and remove; R rotates; Escape goes back to the hand.
+    fn key(&mut self, key: Keycode) {
+        let tool = match key {
+            Keycode::_1 | Keycode::Escape => Tool::Hand,
+            Keycode::_2 => Tool::Belt,
+            Keycode::_3 => Tool::Place("drill".into()),
+            Keycode::_4 => Tool::Place("furnace".into()),
+            Keycode::_5 => Tool::Place("assembler".into()),
+            Keycode::_6 | Keycode::X => Tool::Remove,
+            Keycode::R => return self.controls.builder.rotate(),
+            _ => return,
+        };
+        self.controls.builder.set_tool(tool);
+    }
+
     /// An SDL event as a pointer event in screen pixels, if it is one.
-    fn pointer(&self, event: &Event) -> Option<Pointer> {
+    fn pointer(&mut self, event: &Event) -> Option<Pointer> {
         // Mouse positions are in window points; touches are 0 to 1.
         let (pw, ph) = self.window.size_in_pixels();
         let (ww, _) = self.window.size();
@@ -156,14 +191,23 @@ impl App {
         Some(match *event {
             Event::MouseButtonDown {
                 mouse_btn, x, y, ..
-            } if drag(mouse_btn) => Pointer::Down {
-                id: MOUSE,
-                x: x * scale,
-                y: y * scale,
-            },
-            Event::MouseButtonUp { mouse_btn, .. } if drag(mouse_btn) => Pointer::Up { id: MOUSE },
+            } if drag(mouse_btn) => {
+                self.mouse = if mouse_btn == MouseButton::Left {
+                    MOUSE
+                } else {
+                    MOUSE_PAN
+                };
+                Pointer::Down {
+                    id: self.mouse,
+                    x: x * scale,
+                    y: y * scale,
+                }
+            }
+            Event::MouseButtonUp { mouse_btn, .. } if drag(mouse_btn) => {
+                Pointer::Up { id: self.mouse }
+            }
             Event::MouseMotion { x, y, .. } => Pointer::Move {
-                id: MOUSE,
+                id: self.mouse,
                 x: x * scale,
                 y: y * scale,
             },
@@ -304,7 +348,14 @@ fn run() -> Result<(), String> {
     let sdl = sdl3::init().map_err(|e| e.to_string())?;
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
-    let mut app = App::new(&video, sim, Look::new(&content), ore, camera)?;
+    let mut app = App::new(
+        &video,
+        sim,
+        Look::new(&content),
+        ore,
+        built::Built::new(&content),
+        camera,
+    )?;
     let info = app.gpu.info();
     println!(
         "mofact {}: {} ({:?}), surface {:?}",
@@ -321,7 +372,17 @@ fn run() -> Result<(), String> {
     loop {
         for event in events.poll_iter() {
             if let Some(p) = app.pointer(&event) {
-                app.control.handle(p);
+                app.built.update(&app.sim.latest());
+                for command in app.controls.handle(p, &app.built) {
+                    app.sim.send(command);
+                }
+                continue;
+            }
+            if let Event::KeyDown {
+                keycode: Some(key), ..
+            } = event
+            {
+                app.key(key);
                 continue;
             }
             match event {
@@ -345,7 +406,7 @@ fn run() -> Result<(), String> {
                         if let Some(t) = &mut app.target {
                             t.resize(&app.gpu, w.max(1) as u32, h.max(1) as u32);
                         }
-                        app.control.set_viewport(w as f32, h as f32);
+                        app.controls.camera.set_viewport(w as f32, h as f32);
                     }
                     _ => {}
                 },
@@ -353,6 +414,12 @@ fn run() -> Result<(), String> {
             }
         }
 
+        for result in app.sim.results() {
+            if let mofact_core::command::CommandResult::Refused(why) = result {
+                // The inspect sheet and toasts (T21) will show these.
+                eprintln!("mofact: can't build there: {why:?}");
+            }
+        }
         report(saves.update(&app.sim));
         if app.background {
             // Nothing to draw: sleep instead of spinning, to save the battery.
