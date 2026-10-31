@@ -17,19 +17,19 @@
   #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
             color: #d8dee6; font: 600 16px system-ui, sans-serif; text-align: center; padding: 24px;
             pointer-events: none; }
-  #build { position: fixed; right: 8px; top: calc(env(safe-area-inset-top, 0px) + 2px); color: #ffffff55; font: 11px system-ui, sans-serif;
+  #build { position: fixed; left: 50%; transform: translateX(-50%); top: calc(env(safe-area-inset-top, 0px) + 2px); color: #ffffff55; font: 11px system-ui, sans-serif;
            pointer-events: none; transition: opacity 1s; }
 </style>
 </head>
 <body>
 <canvas id="game" tabindex="0"></canvas>
 <div id="status">Loading Mofact…</div>
-<div id="build">build b78936e</div>
+<div id="build">build ddc4ee5</div>
 <script type="module">
 // The page is only a canvas: the game is the same Rust app the phones run,
 // compiled to WebAssembly (platform/web). Each deploy stamps its commit into
 // these URLs, so a new build is fetched fresh instead of served from cache.
-const build = 'b78936e';
+const build = 'ddc4ee5';
 const status = document.getElementById('status');
 try {
   const { default: init, start } = await import(`./mofact_web.js?v=${build}`);
