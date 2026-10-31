@@ -12,13 +12,16 @@ macro_rules! content_id {
         ///
         /// Content ids are the stable string keys used in `data/*.ron` and in saves,
         /// such as `"iron-plate"`. The simulation interns them into dense indices.
+        ///
+        /// The key is shared, so cloning an id (as every snapshot does, for
+        /// every entity, every tick) costs a reference count, not an allocation.
         #[derive(Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
         #[serde(transparent)]
-        pub struct $name(pub String);
+        pub struct $name(std::sync::Arc<str>);
 
         impl $name {
-            pub fn new(key: impl Into<String>) -> Self {
-                Self(key.into())
+            pub fn new(key: impl AsRef<str>) -> Self {
+                Self(key.as_ref().into())
             }
 
             pub fn as_str(&self) -> &str {
@@ -28,7 +31,13 @@ macro_rules! content_id {
 
         impl From<&str> for $name {
             fn from(key: &str) -> Self {
-                Self(key.to_owned())
+                Self(key.into())
+            }
+        }
+
+        impl From<String> for $name {
+            fn from(key: String) -> Self {
+                Self(key.into())
             }
         }
 

@@ -518,6 +518,9 @@ impl Sim {
     pub fn snapshot(&self) -> Snapshot {
         let mut snap = Snapshot {
             tick: self.tick,
+            entities: Vec::with_capacity(self.states.len()),
+            // Belts hold up to four items; most hold one or two.
+            belt_items: Vec::with_capacity(self.states.len() * 2),
             ..Snapshot::default()
         };
         for (id, e) in self.entities.iter() {

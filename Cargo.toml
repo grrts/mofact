@@ -33,7 +33,7 @@ mofact-artkit = { path = "crates/artkit" }
 mofact-ui = { path = "crates/ui" }
 mofact-input = { path = "crates/input" }
 mofact-headless = { path = "tools/headless" }
-serde = { version = "1", features = ["derive"] }
+serde = { version = "1", features = ["derive", "rc"] }
 ron = "0.8"
 wgpu = "30"
 pollster = "0.4"
