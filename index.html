@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
 <meta name="theme-color" content="#14181d">
-<title>Mofact Prototype</title>
+<title>Mofact</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Saira+Semi+Condensed:wght@400;600;700&family=IBM+Plex+Mono:wght@500&display=swap">
@@ -133,7 +133,7 @@ button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
     <li>Everything belted into the <b>hub</b> counts towards your goal. Buildings are paid for with plates from the hub.</li>
     <li>Zoom out to see the factory as a flow map. A red <b>!</b> marks a machine that is starving for input. A yellow <b>=</b> marks one whose output is backed up.</li>
   </ul>
-  <p class="muted">Progress saves in this browser. Build <span style="font-family:var(--font-num)">c152715</span>.</p>
+  <p class="muted">Progress saves in this browser. Build <span style="font-family:var(--font-num)">3ac588f</span>.</p>
   <div class="actions">
     <button class="pill danger" id="resetBtn">Start over</button>
     <button class="pill" id="menuClose">Back to factory</button>
@@ -202,8 +202,38 @@ const GOALS = [
 const START_STOCK = { 'iron-plate': 60, 'copper-plate': 24 };
 
 // ---------- state ----------
-let ore, grid, ents, nextId, stock, delivered, log, goalIdx, elapsed, done;
-const SAVE_KEY = 'mofact-proto-v1';
+// The simulation runs in the Rust engine (mofact.wasm). This page keeps a
+// mirror of the latest snapshot for drawing and the panels, and changes the
+// world only by sending the engine commands.
+let ore, grid, ents, stock, delivered, log, goalIdx, elapsed, done;
+let deliveredBase = {}; // deliveries from before a reload, which the fresh engine doesn't know about
+const SAVE_KEY = 'mofact-engine-v1';
+const DIRN = ['East', 'South', 'West', 'North'];
+const SIZE = { hub: [3, 3] };
+const ORE_ITEM = ORE;
+
+let wasm = null;
+const enc = new TextEncoder(), dec = new TextDecoder();
+function call(req) {
+  const bytes = enc.encode(JSON.stringify(req));
+  const p = wasm.exports.alloc(bytes.length);
+  new Uint8Array(wasm.exports.memory.buffer, p, bytes.length).set(bytes);
+  const r = wasm.exports.call(p, bytes.length);
+  const ptr = Number(r >> 32n), len = Number(r & 0xffffffffn);
+  return JSON.parse(dec.decode(new Uint8Array(wasm.exports.memory.buffer, ptr, len)));
+}
+async function loadEngine() {
+  const res = await fetch('mofact.wasm');
+  const { instance } = await WebAssembly.instantiate(await res.arrayBuffer(), {});
+  wasm = instance;
+}
+// Send one command; returns the created entity id, true, or the refusal reason.
+function cmd(c) {
+  const r = call({ op: 'command', command: c });
+  if (r.Applied) { dirty = true; return r.Applied.created == null ? true : r.Applied.created; }
+  return { refused: r.Refused || r.error || 'refused' };
+}
+const placeCmd = (type, x, y, dir, rec) => cmd({ Place: { building: type, pos: { x, y }, dir: DIRN[dir], recipe: rec || null } });
 
 function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 4294967296; }; }
 function genOre() {
@@ -224,39 +254,35 @@ function genOre() {
 const inb = (x, y) => x >= 0 && y >= 0 && x < W && y < H;
 const at = (x, y) => inb(x, y) ? (ents.get(grid[y * W + x]) || null) : null;
 
-function newEnt(type, x, y, dir, extra) {
-  const e = Object.assign({ id: nextId++, type, x, y, w: 1, h: 1, dir: dir | 0, prog: 0, idleT: 0, outT: 0, work: false }, extra || {});
-  if (type === 'belt') { e.items = []; e.last = null; }
-  if (type === 'drill') { e.out = null; }
-  if (type === 'furnace') { e.inType = null; e.inCount = 0; e.outType = null; e.outCount = 0; }
-  if (type === 'assembler') { e.recipe = e.recipe || 'gear'; e.inv = {}; e.outCount = 0; e.crafting = false; }
-  if (type === 'hub') { e.w = HUB.w; e.h = HUB.h; }
-  ents.set(e.id, e);
-  for (let j = 0; j < e.h; j++) for (let i = 0; i < e.w; i++) grid[(y + j) * W + x + i] = e.id;
-  return e;
+// A fresh engine world with the ore map and the hub.
+function resetWorld() {
+  call({ op: 'reset' });
+  const tiles = [];
+  for (let i = 0; i < W * H; i++) if (ore[i]) tiles.push([i % W, Math.floor(i / W), ORE_ITEM[ore[i]]]);
+  call({ op: 'set_ore', tiles });
+  placeCmd('hub', HUB.x, HUB.y, 0);
 }
-function delEnt(e) {
-  for (let j = 0; j < e.h; j++) for (let i = 0; i < e.w; i++) grid[(e.y + j) * W + e.x + i] = 0;
-  ents.delete(e.id);
-}
+const PLENTY = { 'iron-plate': 1e6, 'copper-plate': 1e6 };
 
 function newGame() {
   genOre();
-  grid = new Int32Array(W * H); ents = new Map(); nextId = 1;
-  stock = Object.assign({}, START_STOCK); delivered = {}; log = []; goalIdx = 0; elapsed = 0; done = false;
-  newEnt('hub', HUB.x, HUB.y, 0);
+  log = []; goalIdx = 0; elapsed = 0; done = false; deliveredBase = {}; lastBelt.clear();
   // starter iron line: drill -> belt -> furnace -> belt -> hub
   const y = 27;
   ore[y * W + 19] = 1;
-  newEnt('drill', 19, y, 0);
-  newEnt('belt', 20, y, 0); newEnt('belt', 21, y, 0);
-  newEnt('furnace', 22, y, 0);
-  newEnt('belt', 23, y, 0); newEnt('belt', 24, y, 0); newEnt('belt', 25, y, 0);
+  resetWorld();
+  call({ op: 'set_stock', stock: PLENTY });
+  placeCmd('drill', 19, y, 0);
+  placeCmd('belt', 20, y, 0); placeCmd('belt', 21, y, 0);
+  placeCmd('furnace', 22, y, 0);
+  placeCmd('belt', 23, y, 0); placeCmd('belt', 24, y, 0); placeCmd('belt', 25, y, 0);
+  call({ op: 'set_stock', stock: Object.assign({ 'iron-plate': 0, 'copper-plate': 0 }, START_STOCK) });
+  sync(true);
 }
 
 function save() {
   try {
-    const list = [...ents.values()].filter(e => e.type !== 'hub').map(e => [e.type, e.x, e.y, e.dir, e.recipe || null]);
+    const list = [...ents.values()].filter(e => e.type !== 'hub').map(e => [e.type, e.x, e.y, e.dir, e.type === 'assembler' ? e.recipe : null]);
     localStorage.setItem(SAVE_KEY, JSON.stringify({ list, stock, delivered, goalIdx, elapsed, done, extraOre: [19 + 27 * W] }));
   } catch (_) {}
 }
@@ -265,98 +291,73 @@ function load() {
   try { d = JSON.parse(localStorage.getItem(SAVE_KEY) || 'null'); } catch (_) {}
   if (!d || !Array.isArray(d.list)) return false;
   genOre(); (d.extraOre || []).forEach(i => ore[i] = 1);
-  grid = new Int32Array(W * H); ents = new Map(); nextId = 1;
-  newEnt('hub', HUB.x, HUB.y, 0);
-  for (const [t, x, y, dir, rec] of d.list) if (inb(x, y) && !grid[y * W + x] && COST[t]) newEnt(t, x, y, dir, rec ? { recipe: rec } : null);
-  stock = d.stock || {}; delivered = d.delivered || {}; goalIdx = d.goalIdx | 0; elapsed = +d.elapsed || 0; done = !!d.done; log = [];
+  resetWorld();
+  call({ op: 'set_stock', stock: PLENTY });
+  for (const [t, x, y, dir, rec] of d.list) if (inb(x, y) && COST[t]) placeCmd(t, x, y, dir, rec);
+  const s = { 'iron-plate': 0, 'copper-plate': 0 };
+  for (const [k, n] of Object.entries(d.stock || {})) s[k] = n;
+  call({ op: 'set_stock', stock: s });
+  deliveredBase = d.delivered || {}; goalIdx = d.goalIdx | 0; elapsed = +d.elapsed || 0; done = !!d.done; log = [];
+  lastBelt.clear();
+  sync(true);
   return true;
 }
 
-// ---------- simulation ----------
-function insertBelt(b, type, p) {
-  for (const it of b.items) if (Math.abs(it.pos - p) < SPACING) return false;
-  b.items.push({ type, pos: p }); b.items.sort((a, c) => c.pos - a.pos); b.last = type;
-  return true;
-}
-// push an item moving in direction `dir` into tile (tx,ty)
-function pushTo(tx, ty, type, dir) {
-  const e = at(tx, ty); if (!e) return false;
-  if (e.type === 'belt') {
-    if ((e.dir + 2) % 4 === dir) return false;
-    return insertBelt(e, type, e.dir === dir ? 0 : 0.5);
+// ---------- mirror of the engine's snapshot ----------
+const lastBelt = new Map(); // belt tile -> last item seen on it, for the flow-map colours
+function sync(quiet) {
+  const v = call({ op: 'snapshot' });
+  grid = new Int32Array(W * H); ents = new Map();
+  const onBelt = new Map();
+  for (const it of v.belt_items) {
+    const k = it.tile.x + ',' + it.tile.y;
+    if (!onBelt.has(k)) onBelt.set(k, []);
+    onBelt.get(k).push({ type: it.item, pos: it.along });
   }
-  return accept(e, type, (dir + 2) % 4);
-}
-function accept(e, type, side) {
-  if (e.type === 'hub') {
-    stock[type] = (stock[type] || 0) + 1; delivered[type] = (delivered[type] || 0) + 1;
-    log.push([elapsed, type]); onDeliver(type);
-    return true;
-  }
-  if (side === e.dir) return false; // output face
-  if (e.type === 'furnace') {
-    if (!type.endsWith('-ore') || e.inCount >= CAP) return false;
-    if (e.inCount > 0 && e.inType !== type) return false;
-    e.inType = type; e.inCount++; return true;
-  }
-  if (e.type === 'assembler') {
-    const need = RECIPES[e.recipe].in[type]; if (!need) return false;
-    if ((e.inv[type] || 0) >= need * 2) return false;
-    e.inv[type] = (e.inv[type] || 0) + 1; return true;
-  }
-  return false;
-}
-function front(e) { const [dx, dy] = DIRS[e.dir]; return [e.x + dx, e.y + dy]; }
-
-function step(dt) {
-  elapsed += dt;
-  for (const e of ents.values()) {
+  for (const s of v.entities) {
+    const [w, h] = SIZE[s.building] || [1, 1];
+    const inv = v.inventories[s.id] || [];
+    const e = { id: s.id + 1, type: s.building, x: s.pos.x, y: s.pos.y, w, h, dir: DIRN.indexOf(s.dir), recipe: s.recipe,
+      prog: s.progress, work: s.state === 'Working' && s.progress > 0, st: s.state };
     if (e.type === 'belt') {
-      const items = e.items, mv = BELT_SPEED * dt;
-      for (let i = 0; i < items.length; i++) {
-        const lim = i === 0 ? 1 : items[i - 1].pos - SPACING;
-        items[i].pos = Math.max(items[i].pos, Math.min(items[i].pos + mv, lim));
-      }
-      if (items.length && items[0].pos >= 1) {
-        const [fx, fy] = front(e);
-        if (pushTo(fx, fy, items[0].type, e.dir)) items.shift(); else items[0].pos = 1;
-      }
-    } else if (e.type === 'drill') {
-      if (!e.out) { e.prog += dt / DRILL_T; e.work = true; if (e.prog >= 1) { e.prog = 0; e.out = ORE[ore[e.y * W + e.x]] || 'iron-ore'; } e.outT = 0; }
-      else { e.work = false; e.outT += dt; }
-      if (e.out) { const [fx, fy] = front(e); if (pushTo(fx, fy, e.out, e.dir)) { e.out = null; e.outT = 0; } }
+      const k = e.x + ',' + e.y;
+      e.items = onBelt.get(k) || [];
+      if (e.items.length) lastBelt.set(k, e.items[0].type);
+      e.last = lastBelt.get(k) || null;
     } else if (e.type === 'furnace') {
-      const prod = e.inType ? e.inType.replace('-ore', '-plate') : null;
-      if (!e.work && e.inCount > 0 && (e.outCount === 0 || e.outType === prod) && e.outCount < CAP) { e.inCount--; e.work = true; e.prog = 0; e.cur = prod; }
-      if (e.work) { e.prog += dt / FURNACE_T; e.idleT = 0; if (e.prog >= 1) { e.work = false; e.outType = e.cur; e.outCount++; } }
-      else e.idleT += dt;
-      e.outT = e.outCount >= CAP ? e.outT + dt : 0;
-      if (e.outCount > 0) { const [fx, fy] = front(e); if (pushTo(fx, fy, e.outType, e.dir)) e.outCount--; }
-      if (e.inCount === 0 && !e.work) e.inType = null;
+      e.inType = e.recipe ? e.recipe.replace('-plate', '-ore') : null;
+      const i = inv.find(([k]) => k.endsWith('-ore')), o = inv.find(([k]) => k.endsWith('-plate'));
+      e.inCount = i ? i[1] : 0; e.outType = o ? o[0] : null; e.outCount = o ? o[1] : 0;
     } else if (e.type === 'assembler') {
       const r = RECIPES[e.recipe];
-      if (!e.work && e.outCount + r.n <= CAP + 1 && Object.entries(r.in).every(([k, n]) => (e.inv[k] || 0) >= n)) {
-        for (const [k, n] of Object.entries(r.in)) e.inv[k] -= n;
-        e.work = true; e.prog = 0;
-      }
-      if (e.work) { e.prog += dt / r.t; e.idleT = 0; if (e.prog >= 1) { e.work = false; e.outCount += r.n; } }
-      else e.idleT += dt;
-      e.outT = e.outCount >= CAP ? e.outT + dt : 0;
-      if (e.outCount > 0) { const [fx, fy] = front(e); if (pushTo(fx, fy, r.out, e.dir)) e.outCount--; }
+      e.inv = {}; e.outCount = 0;
+      if (r) for (const [k, n] of inv) { if (k === r.out && !(k in r.in)) e.outCount = n; else e.inv[k] = n; }
     }
+    ents.set(e.id, e);
+    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) if (inb(e.x + i, e.y + j)) grid[(e.y + j) * W + e.x + i] = e.id;
   }
-  while (log.length && log[0][0] < elapsed - 60) log.shift();
+  stock = {}; for (const [k, n] of v.stock) stock[k] = n;
+  const prev = delivered || {};
+  delivered = {};
+  for (const k of new Set([...Object.keys(v.delivered), ...Object.keys(deliveredBase)])) delivered[k] = (v.delivered[k] || 0) + (deliveredBase[k] || 0);
+  if (!quiet) for (const [k, n] of Object.entries(delivered)) { const d = n - (prev[k] || 0); if (d > 0) { log.push([elapsed, k, d]); onDeliver(k); } }
+  if (selected) selected = ents.get(selected.id) || null;
 }
+// the engine id of a mirrored entity
+const eid = e => e.id - 1;
+
 function status(e) {
-  if (e.type === 'drill') return e.outT > 0.8 ? 'blocked' : 'working';
-  if (e.type === 'furnace' || e.type === 'assembler') {
-    if (e.outT > 0.8) return 'blocked';
-    if (e.idleT > 1.5) return 'starved';
-    return 'working';
-  }
+  if (e.st === 'Blocked') return 'blocked';
+  if (e.st === 'Starved') return 'starved';
   return 'working';
 }
-function ratePerMin(type) { let n = 0; for (const [, t] of log) if (t === type) n++; return Math.round(n * 60 / Math.max(10, Math.min(60, elapsed))); }
+function ratePerMin(type) { let n = 0; for (const [, t, c] of log) if (t === type) n += c; return Math.round(n * 60 / Math.max(10, Math.min(60, elapsed))); }
+function step(ticks) {
+  call({ op: 'step', ticks });
+  elapsed += ticks / 60;
+  sync(false);
+  while (log.length && log[0][0] < elapsed - 60) log.shift();
+}
 
 function onDeliver(type) {
   if (done || goalIdx >= GOALS.length) return;
@@ -793,7 +794,6 @@ document.getElementById('recipes').addEventListener('click', ev => {
 document.getElementById('rotBtn').addEventListener('click', () => { rot = (rot + 1) % 4; toast('Facing ' + ['east', 'south', 'west', 'north'][rot]); });
 
 function afford(type) { const c = COST[type]; return Object.entries(c).every(([k, n]) => (stock[k] || 0) >= n); }
-function pay(type, sign) { for (const [k, n] of Object.entries(COST[type])) stock[k] = (stock[k] || 0) - n * sign; }
 function needText(type) { return Object.entries(COST[type]).map(([k, n]) => `${n} ${ITEMS[k].name.toLowerCase()}s`).join(' and '); }
 function canPlace(type, x, y) {
   if (!inb(x, y)) return 'Off the map';
@@ -804,11 +804,15 @@ function canPlace(type, x, y) {
 }
 function place(type, x, y, dir) {
   const ok = canPlace(type, x, y); if (ok !== true) { toast(ok); return null; }
-  pay(type, 1); const e = newEnt(type, x, y, dir, type === 'assembler' ? { recipe } : null); dirty = true; return e;
+  const r = placeCmd(type, x, y, dir, type === 'assembler' ? recipe : null);
+  if (typeof r !== 'number') { toast('Can\'t build there'); return null; }
+  sync(true); return ents.get(r + 1);
 }
 function removeAt(x, y) {
   const e = at(x, y); if (!e || e.type === 'hub') return false;
-  pay(e.type, -1); delEnt(e); dirty = true; if (selected === e) closeSheet(); return true;
+  if (cmd({ Remove: { entity: eid(e) } }) !== true) return false;
+  if (selected && selected.id === e.id) closeSheet();
+  sync(true); return true;
 }
 
 function tileAt(px, py) { const [wx, wy] = s2w(px, py); return [Math.floor(wx), Math.floor(wy)]; }
@@ -840,7 +844,7 @@ function toolMove(px, py) {
 function toolEnd() {
   if (tool === 'belt' && gesture.preview) {
     const path = gesture.preview;
-    if (path.length === 1 && gesture.startBelt) { gesture.startBelt.dir = (gesture.startBelt.dir + 1) % 4; dirty = true; }
+    if (path.length === 1 && gesture.startBelt) { cmd({ Rotate: { entity: eid(gesture.startBelt), dir: DIRN[(gesture.startBelt.dir + 1) % 4] } }); sync(true); }
     else {
       let placed = 0, short = false;
       path.forEach((p, i) => { p.joinEnd = i === path.length - 1 && path.length > 1; });
@@ -848,10 +852,12 @@ function toolEnd() {
         if (!inb(p.x, p.y)) continue;
         const ex = at(p.x, p.y);
         // a drag that ends on an existing belt joins it rather than turning it
-        if (ex) { if (ex.type === 'belt' && !p.joinEnd) { ex.dir = p.dir; dirty = true; } continue; }
+        if (ex) { if (ex.type === 'belt' && !p.joinEnd && ex.dir !== p.dir) cmd({ Rotate: { entity: eid(ex), dir: DIRN[p.dir] } }); continue; }
         if (!afford('belt')) { short = true; break; }
-        pay('belt', 1); newEnt('belt', p.x, p.y, p.dir); placed++; dirty = true;
+        if (typeof placeCmd('belt', p.x, p.y, p.dir) === 'number') placed++;
+        sync(true);
       }
+      sync(true);
       if (short) toast('Out of iron plates for belts');
       if (path.length > 1) rot = path[path.length - 1].dir;
     }
@@ -959,9 +965,9 @@ function renderSheet() {
 }
 sheet.addEventListener('click', ev => {
   const b = ev.target.closest('button'); if (!b || !selected) return;
-  if (b.dataset.rec) { selected.recipe = b.dataset.rec; selected.inv = {}; selected.work = false; dirty = true; renderSheet(); return; }
+  if (b.dataset.rec) { cmd({ SetRecipe: { entity: eid(selected), recipe: b.dataset.rec } }); sync(true); renderSheet(); return; }
   const a = b.dataset.act;
-  if (a === 'rotate') { selected.dir = (selected.dir + 1) % 4; dirty = true; renderSheet(); }
+  if (a === 'rotate') { cmd({ Rotate: { entity: eid(selected), dir: DIRN[(selected.dir + 1) % 4] } }); sync(true); renderSheet(); }
   if (a === 'remove') { removeAt(selected.x, selected.y); closeSheet(); }
   if (a === 'close') closeSheet();
 });
@@ -1008,8 +1014,9 @@ let dirty = false, lastT = 0, acc = 0, uiT = 0, saveT = 0;
 function frame(ts) {
   const t = ts / 1000; let dt = Math.min(0.1, t - (lastT || t)); lastT = t;
   acc += dt; let n = 0;
-  while (acc >= 1 / 60 && n++ < 6) { step(1 / 60); acc -= 1 / 60; }
+  while (acc >= 1 / 60 && n < 6) { n++; acc -= 1 / 60; }
   if (n >= 6) acc = 0;
+  if (n) step(n);
   draw(t);
   uiT += dt; saveT += dt;
   if (uiT > 0.25) {
@@ -1027,10 +1034,13 @@ document.addEventListener('visibilitychange', () => { if (document.hidden) save(
 
 resize();
 // test hook for playtests run from the browser console
-window.__mofact = { place: (t, x, y, d) => place(t, x, y, d), at, get ents() { return ents; }, get stock() { return stock; }, get ore() { return ore; }, W, setRecipe: r => { recipe = r; }, get goalIdx() { return goalIdx; } };
-if (!load()) newGame();
-resetCam(); renderTools(); renderGoal();
-requestAnimationFrame(frame);
+window.__mofact = { place: (t, x, y, d) => place(t, x, y, d), at, get ents() { return ents; }, get stock() { return stock; }, get delivered() { return delivered; }, get ore() { return ore; }, W, setRecipe: r => { recipe = r; }, get goalIdx() { return goalIdx; }, call: r => call(r) };
+loadEngine().then(() => {
+  if (!load()) newGame();
+  resetCam(); renderTools(); renderGoal();
+  window.__mofact.ready = true;
+  requestAnimationFrame(frame);
+}).catch(err => { document.getElementById('tip').textContent = 'The engine failed to load: ' + err; });
 })();
 </script>
 </body>
