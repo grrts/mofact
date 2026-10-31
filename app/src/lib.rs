@@ -48,6 +48,8 @@ struct App {
     scene: Scene,
     overlay: Overlay,
     hud: Hud,
+    /// A letter key for each building the toolbar has no number for.
+    hotkeys: Vec<(char, mofact_core::ids::BuildingId)>,
     content: Content,
     ore: OreMap,
     controls: Controls,
@@ -98,6 +100,7 @@ impl App {
             scene: Scene::default(),
             overlay,
             hud: Hud::new(),
+            hotkeys: mofact_ui::hotkeys(&content),
             content,
             ore,
             controls,
@@ -198,7 +201,8 @@ impl App {
 
     /// Keys follow the toolbar: 1 to 5 pick hand, belt, drill, furnace and
     /// assembler, 6 opens the build sheet and 7 (or X) removes; T opens
-    /// research; R rotates; Escape goes back to the hand.
+    /// research; R rotates; Escape goes back to the hand. Every other
+    /// building has a letter of its own (see [`mofact_ui::hotkeys`]).
     fn key(&mut self, key: Keycode) {
         let tool = match key {
             Keycode::_1 | Keycode::Escape => Tool::Hand,
@@ -210,7 +214,17 @@ impl App {
             Keycode::T => return self.hud.toggle_research(),
             Keycode::_7 | Keycode::X => Tool::Remove,
             Keycode::R => return self.controls.builder.rotate(),
-            _ => return,
+            other => {
+                let name = other.name().to_lowercase();
+                let mut letters = name.chars();
+                let (Some(c), None) = (letters.next(), letters.next()) else {
+                    return;
+                };
+                let Some((_, b)) = self.hotkeys.iter().find(|(k, _)| *k == c) else {
+                    return;
+                };
+                Tool::Place(b.clone())
+            }
         };
         if tool != Tool::Hand {
             self.hud.select(None);
@@ -218,24 +232,30 @@ impl App {
         self.controls.builder.set_tool(tool);
     }
 
+    /// Do what the HUD asks.
+    fn act(&mut self, action: Action) {
+        match action {
+            Action::Tool(tool) => self.controls.builder.set_tool(tool),
+            Action::Rotate => self.controls.builder.rotate(),
+            Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
+            Action::Belt(belt) => self.controls.builder.belt = belt,
+            Action::Send(command) => self.sim.send(command),
+            Action::Inspect(at) if self.controls.builder.tool == Tool::Hand => {
+                let [x, y] = self.controls.camera.world_at(at);
+                let tile = mofact_core::geom::TilePos::new(x.floor() as i32, y.floor() as i32);
+                self.built.update(&self.sim.latest());
+                self.hud.select(self.built.at(tile).map(|o| o.id));
+            }
+            Action::Inspect(_) => {}
+            Action::Cancel => self.controls.builder.cancel(),
+        }
+    }
+
     /// A pointer event goes to the HUD first, then to the camera and build tools.
     fn handle(&mut self, p: Pointer) {
         let (taken, actions) = self.hud.pointer(p);
         for action in actions {
-            match action {
-                Action::Tool(tool) => self.controls.builder.set_tool(tool),
-                Action::Rotate => self.controls.builder.rotate(),
-                Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
-                Action::Belt(belt) => self.controls.builder.belt = belt,
-                Action::Send(command) => self.sim.send(command),
-                Action::Inspect(at) if self.controls.builder.tool == Tool::Hand => {
-                    let [x, y] = self.controls.camera.world_at(at);
-                    let tile = mofact_core::geom::TilePos::new(x.floor() as i32, y.floor() as i32);
-                    self.built.update(&self.sim.latest());
-                    self.hud.select(self.built.at(tile).map(|o| o.id));
-                }
-                Action::Inspect(_) => {}
-            }
+            self.act(action);
         }
         if !taken {
             self.built.update(&self.sim.latest());
@@ -503,6 +523,9 @@ pub fn run() -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
+        for action in app.hud.poll(Instant::now()) {
+            app.act(action);
+        }
         if app.draw() == Frame::Presented {
             presented += 1;
             second.1 += 1;
@@ -645,11 +668,19 @@ fn screenshots(
     ore.fill(&camera, size);
     scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
     let mut overlay = Overlay::new(&look);
-    for sheet in ["toolbar", "build", "research"] {
+    for sheet in ["toolbar", "build", "research", "radial"] {
         let mut hud = Hud::new();
         match sheet {
             "build" => hud.toggle_build_sheet(),
             "research" => hud.toggle_research(),
+            "radial" => {
+                hud.pointer(Pointer::Down {
+                    id: 1,
+                    x: 540.0,
+                    y: 1100.0,
+                });
+                hud.poll(Instant::now() + mofact_ui::LONG_PRESS);
+            }
             _ => {}
         }
         overlay.clear();
