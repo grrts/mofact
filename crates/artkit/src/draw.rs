@@ -19,6 +19,7 @@ pub enum Shape {
     Wire,
     Circuit,
     Droplet,
+    Pack,
 }
 
 /// The four directions, as `(dx, dy)` steps, in the core's `Dir` order.
@@ -226,6 +227,31 @@ pub fn item(c: &mut Canvas, shape: Shape, color: Rgba, x: f32, y: f32, s: f32, f
             fill(c, pb.finish(), color);
             if detail {
                 c.fill_circle(x - s * 0.12, y + s * 0.08, s * 0.08, hi);
+            }
+        }
+        Shape::Pack => {
+            // Not in the prototype: a research pack, a stoppered flask with
+            // its colour inside, in the same flat style.
+            let glass = [0xe9, 0xed, 0xf0, 0xff];
+            fill(
+                c,
+                rr(x - s * 0.13, y - s * 0.5, s * 0.26, s * 0.14, s * 0.04),
+                pal::BRICK[0],
+            );
+            fill(
+                c,
+                rr(x - s * 0.1, y - s * 0.4, s * 0.2, s * 0.24, 0.0),
+                glass,
+            );
+            if let Some(p) = PathBuilder::from_circle(x, y + s * 0.14, s * 0.36) {
+                c.fill(&p, glass);
+            }
+            if let Some(p) = PathBuilder::from_circle(x, y + s * 0.14, s * 0.29) {
+                c.fill(&p, color);
+            }
+            if detail {
+                c.fill_circle(x - s * 0.12, y + s * 0.02, s * 0.07, hi);
+                c.stroke_circle(x, y + s * 0.14, s * 0.36, lo, (s * 0.04).max(1.0));
             }
         }
     }

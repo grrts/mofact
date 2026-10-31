@@ -25,4 +25,30 @@
         inputs: [(item: "gear", count: 1), (item: "wire", count: 3)],
         outputs: [(item: "circuit", count: 1)],
     ),
+    (
+        id: "brick", name: "Brick", category: "smelting", seconds: 3.2,
+        inputs: [(item: "stone", count: 2)],
+        outputs: [(item: "brick", count: 1)],
+    ),
+    (
+        id: "survey-pack", name: "Survey pack", category: "assembling", seconds: 5.0,
+        inputs: [(item: "copper-plate", count: 1), (item: "gear", count: 1)],
+        outputs: [(item: "survey-pack", count: 1)],
+    ),
+    // Tier 2. Steel is the first recipe with two different raw inputs.
+    (
+        id: "steel", name: "Steel", category: "smelting", seconds: 6.0,
+        inputs: [(item: "iron-plate", count: 3), (item: "coal", count: 1)],
+        outputs: [(item: "steel", count: 1)],
+    ),
+    (
+        id: "motor", name: "Motor", category: "assembling", seconds: 2.0,
+        inputs: [(item: "steel", count: 1), (item: "gear", count: 1), (item: "wire", count: 2)],
+        outputs: [(item: "motor", count: 1)],
+    ),
+    (
+        id: "engineering-pack", name: "Engineering pack", category: "assembling", seconds: 6.0,
+        inputs: [(item: "motor", count: 1), (item: "circuit", count: 1)],
+        outputs: [(item: "engineering-pack", count: 1)],
+    ),
 ]

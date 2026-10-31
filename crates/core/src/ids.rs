@@ -61,3 +61,7 @@ content_id!(
     /// Id of a building type, from `data/buildings.ron`.
     BuildingId
 );
+content_id!(
+    /// Id of a research, from `data/research.ron`.
+    ResearchId
+);

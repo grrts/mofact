@@ -1,7 +1,7 @@
 # Android
 
 The Android build (T02): a Gradle project around SDL's Java activity, with
-the game in `libmain.so`. Play Billing (T61) and Play Games saved games (T62)
+the game in `libmain.so`. The unlock purchase goes through RevenueCat (T61); Play Games saved games (T62)
 come later.
 
 CI (`.github/workflows/builds.yml`) builds a debug APK of every commit. By hand,

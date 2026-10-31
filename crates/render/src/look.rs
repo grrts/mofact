@@ -96,6 +96,7 @@ fn shape(s: IconShape) -> Shape {
         IconShape::Wire => Shape::Wire,
         IconShape::Circuit => Shape::Circuit,
         IconShape::Droplet => Shape::Droplet,
+        IconShape::Pack => Shape::Pack,
     }
 }
 
@@ -330,7 +331,7 @@ impl Look {
         BANDS
             .iter()
             .map(|&px| {
-                let mut atlas = Atlas::new(px * 16);
+                let mut atlas = Atlas::new(px * ATLAS_TILES);
                 let painted = self.paint(&mut atlas, px);
                 debug_assert!(painted, "band {px} has room for every sprite");
                 atlas
@@ -338,6 +339,12 @@ impl Look {
             .collect()
     }
 }
+
+/// Each band's atlas is this many tiles on a side: 1,536 pixels at the
+/// closest zoom, well inside what every target GPU takes. Machines have a
+/// sprite per recipe, state and direction, so this grows with content; when
+/// tier 3-4 fills it, turn machine bodies on the GPU instead.
+pub const ATLAS_TILES: u32 = 24;
 
 /// Items and badges are drawn at this fraction of a tile.
 pub const ITEM_TILES: f32 = 0.5;
@@ -377,6 +384,7 @@ mod tests {
             items: ron::from_str(&read("items.ron")).unwrap(),
             recipes: ron::from_str(&read("recipes.ron")).unwrap(),
             buildings: ron::from_str(&read("buildings.ron")).unwrap(),
+            research: Vec::new(),
         }
     }
 
@@ -431,7 +439,7 @@ mod tests {
     fn every_band_fits_every_sprite() {
         let look = Look::new(&content());
         for px in BANDS {
-            let mut atlas = Atlas::new(px * 16);
+            let mut atlas = Atlas::new(px * ATLAS_TILES);
             assert!(look.paint(&mut atlas, px), "band {px} is full");
             for s in &look.sprites {
                 assert!(atlas.get(&s.name).is_some(), "{} at {px}", s.name);

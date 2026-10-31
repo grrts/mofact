@@ -289,6 +289,7 @@ mod tests {
             items: ron::from_str(&read("items.ron")).unwrap(),
             recipes: ron::from_str(&read("recipes.ron")).unwrap(),
             buildings: ron::from_str(&read("buildings.ron")).unwrap(),
+            research: Vec::new(),
         }
     }
 

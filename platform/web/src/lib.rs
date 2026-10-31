@@ -23,6 +23,7 @@ use std::collections::BTreeMap;
 const ITEMS: &str = include_str!("../../../data/items.ron");
 const RECIPES: &str = include_str!("../../../data/recipes.ron");
 const BUILDINGS: &str = include_str!("../../../data/buildings.ron");
+const RESEARCH: &str = include_str!("../../../data/research.ron");
 
 #[derive(Deserialize)]
 #[serde(tag = "op", rename_all = "snake_case")]
@@ -61,8 +62,8 @@ pub struct Engine {
 
 impl Engine {
     pub fn new() -> Result<Self, String> {
-        let content =
-            mofact_content::load_strs(ITEMS, RECIPES, BUILDINGS).map_err(|e| e.to_string())?;
+        let content = mofact_content::load_strs(ITEMS, RECIPES, BUILDINGS, RESEARCH)
+            .map_err(|e| e.to_string())?;
         let sim = Sim::with_content(&content);
         Ok(Self { content, sim })
     }

@@ -13,7 +13,7 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// The files [`load_dir`] reads, in order.
-pub const FILES: [&str; 3] = ["items.ron", "recipes.ron", "buildings.ron"];
+pub const FILES: [&str; 4] = ["items.ron", "recipes.ron", "buildings.ron", "research.ron"];
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -53,17 +53,24 @@ pub fn load_dir(dir: &Path) -> Result<Content, LoadError> {
         items: read(&dir.join(FILES[0]))?,
         recipes: read(&dir.join(FILES[1]))?,
         buildings: read(&dir.join(FILES[2]))?,
+        research: read(&dir.join(FILES[3]))?,
     };
     checked(content)
 }
 
-/// Parse and check content from the text of the three files, in [`FILES`] order.
+/// Parse and check content from the text of the files, in [`FILES`] order.
 /// For builds that embed `data/` instead of reading it, such as the web build.
-pub fn load_strs(items: &str, recipes: &str, buildings: &str) -> Result<Content, LoadError> {
+pub fn load_strs(
+    items: &str,
+    recipes: &str,
+    buildings: &str,
+    research: &str,
+) -> Result<Content, LoadError> {
     checked(Content {
         items: parse(FILES[0], items)?,
         recipes: parse(FILES[1], recipes)?,
         buildings: parse(FILES[2], buildings)?,
+        research: parse(FILES[3], research)?,
     })
 }
 
@@ -153,7 +160,83 @@ pub fn check(content: &Content) -> Vec<String> {
         }
         stacks(&owner, &b.cost, &mut problems);
     }
+
+    let mut research = HashSet::new();
+    for r in &content.research {
+        if !research.insert(r.id.as_str()) {
+            problems.push(format!("research `{}` is defined twice", r.id));
+        }
+    }
+    let mut unlocked = HashSet::new();
+    for r in &content.research {
+        let owner = format!("research `{}`", r.id);
+        if r.units == 0 || r.cost.is_empty() {
+            problems.push(format!("{owner} costs nothing"));
+        }
+        if r.seconds <= 0.0 || r.seconds.is_nan() {
+            problems.push(format!("{owner} must take more than 0 seconds"));
+        }
+        stacks(&owner, &r.cost, &mut problems);
+        for q in &r.requires {
+            if !research.contains(q.as_str()) {
+                problems.push(format!("{owner} requires unknown research `{q}`"));
+            }
+        }
+        for x in &r.recipes {
+            if !recipes.contains(x.as_str()) {
+                problems.push(format!("{owner} unlocks unknown recipe `{x}`"));
+            } else if !unlocked.insert(("recipe", x.as_str())) {
+                problems.push(format!("recipe `{x}` is unlocked by two researches"));
+            }
+        }
+        for x in &r.buildings {
+            if !buildings.contains(x.as_str()) {
+                problems.push(format!("{owner} unlocks unknown building `{x}`"));
+            } else if !unlocked.insert(("building", x.as_str())) {
+                problems.push(format!("building `{x}` is unlocked by two researches"));
+            }
+        }
+    }
+    if let Some(id) = research_loop(content) {
+        problems.push(format!(
+            "research `{id}` requires itself, through its prerequisites"
+        ));
+    }
     problems
+}
+
+/// A research that is its own prerequisite, directly or not, if any.
+fn research_loop(content: &Content) -> Option<&str> {
+    let by_id: std::collections::HashMap<&str, &mofact_core::content::ResearchDef> = content
+        .research
+        .iter()
+        .map(|r| (r.id.as_str(), r))
+        .collect();
+    // 0 unvisited, 1 on the current path, 2 done.
+    let mut state: std::collections::HashMap<&str, u8> = std::collections::HashMap::new();
+    fn visit<'a>(
+        id: &'a str,
+        by_id: &std::collections::HashMap<&'a str, &'a mofact_core::content::ResearchDef>,
+        state: &mut std::collections::HashMap<&'a str, u8>,
+    ) -> Option<&'a str> {
+        match state.get(id) {
+            Some(1) => return Some(id),
+            Some(2) => return None,
+            _ => {}
+        }
+        state.insert(id, 1);
+        for q in by_id.get(id).map(|r| r.requires.as_slice()).unwrap_or(&[]) {
+            if let Some(hit) = visit(q.as_str(), by_id, state) {
+                return Some(hit);
+            }
+        }
+        state.insert(id, 2);
+        None
+    }
+    content
+        .research
+        .iter()
+        .find_map(|r| visit(r.id.as_str(), &by_id, &mut state))
 }
 
 /// Reloads content when any of its files changes. Poll it once a second or so in dev builds.
@@ -214,11 +297,16 @@ mod tests {
     }
 
     #[test]
-    fn repo_content_is_the_prototype() {
+    fn repo_content_holds_the_prototype_and_tiers_1_and_2() {
         let c = load_dir(&repo_data()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(
-            (c.items.len(), c.recipes.len(), c.buildings.len()),
-            (7, 5, 5)
+            (
+                c.items.len(),
+                c.recipes.len(),
+                c.buildings.len(),
+                c.research.len()
+            ),
+            (14, 10, 6, 3)
         );
         let circuit = c
             .recipes
@@ -252,6 +340,21 @@ mod tests {
     }
 
     #[test]
+    fn broken_research_is_reported() {
+        let mut c = load_dir(&repo_data()).unwrap();
+        c.research[0].requires = vec!["fast-belts".into()];
+        c.research[1].recipes.push("nonsense".into());
+        c.research[2].buildings.push("fast-belt".into());
+        let problems = check(&c).join("\n");
+        assert!(problems.contains("requires itself"), "{problems}");
+        assert!(problems.contains("unknown recipe `nonsense`"), "{problems}");
+        assert!(
+            problems.contains("building `fast-belt` is unlocked by two researches"),
+            "{problems}"
+        );
+    }
+
+    #[test]
     fn parse_errors_name_the_file() {
         let dir = scratch("parse");
         std::fs::write(dir.join("items.ron"), "[ (id: \"x\", ").unwrap();
@@ -270,14 +373,14 @@ mod tests {
         // Insert after the opening bracket, not "[\n": Windows checkouts may use CRLF.
         let added = items.replacen(
             '[',
-            "[(id: \"steel\", name: \"Steel\", kind: Solid, shape: Plate, color: \"iron\", tier: 2),",
+            "[(id: \"tin\", name: \"Tin\", kind: Solid, shape: Plate, color: \"iron\", tier: 3),",
             1,
         );
         assert_ne!(added, items);
         std::fs::write(dir.join("items.ron"), added).unwrap();
 
         let reloaded = watcher.poll().expect("change seen").unwrap();
-        assert!(reloaded.items.iter().any(|i| i.id == ItemId::from("steel")));
+        assert!(reloaded.items.iter().any(|i| i.id == ItemId::from("tin")));
         assert!(watcher.poll().is_none(), "each change is reported once");
         std::fs::remove_dir_all(dir).unwrap();
     }

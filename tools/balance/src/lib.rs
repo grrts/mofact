@@ -14,9 +14,12 @@
 //!   stop the machine (R5, R6).
 //! - **Ratios:** for one of each end product a second, how many machines each
 //!   recipe needs and how much ore a second goes in.
+//! - **Research order:** starting with what no research locks, each research
+//!   must become payable with the recipes and buildings open before it, or
+//!   the player could never do it.
 
 use mofact_core::content::{BuildingRole, Content, IconShape, RecipeDef};
-use mofact_core::ids::{ItemId, RecipeId};
+use mofact_core::ids::{ItemId, RecipeId, ResearchId};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt::Write;
 
@@ -29,10 +32,14 @@ pub struct Report {
     pub depth: BTreeMap<ItemId, u32>,
     /// Items made but used by no recipe or building: the factory's end products.
     pub end_products: Vec<ItemId>,
-    /// For one of each end product a second: machines per recipe.
+    /// What the ratios are for: end products and research packs.
+    pub targets: Vec<ItemId>,
+    /// For one of each target a second: machines per recipe.
     pub machines: BTreeMap<RecipeId, f32>,
     /// For one of each end product a second: raw items per second.
     pub raw_per_second: BTreeMap<ItemId, f32>,
+    /// Research in an order the player can do it.
+    pub research_order: Vec<ResearchId>,
 }
 
 /// The crafting speed of the fastest building that makes each category.
@@ -146,6 +153,12 @@ pub fn analyse(content: &Content) -> Report {
                 .iter()
                 .flat_map(|b| b.cost.iter().map(|s| &s.item)),
         )
+        .chain(
+            content
+                .research
+                .iter()
+                .flat_map(|r| r.cost.iter().map(|s| &s.item)),
+        )
         .collect();
     for r in &content.recipes {
         for s in r.outputs.iter().skip(1) {
@@ -165,11 +178,20 @@ pub fn analyse(content: &Content) -> Report {
         .filter(|i| made.contains(&i.id) && !consumed.contains(&i.id))
         .map(|i| i.id.clone())
         .collect();
-    let mut want: Vec<(ItemId, f32)> = report
-        .end_products
-        .iter()
-        .map(|i| (i.clone(), 1.0))
-        .collect();
+    // Research packs count as end products here: labs are where they end.
+    for r in &content.research {
+        for s in &r.cost {
+            if !report.targets.contains(&s.item) {
+                report.targets.push(s.item.clone());
+            }
+        }
+    }
+    for i in &report.end_products {
+        if !report.targets.contains(i) {
+            report.targets.push(i.clone());
+        }
+    }
+    let mut want: Vec<(ItemId, f32)> = report.targets.iter().map(|i| (i.clone(), 1.0)).collect();
     let mut guard = 0;
     while let Some((item, rate)) = want.pop() {
         guard += 1;
@@ -193,7 +215,105 @@ pub fn analyse(content: &Content) -> Report {
             want.push((s.item.clone(), crafts * s.count as f32));
         }
     }
+    research_order(content, &mut report);
     report
+}
+
+/// The items makeable with only the `open` recipes and buildings.
+fn makeable<'a>(
+    content: &'a Content,
+    recipes: &HashSet<&str>,
+    buildings: &HashSet<&str>,
+) -> HashSet<&'a ItemId> {
+    let mut categories = HashSet::new();
+    let mut miner = false;
+    for b in content
+        .buildings
+        .iter()
+        .filter(|b| buildings.contains(b.id.as_str()))
+    {
+        match &b.role {
+            BuildingRole::Crafter { categories: c, .. } => {
+                categories.extend(c.iter().map(String::as_str))
+            }
+            BuildingRole::Miner { .. } => miner = true,
+            _ => {}
+        }
+    }
+    let made: HashSet<&ItemId> = content
+        .recipes
+        .iter()
+        .flat_map(|r| r.outputs.iter().map(|s| &s.item))
+        .collect();
+    let mut have: HashSet<&ItemId> = content
+        .items
+        .iter()
+        .filter(|i| miner && i.shape == IconShape::Ore && !made.contains(&i.id))
+        .map(|i| &i.id)
+        .collect();
+    loop {
+        let before = have.len();
+        for r in &content.recipes {
+            if recipes.contains(r.id.as_str())
+                && categories.contains(r.category.as_str())
+                && r.inputs.iter().all(|s| have.contains(&s.item))
+            {
+                have.extend(r.outputs.iter().map(|s| &s.item));
+            }
+        }
+        if have.len() == before {
+            return have;
+        }
+    }
+}
+
+fn research_order(content: &Content, report: &mut Report) {
+    let locked_recipes: HashSet<&str> = content
+        .research
+        .iter()
+        .flat_map(|r| r.recipes.iter().map(|x| x.as_str()))
+        .collect();
+    let locked_buildings: HashSet<&str> = content
+        .research
+        .iter()
+        .flat_map(|r| r.buildings.iter().map(|x| x.as_str()))
+        .collect();
+    let mut recipes: HashSet<&str> = content
+        .recipes
+        .iter()
+        .map(|r| r.id.as_str())
+        .filter(|r| !locked_recipes.contains(r))
+        .collect();
+    let mut buildings: HashSet<&str> = content
+        .buildings
+        .iter()
+        .map(|b| b.id.as_str())
+        .filter(|b| !locked_buildings.contains(b))
+        .collect();
+    let mut done: HashSet<&str> = HashSet::new();
+    loop {
+        let have = makeable(content, &recipes, &buildings);
+        let next = content.research.iter().find(|r| {
+            !done.contains(r.id.as_str())
+                && r.requires.iter().all(|q| done.contains(q.as_str()))
+                && r.cost.iter().all(|s| have.contains(&s.item))
+        });
+        let Some(r) = next else { break };
+        done.insert(r.id.as_str());
+        report.research_order.push(r.id.clone());
+        recipes.extend(r.recipes.iter().map(|x| x.as_str()));
+        buildings.extend(r.buildings.iter().map(|x| x.as_str()));
+    }
+    for r in &content.research {
+        if !done.contains(r.id.as_str()) {
+            report.problems.push(format!(
+                "research `{}` can never be done: its prerequisites or packs stay out of reach",
+                r.id
+            ));
+        }
+    }
+    // Packs must not need what their own research unlocks: checked above, as
+    // such a research never becomes payable.
 }
 
 impl Report {
@@ -206,13 +326,25 @@ impl Report {
         for (id, d) in by_depth {
             let _ = writeln!(out, "  {d}  {id}");
         }
-        let ends: Vec<&str> = self.end_products.iter().map(|i| i.as_str()).collect();
-        let _ = writeln!(out, "\nFor 1/s of each end product ({}):", ends.join(", "));
+        let ends: Vec<&str> = self.targets.iter().map(|i| i.as_str()).collect();
+        let _ = writeln!(
+            out,
+            "\nFor 1/s of each end product and research pack ({}):",
+            ends.join(", ")
+        );
         for (r, n) in &self.machines {
             let _ = writeln!(out, "  {n:6.2} machines on {r}");
         }
         for (i, n) in &self.raw_per_second {
             let _ = writeln!(out, "  {n:6.2}/s of {i} from the ground");
+        }
+        if !self.research_order.is_empty() {
+            let order: Vec<&str> = self.research_order.iter().map(|r| r.as_str()).collect();
+            let _ = writeln!(
+                out,
+                "\nResearch, in an order that works: {}",
+                order.join(" -> ")
+            );
         }
         if self.problems.is_empty() {
             let _ = writeln!(out, "\nNo problems.");
@@ -249,7 +381,7 @@ mod tests {
     ]"#;
 
     fn content(items: &str, recipes: &str, buildings: &str) -> Content {
-        mofact_content::load_strs(items, recipes, buildings).expect("loads")
+        mofact_content::load_strs(items, recipes, buildings, "[]").expect("loads")
     }
 
     #[test]
@@ -258,7 +390,40 @@ mod tests {
         let report = analyse(&mofact_content::load_dir(&dir).expect("loads"));
         assert!(report.problems.is_empty(), "{}", report.text());
         assert_eq!(report.depth[&ItemId::from("circuit")], 3);
-        assert_eq!(report.end_products, vec![ItemId::from("circuit")]);
+        assert_eq!(report.depth[&ItemId::from("engineering-pack")], 4);
+        // Bricks go into labs once they exist (T28); research takes the packs.
+        assert_eq!(report.end_products, vec![ItemId::from("brick")]);
+        let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
+        assert_eq!(order, ["steel-working", "motors", "fast-belts"]);
+    }
+
+    #[test]
+    fn research_paid_with_what_it_unlocks_is_a_problem() {
+        let items = format!(
+            "{}{}",
+            ITEMS.trim_end().trim_end_matches(']'),
+            r#"(id: "pack", name: "Pack", kind: Solid, shape: Pack, color: "x", tier: 1), ]"#
+        );
+        let recipes = format!(
+            "{}{}",
+            RECIPES.trim_end().trim_end_matches(']'),
+            r#"(id: "pack", name: "Pack", category: "assembling", seconds: 1.0,
+                inputs: [(item: "gear", count: 1)], outputs: [(item: "pack", count: 1)]), ]"#
+        );
+        // Packs need gears, and gears are what this research unlocks.
+        let research = r#"[(id: "gears", name: "Gears", tier: 1,
+            cost: [(item: "pack", count: 1)], units: 5, seconds: 1.0, recipes: ["gear"])]"#;
+        let content =
+            mofact_content::load_strs(&items, &recipes, BUILDINGS, research).expect("loads");
+        let report = analyse(&content);
+        assert!(
+            report
+                .problems
+                .iter()
+                .any(|p| p.contains("research `gears` can never be done")),
+            "{}",
+            report.text()
+        );
     }
 
     #[test]

@@ -1,8 +1,8 @@
 # iOS
 
 The iOS build (T02): the `mofact-ios` binary (`native/`), started through
-SDL's UIKit main, in an app bundle described by `Info.plist`. StoreKit 2 (T61)
-and iCloud saves (T62) come later.
+SDL's UIKit main, in an app bundle described by `Info.plist`. The unlock purchase goes through RevenueCat (T61); iCloud saves (T62)
+come later.
 
 CI (`.github/workflows/builds.yml`) builds every commit for devices and for
 the simulator, and runs the simulator build for 20 seconds as a smoke test.
