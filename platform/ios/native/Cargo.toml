@@ -1,0 +1,20 @@
+[package]
+name = "mofact-ios"
+description = "The iOS entry point: the app binary, started through SDL's UIKit main."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "Mofact"
+path = "src/main.rs"
+
+# Only iOS builds the game into it, so desktop workspace builds stay quick.
+[target.'cfg(target_os = "ios")'.dependencies]
+mofact.workspace = true
+sdl3-main = "0.7"
+
+[lints]
+workspace = true
