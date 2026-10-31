@@ -182,7 +182,8 @@ mod tests {
         assert_eq!(band_for(20.0), 0);
         assert_eq!(band_for(24.0), 1);
         assert_eq!(band_for(48.0), 2);
-        assert_eq!(band_for(300.0), 2);
+        assert_eq!(band_for(96.0), 3, "a phone's default zoom gets the 128 band");
+        assert_eq!(band_for(300.0), 3);
     }
 
     #[test]
