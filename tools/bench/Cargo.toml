@@ -10,6 +10,8 @@ publish.workspace = true
 [dependencies]
 mofact-core.workspace = true
 mofact-sim.workspace = true
+mofact-content.workspace = true
+mofact-headless.workspace = true
 
 [lints]
 workspace = true

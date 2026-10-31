@@ -72,6 +72,10 @@ jobs:
           path: screenshots/
       - run: cargo run -p mofact-balance -- data
       - run: cargo run --release -p mofact-headless -- scenarios data
+      # Tick time on the starter, R44 budget and 2x stress bases, per runner (T23).
+      - name: Benchmarks
+        shell: bash
+        run: cargo run --release -p mofact-bench -- --summary "$GITHUB_STEP_SUMMARY"
 
   web:
     name: Web engine
