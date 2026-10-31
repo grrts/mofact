@@ -39,8 +39,13 @@ Both types live in `crates/core`.
 cargo test --workspace          # every lane's tests
 cargo clippy --workspace --all-targets
 cargo fmt --all
-cargo run -p mofact             # the app (headless until the SDL3 shell lands)
+cargo run -p mofact             # the app: an SDL3 window drawing with wgpu
+cargo run -p mofact -- --frames 120   # present 120 frames, background and back, exit
 ```
+
+The first build compiles SDL3 from source, so it needs CMake and a C compiler.
+On Linux it also needs the X11, Wayland and audio headers; the list is in
+`.github/workflows/ci.yml`.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for task size, the definition of done
 and the rules for changing `crates/core`.

@@ -34,6 +34,10 @@ mofact-ui = { path = "crates/ui" }
 mofact-input = { path = "crates/input" }
 serde = { version = "1", features = ["derive"] }
 ron = "0.8"
+wgpu = "30"
+pollster = "0.4"
+raw-window-handle = "0.6"
+sdl3 = { version = "0.20", features = ["build-from-source-static", "raw-window-handle"] }
 
 [workspace.lints.rust]
 unsafe_code = "deny"
