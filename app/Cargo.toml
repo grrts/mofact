@@ -1,0 +1,19 @@
+[package]
+name = "mofact"
+description = "The Mofact game app: platform shell that wires every lane together."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mofact-core.workspace = true
+mofact-sim.workspace = true
+mofact-world.workspace = true
+mofact-render.workspace = true
+mofact-ui.workspace = true
+mofact-input.workspace = true
+
+[lints]
+workspace = true
