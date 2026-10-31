@@ -46,6 +46,11 @@ const STARVED_AFTER: u32 = 90;
 #[derive(Clone, Debug)]
 enum State {
     Hub,
+    /// A belt tile and the few items on it (at most three, given
+    /// [`SPACING`]). The plan's T07 sketched gap-encoded lines spanning many
+    /// tiles; per-tile lists already tick the R44 base (10,000 belts and
+    /// 2,000 machines) in about 0.15 ms on desktop, well under its 1 ms
+    /// target, so the simpler layout stays until a benchmark says otherwise.
     Belt {
         /// Front first: (item, position along the tile in UNITs).
         items: Vec<(Item, u32)>,
