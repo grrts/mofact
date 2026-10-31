@@ -1,0 +1,71 @@
+// The guided first hour (T38, R42): goals come one at a time, in this
+// order, each meant to take five to ten minutes. `want` is what meets it:
+// items delivered to the hub all told, buildings standing, or a research
+// finished. `reward` goes into the stock when it's met.
+[
+    (
+        id: "first-plates", title: "Deliver 50 iron plates",
+        hint: "Your drill digs iron ore, the furnace smelts it and the belt brings plates to the hub. Let it run.",
+        want: Deliver(item: "iron-plate", count: 50),
+    ),
+    (
+        id: "more-drills", title: "Have 3 drills",
+        hint: "Tap Drill, then tap iron ore. Point it at a belt that runs into a furnace, and belt the furnace to the hub.",
+        want: Build(building: "drill", count: 3),
+        reward: [(item: "iron-plate", count: 30)],
+    ),
+    (
+        id: "copper", title: "Deliver 30 copper plates",
+        hint: "Copper ore lies east of the hub. Drill it, smelt it in a furnace and belt the plates home.",
+        want: Deliver(item: "copper-plate", count: 30),
+        reward: [(item: "iron-plate", count: 30)],
+    ),
+    (
+        id: "gears", title: "Deliver 30 gears",
+        hint: "An assembler set to Gear turns two iron plates into a gear. Belt plates in and gears out to the hub.",
+        want: Deliver(item: "gear", count: 30),
+        reward: [(item: "copper-plate", count: 30)],
+    ),
+    (
+        id: "wire", title: "Deliver 60 wire",
+        hint: "An assembler set to Wire turns one copper plate into two wire.",
+        want: Deliver(item: "wire", count: 60),
+        reward: [(item: "iron-plate", count: 40)],
+    ),
+    (
+        id: "circuits", title: "Deliver 20 circuits",
+        hint: "A circuit takes a gear and three wire: belt both into one assembler set to Circuit.",
+        want: Deliver(item: "circuit", count: 20),
+        reward: [(item: "iron-plate", count: 40), (item: "copper-plate", count: 20)],
+    ),
+    (
+        id: "power", title: "Have 2 wind turbines",
+        hint: "Labs need power. Put wind turbines and the machines they power near a pole; poles link to poles nearby.",
+        want: Build(building: "wind-turbine", count: 2),
+        reward: [(item: "gear", count: 10), (item: "wire", count: 10)],
+    ),
+    (
+        id: "lab", title: "Build a lab",
+        hint: "A lab studies research. Put it where a pole powers it.",
+        want: Build(building: "lab", count: 1),
+        reward: [(item: "copper-plate", count: 30)],
+    ),
+    (
+        id: "steel-working", title: "Research steel working",
+        hint: "Assemblers make survey packs from copper plates and gears. Belt them into the lab and pick Steel working under Research.",
+        want: Research(research: "steel-working"),
+        reward: [(item: "iron-plate", count: 50)],
+    ),
+    (
+        id: "steel", title: "Deliver 20 steel",
+        hint: "A furnace makes steel from three iron plates and a lump of coal. Coal is the dark ore.",
+        want: Deliver(item: "steel", count: 20),
+        reward: [(item: "iron-plate", count: 50)],
+    ),
+    (
+        id: "motors", title: "Research motors",
+        hint: "Motors open engineering packs, and with them belts, pipes and power that run themselves.",
+        want: Research(research: "motors"),
+        reward: [(item: "steel", count: 10)],
+    ),
+]

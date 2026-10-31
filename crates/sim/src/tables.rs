@@ -68,6 +68,18 @@ pub enum Role {
     },
 }
 
+/// What a goal wants, interned.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Goal {
+    /// This many delivered to the hub, all told.
+    Deliver(Item, u64),
+    /// This many of a building standing.
+    Build(u16, u32),
+    Research(u16),
+    /// Names something the content doesn't have.
+    Never,
+}
+
 /// Fluid amounts are fixed point: one unit of fluid is this many milli-units.
 pub const FLUID: u64 = 1000;
 /// What one end of an underground pipe holds, in fluid units.
@@ -116,6 +128,9 @@ pub struct Tables {
     /// Items any research consumes: what labs take from belts.
     pub packs: Vec<Item>,
     research_index: HashMap<ResearchId, u16>,
+    /// The goals in order, and what each gives when met.
+    pub goals: Vec<(Goal, Vec<(Item, u32)>)>,
+    pub goal_ids: Vec<String>,
     item_index: HashMap<ItemId, Item>,
     recipe_index: HashMap<RecipeId, Recipe>,
     building_index: HashMap<BuildingId, u16>,
@@ -265,6 +280,22 @@ impl Tables {
                     t.building_lock[k as usize] = Some(i as u16);
                 }
             }
+        }
+        for g in &content.goals {
+            use mofact_core::content::Want;
+            let goal = match &g.want {
+                Want::Deliver { item, count } => {
+                    t.item(item).map(|i| Goal::Deliver(i, u64::from(*count)))
+                }
+                Want::Build { building, count } => {
+                    t.building(building).map(|b| Goal::Build(b, *count))
+                }
+                Want::Research { research } => t.research(research).map(Goal::Research),
+            };
+            // Checked content names only what exists; anything else can't be met.
+            t.goals
+                .push((goal.unwrap_or(Goal::Never), stacks(&t, &g.reward)));
+            t.goal_ids.push(g.id.clone());
         }
         t
     }

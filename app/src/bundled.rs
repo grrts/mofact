@@ -9,11 +9,12 @@ const ITEMS: &str = include_str!("../../data/items.ron");
 const RECIPES: &str = include_str!("../../data/recipes.ron");
 const BUILDINGS: &str = include_str!("../../data/buildings.ron");
 const RESEARCH: &str = include_str!("../../data/research.ron");
+const GOALS: &str = include_str!("../../data/goals.ron");
 /// The factory a new game starts with.
 pub const STARTER: &str = include_str!("../../scenarios/starter-line.ron");
 
 pub fn content() -> Result<Content, String> {
-    mofact_content::load_strs(ITEMS, RECIPES, BUILDINGS, RESEARCH).map_err(|e| e.to_string())
+    mofact_content::load_strs(ITEMS, RECIPES, BUILDINGS, RESEARCH, GOALS).map_err(|e| e.to_string())
 }
 
 #[cfg(test)]

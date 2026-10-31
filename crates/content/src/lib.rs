@@ -6,14 +6,20 @@
 //! content without a rebuild. Balance checks (reachability, ratios, chain depth)
 //! are the validator's job in `tools/balance` (T25), not the loader's.
 
-use mofact_core::content::{BuildingRole, Content, Stack};
+use mofact_core::content::{BuildingRole, Content, Stack, Want};
 use std::collections::HashSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// The files [`load_dir`] reads, in order.
-pub const FILES: [&str; 4] = ["items.ron", "recipes.ron", "buildings.ron", "research.ron"];
+pub const FILES: [&str; 5] = [
+    "items.ron",
+    "recipes.ron",
+    "buildings.ron",
+    "research.ron",
+    "goals.ron",
+];
 
 #[derive(Debug)]
 pub enum LoadError {
@@ -54,6 +60,7 @@ pub fn load_dir(dir: &Path) -> Result<Content, LoadError> {
         recipes: read(&dir.join(FILES[1]))?,
         buildings: read(&dir.join(FILES[2]))?,
         research: read(&dir.join(FILES[3]))?,
+        goals: read(&dir.join(FILES[4]))?,
     };
     checked(content)
 }
@@ -65,12 +72,14 @@ pub fn load_strs(
     recipes: &str,
     buildings: &str,
     research: &str,
+    goals: &str,
 ) -> Result<Content, LoadError> {
     checked(Content {
         items: parse(FILES[0], items)?,
         recipes: parse(FILES[1], recipes)?,
         buildings: parse(FILES[2], buildings)?,
         research: parse(FILES[3], research)?,
+        goals: parse(FILES[4], goals)?,
     })
 }
 
@@ -261,6 +270,37 @@ pub fn check(content: &Content) -> Vec<String> {
         problems.push(format!(
             "research `{id}` requires itself, through its prerequisites"
         ));
+    }
+    let mut goals = HashSet::new();
+    for g in &content.goals {
+        let owner = format!("goal `{}`", g.id);
+        if !goals.insert(g.id.as_str()) {
+            problems.push(format!("{owner} is defined twice"));
+        }
+        stacks(&owner, &g.reward, &mut problems);
+        match &g.want {
+            Want::Deliver { item, count } => {
+                if !content.items.iter().any(|i| &i.id == item) {
+                    problems.push(format!("{owner} wants unknown item `{item}`"));
+                }
+                if *count == 0 {
+                    problems.push(format!("{owner} wants nothing"));
+                }
+            }
+            Want::Build { building, count } => {
+                if !buildings.contains(building.as_str()) {
+                    problems.push(format!("{owner} wants unknown building `{building}`"));
+                }
+                if *count == 0 {
+                    problems.push(format!("{owner} wants nothing"));
+                }
+            }
+            Want::Research { research: r } => {
+                if !research.contains(r.as_str()) {
+                    problems.push(format!("{owner} wants unknown research `{r}`"));
+                }
+            }
+        }
     }
     problems
 }

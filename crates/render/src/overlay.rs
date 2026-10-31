@@ -198,6 +198,7 @@ mod tests {
             recipes: ron::from_str(&read("recipes.ron")).unwrap(),
             buildings: ron::from_str(&read("buildings.ron")).unwrap(),
             research: Vec::new(),
+            goals: Vec::new(),
         };
         let look = Look::new(&content);
         let overlay = Overlay::new(&look);

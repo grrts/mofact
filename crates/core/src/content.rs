@@ -166,6 +166,32 @@ pub struct ResearchDef {
     pub buildings: Vec<BuildingId>,
 }
 
+/// What a goal asks for (T38, R42).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub enum Want {
+    /// This many of an item delivered to the hub, all told.
+    Deliver { item: ItemId, count: u32 },
+    /// This many of a building standing.
+    Build { building: BuildingId, count: u32 },
+    /// A research finished.
+    Research { research: ResearchId },
+}
+
+/// One step of the guided first hour: the goals come one at a time, in
+/// order, each meant to take five to ten minutes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GoalDef {
+    pub id: String,
+    /// What to do, short enough for one line: "Smelt 20 iron plates".
+    pub title: String,
+    /// How to do it, for a player who doesn't know yet.
+    pub hint: String,
+    pub want: Want,
+    /// Added to the stock when the goal is met.
+    #[serde(default)]
+    pub reward: Vec<Stack>,
+}
+
 /// Everything loaded from `data/`, before validation.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Content {
@@ -174,6 +200,8 @@ pub struct Content {
     pub buildings: Vec<BuildingDef>,
     #[serde(default)]
     pub research: Vec<ResearchDef>,
+    #[serde(default)]
+    pub goals: Vec<GoalDef>,
 }
 
 #[cfg(test)]

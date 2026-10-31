@@ -397,7 +397,7 @@ mod tests {
     ]"#;
 
     fn content(items: &str, recipes: &str, buildings: &str) -> Content {
-        mofact_content::load_strs(items, recipes, buildings, "[]").expect("loads")
+        mofact_content::load_strs(items, recipes, buildings, "[]", "[]").expect("loads")
     }
 
     #[test]
@@ -441,7 +441,7 @@ mod tests {
         let research = r#"[(id: "gears", name: "Gears", tier: 1,
             cost: [(item: "pack", count: 1)], units: 5, seconds: 1.0, recipes: ["gear"])]"#;
         let content =
-            mofact_content::load_strs(&items, &recipes, BUILDINGS, research).expect("loads");
+            mofact_content::load_strs(&items, &recipes, BUILDINGS, research, "[]").expect("loads");
         let report = analyse(&content);
         assert!(
             report
