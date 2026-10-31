@@ -70,6 +70,10 @@ pub enum BuildingRole {
     },
     /// The player's hub: everything delivered to it joins the stock.
     Hub,
+    /// Takes research packs from belts and works on the current research.
+    Lab {
+        speed: f32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

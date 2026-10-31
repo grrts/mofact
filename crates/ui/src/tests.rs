@@ -27,6 +27,7 @@ fn snapshot() -> Snapshot {
         ],
         belt_items: Vec::new(),
         stock: vec![("copper-plate".into(), 2), ("iron-plate".into(), 30)],
+        research: Default::default(),
     }
 }
 

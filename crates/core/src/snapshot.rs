@@ -5,7 +5,7 @@
 //! latest snapshots using `tick`.
 
 use crate::geom::{Dir, TilePos};
-use crate::ids::{BuildingId, EntityId, ItemId, RecipeId};
+use crate::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
 use crate::Tick;
 use serde::{Deserialize, Serialize};
 
@@ -54,4 +54,16 @@ pub struct Snapshot {
     pub belt_items: Vec<BeltItemView>,
     /// The player's stock, sorted by item id.
     pub stock: Vec<(ItemId, u32)>,
+    pub research: ResearchView,
+}
+
+/// Where research stands, for the research screen and the toolbar's locks.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResearchView {
+    /// What labs are working on.
+    pub current: Option<ResearchId>,
+    /// Units done and needed for the current research.
+    pub progress: (u32, u32),
+    /// Finished research, in content order.
+    pub done: Vec<ResearchId>,
 }

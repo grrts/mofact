@@ -58,6 +58,8 @@ enum Kind {
     Drill,
     Furnace,
     Assembler,
+    /// Drawn as an assembler showing a research pack until labs get their own art.
+    Lab,
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +150,7 @@ impl Look {
             let (kind, recipes) = match &b.role {
                 BuildingRole::Belt { .. } => (Kind::Belt, Vec::new()),
                 BuildingRole::Hub => (Kind::Hub, Vec::new()),
+                BuildingRole::Lab { .. } => (Kind::Lab, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -216,6 +219,13 @@ impl Look {
                                     Kind::Furnace => Art::Furnace {
                                         ring: product.map(|p| p.1),
                                         pose,
+                                    },
+                                    Kind::Lab => Art::Assembler {
+                                        product: Some((Shape::Pack, palette::item("pack-survey"))),
+                                        pose: Pose {
+                                            working: false,
+                                            ..pose
+                                        },
                                     },
                                     _ => Art::Assembler {
                                         product,
