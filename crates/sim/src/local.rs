@@ -87,7 +87,11 @@ impl LocalSim {
 
     /// Run the ticks due since the last call.
     pub fn pump(&self) {
-        let now = Instant::now();
+        self.pump_at(Instant::now());
+    }
+
+    /// [`pump`](Self::pump) as if the clock read `now`.
+    fn pump_at(&self, now: Instant) {
         let mut guard = self.inner.borrow_mut();
         let s = &mut *guard;
         let elapsed = now - s.last;
@@ -114,14 +118,24 @@ mod tests {
     #[test]
     fn ticks_follow_the_clock_not_the_calls() {
         let sim = LocalSim::spawn(Sim::new());
-        let start = Instant::now();
-        while start.elapsed() < Duration::from_millis(500) {
-            sim.pump();
-            std::thread::sleep(Duration::from_millis(40));
+        let start = sim.inner.borrow().last;
+        // One second of frames, some slow and some fast, some repeated.
+        let mut t = Duration::ZERO;
+        for (i, ms) in [16u64, 16, 33, 7, 16, 50, 16, 0, 16]
+            .iter()
+            .cycle()
+            .enumerate()
+        {
+            if t >= Duration::from_secs(1) {
+                break;
+            }
+            t = (t + Duration::from_millis(*ms)).min(Duration::from_secs(1));
+            sim.pump_at(start + t);
+            if i % 3 == 0 {
+                sim.pump_at(start + t);
+            }
         }
-        sim.pump();
-        let rate = sim.latest().tick as f64 / start.elapsed().as_secs_f64();
-        assert!((45.0..=75.0).contains(&rate), "{rate:.1} ticks/s");
+        assert_eq!(sim.latest().tick, 60);
         let (prev, latest) = sim.snapshots();
         assert_eq!(prev.tick + 1, latest.tick);
     }
@@ -134,8 +148,8 @@ mod tests {
         sim.send(Command::Remove {
             entity: EntityId(0),
         });
-        std::thread::sleep(Duration::from_millis(30));
-        sim.pump();
+        let start = sim.inner.borrow().last;
+        sim.pump_at(start + Duration::from_millis(30));
         let got: Vec<_> = sim.results().collect();
         assert_eq!(
             got,
@@ -143,8 +157,8 @@ mod tests {
         );
         sim.set_paused(true);
         let t = sim.latest().tick;
-        std::thread::sleep(Duration::from_millis(50));
-        sim.pump();
+        let start = sim.inner.borrow().last;
+        sim.pump_at(start + Duration::from_millis(500));
         assert_eq!(sim.latest().tick, t);
         assert!(sim
             .save()
