@@ -551,3 +551,19 @@ pub fn assembler(c: &mut Canvas, z: f32, product: Option<(Shape, Rgba)>, fine: b
     }
     notch(c, z, pose);
 }
+
+/// The badge over a stalled machine, a disc of radius `r` centred in a
+/// `2r`-pixel square: "!" when it waits for input, "=" when its output is full.
+pub fn badge(c: &mut Canvas, r: f32, starved: bool) {
+    let (cx, cy) = (r, r);
+    let r = (r - 0.5).max(1.0);
+    let color = if starved { pal::STARVE } else { pal::ACCENT };
+    c.fill_circle(cx, cy, r, color);
+    if starved {
+        c.fill_rect(cx - r * 0.14, cy - r * 0.6, r * 0.28, r * 0.7, pal::GROUND);
+        c.fill_rect(cx - r * 0.14, cy + r * 0.3, r * 0.28, r * 0.28, pal::GROUND);
+    } else {
+        c.fill_rect(cx - r * 0.5, cy - r * 0.3, r, r * 0.22, pal::GROUND);
+        c.fill_rect(cx - r * 0.5, cy + r * 0.08, r, r * 0.22, pal::GROUND);
+    }
+}

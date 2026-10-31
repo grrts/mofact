@@ -11,18 +11,19 @@
 //! band that fits the camera.
 
 pub mod atlas;
+pub mod look;
 pub mod overlay;
 pub mod palette;
 mod pipeline;
 pub mod scene;
 
+pub use look::Look;
 pub use mofact_core as core;
 pub use overlay::Overlay;
 pub use pipeline::Renderer;
-pub use scene::{Camera, Instance, Look, Scene};
+pub use scene::{Camera, Instance, Scene};
 pub use wgpu;
 
-use mofact_artkit as _;
 use std::fmt;
 
 /// The factory floor colour the frame is cleared to before anything is drawn:

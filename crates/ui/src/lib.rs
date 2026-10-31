@@ -18,7 +18,7 @@ use mofact_core::geom::Dir;
 use mofact_core::ids::{BuildingId, EntityId, ItemId, RecipeId};
 use mofact_core::snapshot::{EntityView, MachineState, Snapshot};
 use mofact_input::{Pointer, Tool, MOUSE_PAN};
-use mofact_render::atlas::sprites;
+use mofact_render::look;
 use mofact_render::palette::{self, Rgba};
 use mofact_render::{Look, Overlay};
 use std::time::{Duration, Instant};
@@ -370,7 +370,7 @@ impl Hud {
             let icon = 34.0 * u;
             let turns = Dir::ALL.iter().position(|&d| d == view.dir).unwrap_or(0) as u32;
             o.icon_turned(
-                sprites::BELT,
+                look::BELT,
                 [r[0] + (d - icon) / 2.0, r[1] + (d - icon) / 2.0],
                 icon,
                 TEXT,

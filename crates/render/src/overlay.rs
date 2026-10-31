@@ -5,7 +5,8 @@
 //! `assets/fonts`). Glyphs are rasterised the first time each size is used
 //! and packed into the overlay atlas alongside the panel and icon sprites.
 
-use crate::atlas::{sprites, Atlas, Uv};
+use crate::atlas::{Atlas, Uv};
+use crate::look::Look;
 use crate::palette::Rgba;
 use crate::scene::Instance;
 
@@ -22,16 +23,11 @@ pub struct Overlay {
     font: fontdue::Font,
 }
 
-impl Default for Overlay {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 impl Overlay {
-    pub fn new() -> Self {
+    /// An overlay that can show `look`'s buildings and items as icons.
+    pub fn new(look: &Look) -> Self {
         let mut atlas = Atlas::new(1024);
-        sprites::paint_all(&mut atlas, ICON_PX);
+        look.paint(&mut atlas, ICON_PX);
         let n = PANEL_R * 2 + 1;
         let r = PANEL_R as f32;
         atlas.add("panel", n, n, |x, y| {
@@ -162,7 +158,7 @@ mod tests {
 
     #[test]
     fn text_is_laid_out_left_to_right_on_its_baseline() {
-        let mut o = Overlay::new();
+        let mut o = Overlay::new(&Look::default());
         let w = o.text("Belt 12", [10.0, 40.0], 16.0, [255; 4]);
         assert!((w - o.measure("Belt 12", 16.0)).abs() < 1.0);
         assert!(w > 30.0 && w < 70.0, "{w}");
@@ -179,7 +175,7 @@ mod tests {
 
     #[test]
     fn glyphs_are_rasterised_once_per_size() {
-        let mut o = Overlay::new();
+        let mut o = Overlay::new(&Look::default());
         o.text("aaa", [0.0, 20.0], 14.0, [255; 4]);
         let v = o.atlas.version;
         o.text("aa", [0.0, 40.0], 14.0, [255; 4]);
@@ -190,7 +186,7 @@ mod tests {
 
     #[test]
     fn panels_are_nine_slices_that_fill_the_rectangle() {
-        let mut o = Overlay::new();
+        let mut o = Overlay::new(&Look::default());
         o.panel([10.0, 20.0], [100.0, 50.0], 8.0, [255; 4]);
         assert_eq!(o.instances.len(), 9);
         let area: f32 = o.instances.iter().map(|i| i.size[0] * i.size[1]).sum();
