@@ -1904,10 +1904,10 @@ fn tip(tool: &Tool) -> &'static str {
         Tool::Hand => "Drag to look around, pinch or scroll to zoom. Tap a machine to inspect it.",
         Tool::Belt => "Drag to draw a belt along your path. Two fingers pan and zoom.",
         Tool::Place(b) if b.as_str() == "drill" => {
-            "Tap ore to place a drill. It mines onto the tile it faces."
+            "Tap any ore tile. Face the drill into a belt, or straight into a furnace."
         }
         Tool::Place(b) if b.as_str() == "furnace" => {
-            "Tap to place. Ore goes in any side, plates come out of the arrow."
+            "Put it where ore arrives. Plates come out of the arrow: belt them to the hub."
         }
         Tool::Place(b) if b.as_str() == "lab" => {
             "Tap to place. Belt research packs into it, and give it power."

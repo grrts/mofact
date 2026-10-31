@@ -145,6 +145,9 @@ pub struct Sim {
     /// Parallel to entity slots; `None` for removed entities.
     states: Vec<Option<State>>,
     ore: HashMap<TilePos, Item>,
+    /// The generated map, when the game has one: ore a drill is placed on
+    /// is copied into `ore` from here, so saves carry it.
+    world: Option<mofact_world::WorldGen>,
     stock: Vec<u32>,
     delivered: Vec<u64>,
     research: Research,
@@ -225,6 +228,26 @@ impl Sim {
         if let Some(i) = self.tables.item(item) {
             self.ore.insert(pos, i);
         }
+    }
+
+    /// Mine the map generated from `seed`, the same one the player sees.
+    pub fn set_world(&mut self, seed: u64) {
+        let n = self.tables.ores.len() as u8;
+        self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n));
+    }
+
+    /// The ore under `pos`: placed by hand, or else generated.
+    pub fn ore_at(&self, pos: TilePos) -> Option<ItemId> {
+        self.ore_item(pos)
+            .map(|i| self.tables.items[i as usize].clone())
+    }
+
+    fn ore_item(&self, pos: TilePos) -> Option<Item> {
+        if let Some(&i) = self.ore.get(&pos) {
+            return Some(i);
+        }
+        let ore = mofact_world::ore_at(self.world.as_ref()?, pos)?;
+        self.tables.ores.get(usize::from(ore.resource)).copied()
     }
 
     pub fn add_stock(&mut self, item: &ItemId, n: u32) {
@@ -346,9 +369,11 @@ impl Sim {
                 if !self.entities.is_free(&entity) {
                     return Err(CommandError::Blocked);
                 }
-                if matches!(b.role, Role::Miner { .. }) && !self.ore.contains_key(pos) {
-                    return Err(CommandError::Blocked);
-                }
+                let mined = if matches!(b.role, Role::Miner { .. }) {
+                    Some(self.ore_item(*pos).ok_or(CommandError::NoOre)?)
+                } else {
+                    None
+                };
                 if b.cost.iter().any(|&(i, n)| self.stock[i as usize] < n) {
                     return Err(CommandError::CannotAfford);
                 }
@@ -368,6 +393,9 @@ impl Sim {
                 }
                 for &(i, n) in &cost {
                     self.stock[i as usize] -= n;
+                }
+                if let Some(ore) = mined {
+                    self.ore.insert(*pos, ore);
                 }
                 self.regrid(kind);
                 Ok((vec![Command::Remove { entity: id }], Some(id)))

@@ -265,7 +265,7 @@ fn refusals_change_nothing() {
     );
     assert_eq!(
         sim.apply(&place_at(40, "drill")),
-        CommandResult::Refused(CommandError::Blocked),
+        CommandResult::Refused(CommandError::NoOre),
         "no ore there"
     );
     assert_eq!(
@@ -1229,4 +1229,39 @@ fn goals_come_one_at_a_time_and_pay_out_when_met() {
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(loaded.goal(), 2);
     assert_eq!(loaded.save(), sim.save());
+}
+
+#[test]
+fn drills_go_on_every_kind_of_generated_ore() {
+    // The map the player sees is generated; drills must work on all of it,
+    // not only the starter patches a scenario places by hand.
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.add_stock(&item("iron-plate"), 10_000);
+    sim.set_world(42);
+    let gen = mofact_world::WorldGen::new(42, sim.tables.ores.len() as u8);
+    let mut found = std::collections::HashMap::new();
+    'search: for y in -400..400 {
+        for x in -400..400 {
+            let t = TilePos::new(x, y);
+            if let Some(o) = mofact_world::ore_at(&gen, t) {
+                found.entry(o.resource).or_insert(t);
+                if found.len() == sim.tables.ores.len() {
+                    break 'search;
+                }
+            }
+        }
+    }
+    assert_eq!(found.len(), 4, "iron, copper, stone and coal all generate");
+    for (resource, t) in found {
+        let ore = sim.tables.items[sim.tables.ores[resource as usize] as usize].clone();
+        assert_eq!(sim.ore_at(t), Some(ore.clone()));
+        let drill = place(&mut sim, "drill", t.x, t.y, Dir::East, None);
+        run(&mut sim, 2);
+        assert_eq!(
+            sim.inventory(drill),
+            vec![(ore.clone(), 1)],
+            "a drill on {ore:?} at {t:?} mines it"
+        );
+    }
 }

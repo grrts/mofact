@@ -38,10 +38,12 @@ impl Game {
         gpu: Gpu,
         target: Target,
         content: Content,
-        sim: Sim,
+        mut sim: Sim,
         ore: OreMap,
         camera: Camera,
     ) -> Self {
+        // Drills mine the same generated map the player sees.
+        sim.set_world(ore.seed());
         let look = Look::new(&content);
         let (w, h) = target.size();
         let controls = Controls::new(CameraControl::new(
@@ -89,6 +91,7 @@ impl Game {
                     E::NoSuchEntity => "That's already gone.",
                     E::UnknownContent => "That isn't in this game's data.",
                     E::FluidsMix => "That would mix two fluids.",
+                    E::NoOre => "Drills only go on ore: tap a coloured ore tile.",
                 });
             }
         }

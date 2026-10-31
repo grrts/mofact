@@ -36,6 +36,11 @@ impl OreMap {
         }
     }
 
+    /// The seed the map is generated from.
+    pub fn seed(&self) -> u64 {
+        self.gen.seed
+    }
+
     /// The chunks a camera sees on a `size` pixel target.
     fn visible(camera: &Camera, size: (u32, u32)) -> impl Iterator<Item = ChunkPos> {
         let (lo, hi) = camera.visible(size.0, size.1);

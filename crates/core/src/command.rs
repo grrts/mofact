@@ -46,6 +46,8 @@ pub enum CommandError {
     UnknownContent,
     /// It would join two pipe segments holding different fluids.
     FluidsMix,
+    /// A drill has to stand on ore.
+    NoOre,
 }
 
 /// The outcome of applying one command, sent back to the main thread.
