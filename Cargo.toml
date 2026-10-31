@@ -2,6 +2,7 @@
 resolver = "2"
 members = [
     "crates/core",
+    "crates/content",
     "crates/sim",
     "crates/world",
     "crates/render",
@@ -23,6 +24,7 @@ publish = false
 
 [workspace.dependencies]
 mofact-core = { path = "crates/core" }
+mofact-content = { path = "crates/content" }
 mofact-sim = { path = "crates/sim" }
 mofact-world = { path = "crates/world" }
 mofact-render = { path = "crates/render" }

@@ -40,6 +40,7 @@ dependencies = [
 name = "mofact-balance"
 version = "0.1.0"
 dependencies = [
+ "mofact-content",
  "mofact-core",
 ]
 
@@ -49,6 +50,15 @@ version = "0.1.0"
 dependencies = [
  "mofact-core",
  "mofact-sim",
+]
+
+[[package]]
+name = "mofact-content"
+version = "0.1.0"
+dependencies = [
+ "mofact-core",
+ "ron",
+ "serde",
 ]
 
 [[package]]
