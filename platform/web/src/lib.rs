@@ -257,6 +257,13 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
     {
         let s = shell.clone();
         listen(&window, "keydown", move |e: KeyboardEvent| {
+            let key = e.key().to_lowercase();
+            if (e.ctrl_key() || e.meta_key()) && !e.alt_key() && (key == "z" || key == "y") {
+                e.prevent_default();
+                let redo = key == "y" || e.shift_key();
+                s.borrow_mut().game.key(if redo { "redo" } else { "undo" });
+                return;
+            }
             if e.ctrl_key() || e.meta_key() || e.alt_key() || e.repeat() {
                 return;
             }

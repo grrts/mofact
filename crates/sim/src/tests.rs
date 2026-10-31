@@ -423,6 +423,42 @@ fn history_keeps_twenty_steps() {
 }
 
 #[test]
+fn one_undo_reverses_a_whole_drag_even_after_a_redo() {
+    let mut sim = prototype_start();
+    sim.add_stock(&item("iron-plate"), 1000);
+    let mut history = History::new();
+    let belts: Vec<_> = (0..5)
+        .map(|x| Command::Place {
+            building: BuildingId::from("belt"),
+            pos: TilePos::new(x, 40),
+            dir: Dir::East,
+            recipe: None,
+        })
+        .collect();
+    let before = sim.snapshot().entities.len();
+    history.apply_all(&mut sim, &belts);
+    assert_eq!(sim.snapshot().entities.len(), before + 5);
+    // Remove the whole line in one sweep, then turn one of them back.
+    let ids: Vec<EntityId> = (0..5)
+        .map(|x| sim.entity_at(TilePos::new(x, 40)).unwrap())
+        .collect();
+    let sweep: Vec<_> = ids
+        .iter()
+        .map(|&entity| Command::Remove { entity })
+        .collect();
+    history.apply_all(&mut sim, &sweep);
+    assert_eq!(sim.snapshot().entities.len(), before);
+    assert!(history.undo(&mut sim), "the sweep comes back in one step");
+    assert_eq!(sim.snapshot().entities.len(), before + 5);
+    assert!(history.redo(&mut sim));
+    assert!(history.undo(&mut sim));
+    // The revived belts have new ids; undoing the drag must still find them.
+    assert!(history.undo(&mut sim), "undo the drag");
+    assert_eq!(sim.snapshot().entities.len(), before);
+    assert!(!history.can_undo());
+}
+
+#[test]
 fn a_drill_reports_the_ore_under_it() {
     let sim = circuit_chain();
     let snap = sim.snapshot();

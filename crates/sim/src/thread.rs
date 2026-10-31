@@ -6,10 +6,11 @@
 //! does, including dropping frames, can stall a tick.
 
 use crate::clock::Stepper;
-use crate::Sim;
+use crate::jobs::{pack, unpack, work, Job};
+use crate::{History, Sim};
 use mofact_core::command::{Command, CommandResult};
 use mofact_core::snapshot::Snapshot;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -25,7 +26,7 @@ struct Snapshots {
 
 /// Messages to the simulation thread.
 enum Msg {
-    Command(Command),
+    Job(Job),
     Pause(bool),
     Save(Sender<Vec<u8>>),
 }
@@ -35,6 +36,7 @@ pub struct SimHandle {
     tx: Sender<Msg>,
     results: Receiver<CommandResult>,
     snapshots: Arc<Mutex<Snapshots>>,
+    history: Arc<AtomicU8>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
 }
@@ -50,12 +52,14 @@ impl SimHandle {
             latest: first,
         }));
         let stop = Arc::new(AtomicBool::new(false));
+        let history = Arc::new(AtomicU8::new(0));
         let thread = {
             let snapshots = snapshots.clone();
             let stop = stop.clone();
+            let history = history.clone();
             std::thread::Builder::new()
                 .name("mofact-sim".into())
-                .spawn(move || run(sim, rx, result_tx, snapshots, stop))
+                .spawn(move || run(sim, rx, result_tx, snapshots, stop, history))
                 .expect("spawn simulation thread")
         };
         Self {
@@ -63,13 +67,38 @@ impl SimHandle {
             results,
             snapshots,
             stop,
+            history,
             thread: Some(thread),
         }
     }
 
-    /// Queue a command; it is applied at the start of the next tick.
+    /// Queue a command; it is applied at the start of the next tick, as
+    /// one player action that undo can reverse.
     pub fn send(&self, command: Command) {
-        let _ = self.tx.send(Msg::Command(command));
+        self.send_all(vec![command]);
+    }
+
+    /// Queue several commands as one player action, such as a belt drawn in
+    /// one drag: one undo reverses them all.
+    pub fn send_all(&self, commands: Vec<Command>) {
+        if !commands.is_empty() {
+            let _ = self.tx.send(Msg::Job(Job::Action(commands)));
+        }
+    }
+
+    /// Undo the latest player action, at the start of the next tick.
+    pub fn undo(&self) {
+        let _ = self.tx.send(Msg::Job(Job::Undo));
+    }
+
+    /// Redo the latest undone action, at the start of the next tick.
+    pub fn redo(&self) {
+        let _ = self.tx.send(Msg::Job(Job::Redo));
+    }
+
+    /// Whether there is an action to undo, and one to redo.
+    pub fn history(&self) -> (bool, bool) {
+        unpack(self.history.load(Ordering::Relaxed))
     }
 
     /// Results of applied commands, in the order they were sent.
@@ -134,7 +163,9 @@ fn run(
     results: Sender<CommandResult>,
     snapshots: Arc<Mutex<Snapshots>>,
     stop: Arc<AtomicBool>,
+    undo: Arc<AtomicU8>,
 ) {
+    let mut history = History::new();
     let mut stepper = Stepper::new();
     let mut paused = false;
     let mut queued = Vec::new();
@@ -142,7 +173,7 @@ fn run(
     while !stop.load(Ordering::Relaxed) {
         loop {
             match rx.try_recv() {
-                Ok(Msg::Command(c)) => queued.push(c),
+                Ok(Msg::Job(j)) => queued.push(j),
                 Ok(Msg::Save(reply)) => {
                     let _ = reply.send(sim.save());
                 }
@@ -162,8 +193,11 @@ fn run(
             continue;
         }
         for _ in 0..stepper.advance(elapsed) {
-            for c in queued.drain(..) {
-                let _ = results.send(sim.apply(&c));
+            for job in queued.drain(..) {
+                work(&mut sim, &mut history, job, |r| {
+                    let _ = results.send(r);
+                });
+                undo.store(pack(&history), Ordering::Relaxed);
             }
             sim.step();
             let snap = Arc::new(sim.snapshot());

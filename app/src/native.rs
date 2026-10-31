@@ -275,10 +275,27 @@ pub fn run() -> Result<(), String> {
                 continue;
             }
             if let Event::KeyDown {
-                keycode: Some(key), ..
+                keycode: Some(key),
+                keymod,
+                ..
             } = event
             {
-                app.game.key(&key.name().to_lowercase());
+                let name = key.name().to_lowercase();
+                let ctrl = keymod.intersects(
+                    sdl3::keyboard::Mod::LCTRLMOD
+                        | sdl3::keyboard::Mod::RCTRLMOD
+                        | sdl3::keyboard::Mod::LGUIMOD
+                        | sdl3::keyboard::Mod::RGUIMOD,
+                );
+                let shift = keymod
+                    .intersects(sdl3::keyboard::Mod::LSHIFTMOD | sdl3::keyboard::Mod::RSHIFTMOD);
+                match (ctrl, name.as_str()) {
+                    (true, "z") if shift => app.game.key("redo"),
+                    (true, "z") => app.game.key("undo"),
+                    (true, "y") => app.game.key("redo"),
+                    (true, _) => {}
+                    (false, _) => app.game.key(&name),
+                }
                 continue;
             }
             match event {
