@@ -6,6 +6,7 @@
 //! the prototype's own code in a browser (`tools/golden/prototype.cjs`), and
 //! the tests check that the port draws the same pictures at close zoom.
 
+pub mod belt;
 pub mod canvas;
 pub mod draw;
 pub mod palette;

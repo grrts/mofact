@@ -3,8 +3,9 @@
 //! Kept free of wgpu so it can be tested without a GPU.
 
 use crate::atlas::{band_for, sprites, Atlas, Uv};
-use crate::look::{self, Look, ITEM_TILES};
+use crate::look::{self, Conveyor, Look, ITEM_TILES};
 use crate::palette::{self, Rgba};
+use mofact_artkit::belt::{self as belts, Bend, Joins};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId};
 use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot};
@@ -80,14 +81,88 @@ fn setting(e: &EntityView) -> Option<&str> {
         .or(e.ore.as_ref().map(|o| o.as_str()))
 }
 
-/// Where a belt item is, in tiles, at `along` on its tile.
-fn item_center(item: &BeltItemView, dir: Dir) -> [f32; 2] {
-    let (dx, dy) = dir.offset();
-    let t = item.along - 0.5;
-    [
-        item.tile.x as f32 + 0.5 + dx as f32 * t,
-        item.tile.y as f32 + 0.5 + dy as f32 * t,
-    ]
+/// Where a belt item is, in tiles, at `along` on its tile, which runs `dir`
+/// and turns as `bend` says.
+fn item_center(item: &BeltItemView, dir: Dir, bend: Bend) -> [f32; 2] {
+    // As painted facing east, from the tile's centre; then turned.
+    let (x, y) = match bend {
+        Bend::Straight => (item.along - 0.5, 0.0),
+        _ => belts::corner_point(bend, item.along),
+    };
+    let (x, y) = match dir {
+        Dir::East => (x, y),
+        Dir::South => (-y, x),
+        Dir::West => (-x, -y),
+        Dir::North => (y, -x),
+    };
+    [item.tile.x as f32 + 0.5 + x, item.tile.y as f32 + 0.5 + y]
+}
+
+/// The direction on the left of `d`.
+fn left_of(d: Dir) -> Dir {
+    d.rotate_cw().opposite()
+}
+
+/// Everything that carries items, by tile, with the way it faces and, for
+/// an underground belt, whether it is the exit: what belts join up with.
+#[derive(Default)]
+struct Carriers(HashMap<TilePos, (Conveyor, Dir, bool)>);
+
+impl Carriers {
+    /// Whether what is on `at` hands items on to its neighbour in `d`.
+    fn gives(&self, at: TilePos, d: Dir) -> bool {
+        match self.0.get(&at) {
+            Some(&(Conveyor::Belt, dir, _)) => dir == d,
+            Some(&(Conveyor::Underground, dir, exit)) => exit && dir == d,
+            Some(&(Conveyor::Splitter, dir, _)) => d == left_of(dir) || d == dir.rotate_cw(),
+            None => false,
+        }
+    }
+
+    /// Whether what is on `at` takes items coming in going `d`.
+    fn takes(&self, at: TilePos, d: Dir) -> bool {
+        match self.0.get(&at) {
+            Some(&(Conveyor::Belt, dir, _)) => dir != d.opposite(),
+            Some(&(Conveyor::Underground, dir, exit)) => !exit && dir == d,
+            Some(&(Conveyor::Splitter, dir, _)) => dir == d,
+            None => false,
+        }
+    }
+
+    /// How the belt on `at`, running `d`, joins its neighbours: a corner
+    /// when the only thing feeding it comes in from one side, as in the
+    /// simulation, otherwise straight, with its rails closed off at an end
+    /// nothing joins and opened where a belt feeds in from the side.
+    fn shape(&self, at: TilePos, d: Dir) -> (Bend, Joins) {
+        let (l, r) = (left_of(d), d.rotate_cw());
+        let behind = self.gives(at.step(d.opposite()), d);
+        let left = self.gives(at.step(l), r);
+        let right = self.gives(at.step(r), l);
+        let end = !self.takes(at.step(d), d);
+        let joins = Joins {
+            start: !behind,
+            end,
+            left,
+            right,
+        };
+        match (behind, left, right) {
+            (false, true, false) => (
+                Bend::FromLeft,
+                Joins {
+                    end,
+                    ..Joins::default()
+                },
+            ),
+            (false, false, true) => (
+                Bend::FromRight,
+                Joins {
+                    end,
+                    ..Joins::default()
+                },
+            ),
+            _ => (Bend::Straight, joins),
+        }
+    }
 }
 
 impl Scene {
@@ -116,6 +191,18 @@ impl Scene {
             x + w >= lo[0] && y + h >= lo[1] && x <= hi[0] && y <= hi[1]
         };
 
+        let mut carriers = Carriers::default();
+        for e in &latest.entities {
+            if let Some(c) = look.conveyor(&e.building) {
+                carriers.0.insert(e.pos, (c, e.dir, e.exit));
+            }
+        }
+        // The belts' surfaces move on with the items: the simulation's time,
+        // smoothed as the items are, in half-tile cycles.
+        let ticks =
+            prev.tick as f64 + f64::from(alpha) * latest.tick.saturating_sub(prev.tick) as f64;
+        let seconds = ticks * f64::from(mofact_core::TICK_SECONDS);
+        let mut bends = HashMap::new();
         let mut belt_dirs = HashMap::new();
         let mut machines = Vec::new();
         let mut badges = Vec::new();
@@ -146,7 +233,21 @@ impl Scene {
                 turns: if turned { turns(e.dir) } else { 0 },
             };
             if belt {
-                self.instances.push(instance);
+                let (bend, joins) = carriers.shape(e.pos, e.dir);
+                let speed = look.belt_speed(&e.building).unwrap_or(1.0);
+                let phase = (seconds * 2.0 * f64::from(speed)).fract() as f32;
+                let (surface, frame) = look.belt_layers(bend, joins, phase);
+                self.instances.push(Instance {
+                    uv: uv(surface),
+                    ..instance
+                });
+                self.instances.push(Instance {
+                    uv: uv(frame),
+                    ..instance
+                });
+                if bend != Bend::Straight {
+                    bends.insert(e.pos, bend);
+                }
                 continue;
             }
             machines.push(instance);
@@ -222,6 +323,7 @@ impl Scene {
                     ..item.clone()
                 },
                 dir,
+                bends.get(&item.tile).copied().unwrap_or_default(),
             );
             if !seen(c[0] - size / 2.0, c[1] - size / 2.0, size, size) {
                 continue;
@@ -375,8 +477,12 @@ mod tests {
                 &snap(0.6),
                 alpha,
             );
-            assert_eq!(scene.instances.len(), 5, "four belts and an item");
-            scene.instances[4].pos[0] + ITEM_TILES / 2.0
+            assert_eq!(
+                scene.instances.len(),
+                9,
+                "four belts in two layers, and an item"
+            );
+            scene.instances[8].pos[0] + ITEM_TILES / 2.0
         };
         let xs: Vec<f32> = [0.0, 0.5, 1.0]
             .iter()
@@ -619,7 +725,75 @@ mod tests {
         assert!(lit > 100, "the text drew {lit} bright pixels");
     }
 
-    /// The CPU side of 10,000 sprites; prints the time per frame.
+    #[test]
+    fn belts_join_up_with_corners_side_loads_and_ends() {
+        use Dir::*;
+        let mut c = Carriers::default();
+        let t = TilePos::new;
+        // A run east that turns south, then west, and a belt fed from both sides.
+        for (x, y, d) in [(0, 0, East), (1, 0, East), (2, 0, South), (2, 1, West)] {
+            c.0.insert(t(x, y), (Conveyor::Belt, d, false));
+        }
+        for (x, y, d) in [(5, 0, South), (5, 1, South), (4, 1, East), (6, 1, West)] {
+            c.0.insert(t(x, y), (Conveyor::Belt, d, false));
+        }
+        let start = Joins {
+            start: true,
+            ..Joins::default()
+        };
+        assert_eq!(c.shape(t(0, 0), East), (Bend::Straight, start));
+        assert_eq!(c.shape(t(1, 0), East), (Bend::Straight, Joins::default()));
+        // Going south, the run comes in from the west: the right-hand side.
+        assert_eq!(c.shape(t(2, 0), South), (Bend::FromRight, Joins::default()));
+        let end = Joins {
+            end: true,
+            ..Joins::default()
+        };
+        assert_eq!(c.shape(t(2, 1), West), (Bend::FromRight, end));
+        // Fed from behind and both sides: straight, open on both sides.
+        let both = Joins {
+            end: true,
+            left: true,
+            right: true,
+            ..Joins::default()
+        };
+        assert_eq!(c.shape(t(5, 1), South), (Bend::Straight, both));
+        // Side-feeders end at the belt they feed, with no cap.
+        assert_eq!(c.shape(t(4, 1), East), (Bend::Straight, start));
+        // A belt facing into another head-on is not taken: it ends there.
+        c.0.insert(t(9, 0), (Conveyor::Belt, East, false));
+        c.0.insert(t(10, 0), (Conveyor::Belt, West, false));
+        assert!(c.shape(t(9, 0), East).1.end);
+        // A splitter gives out sideways and takes from behind.
+        c.0.insert(t(0, 5), (Conveyor::Splitter, North, false));
+        c.0.insert(t(1, 5), (Conveyor::Belt, East, false));
+        c.0.insert(t(0, 6), (Conveyor::Belt, North, false));
+        assert!(!c.shape(t(1, 5), East).1.start, "fed by the splitter");
+        assert!(!c.shape(t(0, 6), North).1.end, "feeds the splitter");
+    }
+
+    #[test]
+    fn items_round_a_corner_on_the_arc() {
+        let item = |along| BeltItemView {
+            item: "iron-plate".into(),
+            tile: TilePos::new(0, 0),
+            along,
+        };
+        // Facing south, in from the west: from the west edge to the south edge.
+        let a = item_center(&item(0.5), Dir::South, Bend::FromRight);
+        let b = item_center(&item(1.0), Dir::South, Bend::FromRight);
+        assert!(
+            (a[0] - 0.0).abs() < 1e-4 && (a[1] - 0.5).abs() < 1e-4,
+            "{a:?}"
+        );
+        assert!(
+            (b[0] - 0.5).abs() < 1e-4 && (b[1] - 1.0).abs() < 1e-4,
+            "{b:?}"
+        );
+    }
+
+    /// The CPU side of 15,000 sprites (5,000 belts in two layers, each with
+    /// an item); prints the time per frame.
     #[test]
     fn ten_thousand_sprites() {
         let look = Look::new(&content());
@@ -652,7 +826,7 @@ mod tests {
                 0.5,
             );
         }
-        assert_eq!(scene.instances.len(), 10_000);
-        println!("10k sprites: {:?} per frame", start.elapsed() / 10);
+        assert_eq!(scene.instances.len(), 15_000);
+        println!("15k sprites: {:?} per frame", start.elapsed() / 10);
     }
 }
