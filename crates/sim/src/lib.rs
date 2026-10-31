@@ -15,10 +15,12 @@ pub use mofact_core as core;
 
 mod clock;
 pub mod entities;
+mod history;
 mod tables;
 mod thread;
 
 pub use clock::Stepper;
+pub use history::{History, UNDO_STEPS};
 pub use tables::UNIT;
 pub use thread::SimHandle;
 
