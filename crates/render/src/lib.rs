@@ -1,22 +1,34 @@
 //! Render lane: wgpu renderer that draws the latest simulation snapshot with instanced batches, texture atlases per zoom band and smoothing between ticks.
 //!
-//! T03 brings up the GPU: [`Gpu`] owns the device, and a [`Target`] is the
-//! window surface it presents to. The surface is separate because mobile
-//! platforms take it away when the app goes to the background and give a new
-//! one when it comes back; the device, and everything uploaded to it, stays.
-//! Instanced batches, atlases and zoom bands arrive in T16.
+//! [`Gpu`] owns the device, and a [`Target`] is the window surface it
+//! presents to. The surface is separate because mobile platforms take it away
+//! when the app goes to the background and give a new one when it comes back;
+//! the device, and everything uploaded to it, stays.
+//!
+//! Each frame, a [`Scene`] turns the two latest snapshots into sprite
+//! [`Instance`]s (culled to the [`Camera`], smoothed between ticks), and the
+//! [`Renderer`] draws them in one instanced call from the atlas of the zoom
+//! band that fits the camera.
+
+pub mod atlas;
+pub mod palette;
+mod pipeline;
+pub mod scene;
 
 pub use mofact_core as core;
+pub use pipeline::Renderer;
+pub use scene::{Camera, Instance, Look, Scene};
 pub use wgpu;
 
 use mofact_artkit as _;
 use std::fmt;
 
-/// The factory floor colour the frame is cleared to before anything is drawn.
+/// The factory floor colour the frame is cleared to before anything is drawn:
+/// the palette's ground (#14181d), in linear light because targets are sRGB.
 pub const FLOOR: wgpu::Color = wgpu::Color {
-    r: 0.067,
-    g: 0.078,
-    b: 0.094,
+    r: 0.0070,
+    g: 0.0091,
+    b: 0.0123,
     a: 1.0,
 };
 
@@ -73,6 +85,22 @@ impl Gpu {
             ..Default::default()
         }))
         .map_err(GpuError::NoDevice)?;
+        Ok(Self {
+            instance,
+            adapter,
+            device,
+            queue,
+        })
+    }
+
+    /// Open a GPU with no window, for screenshots and image tests.
+    pub fn headless() -> Result<Self, GpuError> {
+        let instance =
+            wgpu::Instance::new(wgpu::InstanceDescriptor::new_without_display_handle_from_env());
+        let adapter = pollster::block_on(instance.request_adapter(&Default::default()))
+            .map_err(GpuError::NoAdapter)?;
+        let (device, queue) = pollster::block_on(adapter.request_device(&Default::default()))
+            .map_err(GpuError::NoDevice)?;
         Ok(Self {
             instance,
             adapter,
@@ -138,49 +166,42 @@ impl Target {
         }
     }
 
-    /// Clear to `color` and present.
-    pub fn draw(&mut self, gpu: &Gpu, color: wgpu::Color) -> Frame {
-        let texture = match self.surface.get_current_texture() {
-            wgpu::CurrentSurfaceTexture::Success(t) => t,
-            wgpu::CurrentSurfaceTexture::Suboptimal(t) => {
-                // Draw this one, then reconfigure for the next.
-                present(gpu, t, color);
-                self.surface.configure(&gpu.device, &self.config);
-                return Frame::Reconfigured;
-            }
+    /// Draw `scene` through `camera` and present.
+    pub fn draw(
+        &mut self,
+        gpu: &Gpu,
+        renderer: &mut Renderer,
+        camera: &Camera,
+        scene: &Scene,
+    ) -> Frame {
+        let (texture, suboptimal) = match self.surface.get_current_texture() {
+            wgpu::CurrentSurfaceTexture::Success(t) => (t, false),
+            wgpu::CurrentSurfaceTexture::Suboptimal(t) => (t, true),
             wgpu::CurrentSurfaceTexture::Outdated | wgpu::CurrentSurfaceTexture::Lost => {
                 self.surface.configure(&gpu.device, &self.config);
                 return Frame::Reconfigured;
             }
             _ => return Frame::Skipped,
         };
-        present(gpu, texture, color);
+        let view = texture.texture.create_view(&Default::default());
+        let mut encoder = gpu.device.create_command_encoder(&Default::default());
+        let size = self.size();
+        renderer.encode(
+            gpu,
+            &mut encoder,
+            &view,
+            self.config.format,
+            size,
+            camera,
+            scene,
+            FLOOR,
+        );
+        gpu.queue.submit([encoder.finish()]);
+        gpu.queue.present(texture);
+        if suboptimal {
+            self.surface.configure(&gpu.device, &self.config);
+            return Frame::Reconfigured;
+        }
         Frame::Presented
     }
-}
-
-fn present(gpu: &Gpu, texture: wgpu::SurfaceTexture, color: wgpu::Color) {
-    let view = texture
-        .texture
-        .create_view(&wgpu::TextureViewDescriptor::default());
-    let mut encoder = gpu
-        .device
-        .create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("frame"),
-        });
-    encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-        label: Some("clear"),
-        color_attachments: &[Some(wgpu::RenderPassColorAttachment {
-            view: &view,
-            depth_slice: None,
-            resolve_target: None,
-            ops: wgpu::Operations {
-                load: wgpu::LoadOp::Clear(color),
-                store: wgpu::StoreOp::Store,
-            },
-        })],
-        ..Default::default()
-    });
-    gpu.queue.submit([encoder.finish()]);
-    gpu.queue.present(texture);
 }

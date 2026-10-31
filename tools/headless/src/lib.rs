@@ -89,6 +89,12 @@ pub fn parse(text: &str) -> Result<Scenario, String> {
 
 /// Build the scenario and run it. Errors if a building can't be placed.
 pub fn run(content: &Content, s: &Scenario) -> Result<Vec<Measured>, String> {
+    let mut sim = build(content, s)?;
+    run_built(&mut sim, s)
+}
+
+/// A simulation with the scenario's stock, ore and buildings, not yet run.
+pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
     let mut sim = Sim::with_content(content);
     for (item, n) in &s.stock {
         sim.add_stock(item, *n);
@@ -129,6 +135,10 @@ pub fn run(content: &Content, s: &Scenario) -> Result<Vec<Measured>, String> {
             }
         }
     }
+    Ok(sim)
+}
+
+fn run_built(sim: &mut Sim, s: &Scenario) -> Result<Vec<Measured>, String> {
     let ticks = |secs: u32| secs * TICKS_PER_SECOND;
     for _ in 0..ticks(s.warmup_seconds) {
         sim.step();

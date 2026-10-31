@@ -7,12 +7,15 @@
 //!
 //! `mofact --frames N` presents N frames and exits, going to the background
 //! and back halfway through. CI runs it to prove the shell works on a real
-//! (software) GPU.
+//! (software) GPU. `mofact --screenshot DIR` writes the scene at three zooms
+//! as PNGs instead of opening a window. `--scenario FILE` starts from one of
+//! the headless scenarios (the starter line by default).
 
 mod surface;
 
+use mofact_core::content::Content;
 use mofact_input as _;
-use mofact_render::{wgpu, Frame, Gpu, Target, FLOOR};
+use mofact_render::{scene, wgpu, Camera, Frame, Gpu, Look, Renderer, Scene, Target, FLOOR};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui as _;
 use mofact_world as _;
@@ -24,15 +27,26 @@ use std::time::{Duration, Instant};
 struct App {
     // Field order is drop order: the surface goes before the window it draws into.
     target: Option<Target>,
+    renderer: Renderer,
     gpu: Gpu,
     window: sdl3::video::Window,
     sim: SimHandle,
+    look: Look,
+    scene: Scene,
+    camera: Camera,
+    /// When the latest snapshot arrived, for smoothing between ticks.
+    latest: (u64, Instant),
     /// The platform has taken the window away, or it is minimised.
     background: bool,
 }
 
 impl App {
-    fn new(video: &sdl3::VideoSubsystem, sim: Sim) -> Result<Self, String> {
+    fn new(
+        video: &sdl3::VideoSubsystem,
+        sim: Sim,
+        look: Look,
+        camera: Camera,
+    ) -> Result<Self, String> {
         let window = video
             .window("Mofact", 1280, 720)
             .resizable()
@@ -47,9 +61,14 @@ impl App {
         let target = Target::new(&gpu, surface, w, h).map_err(|e| e.to_string())?;
         Ok(Self {
             target: Some(target),
+            renderer: Renderer::new(&gpu, scene::atlases()),
             gpu,
             window,
             sim: SimHandle::spawn(sim),
+            look,
+            scene: Scene::default(),
+            camera,
+            latest: (0, Instant::now()),
             background: false,
         })
     }
@@ -76,21 +95,40 @@ impl App {
     }
 
     fn draw(&mut self) -> Frame {
-        match &mut self.target {
-            Some(target) if !self.background => target.draw(&self.gpu, FLOOR),
-            _ => Frame::Skipped,
+        let Some(target) = self.target.as_mut().filter(|_| !self.background) else {
+            return Frame::Skipped;
+        };
+        let (prev, latest) = self.sim.snapshots();
+        if latest.tick != self.latest.0 {
+            self.latest = (latest.tick, Instant::now());
         }
+        let alpha = (self.latest.1.elapsed().as_secs_f32() / mofact_core::TICK_SECONDS).min(1.0);
+        let atlases = self.renderer.atlases();
+        self.scene.build(
+            &self.look,
+            atlases,
+            &self.camera,
+            target.size(),
+            &prev,
+            &latest,
+            alpha,
+        );
+        target.draw(&self.gpu, &mut self.renderer, &self.camera, &self.scene)
     }
 }
 
 struct Args {
     frames: Option<u64>,
+    screenshot: Option<String>,
+    scenario: String,
     data: String,
 }
 
 fn args() -> Result<Args, String> {
     let mut args = Args {
         frames: None,
+        screenshot: None,
+        scenario: "scenarios/starter-line.ron".into(),
         data: "data".into(),
     };
     let mut it = std::env::args().skip(1);
@@ -101,9 +139,13 @@ fn args() -> Result<Args, String> {
                 args.frames = Some(n.parse().map_err(|_| format!("bad frame count `{n}`"))?);
             }
             "--data" => args.data = it.next().ok_or("--data needs a folder")?,
+            "--scenario" => args.scenario = it.next().ok_or("--scenario needs a file")?,
+            "--screenshot" => {
+                args.screenshot = Some(it.next().ok_or("--screenshot needs a folder")?)
+            }
             other => {
                 return Err(format!(
-                    "unknown argument `{other}` (try --frames N, --data DIR)"
+                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --scenario FILE, --data DIR)"
                 ))
             }
         }
@@ -123,18 +165,20 @@ fn main() -> ExitCode {
 
 fn run() -> Result<(), String> {
     let args = args()?;
-    let sim = match mofact_content::load_dir(Path::new(&args.data)) {
-        Ok(content) => Sim::with_content(&content),
-        Err(e) => {
-            eprintln!("mofact: {e}; using built-in content");
-            Sim::new()
-        }
-    };
+    let content = mofact_content::load_dir(Path::new(&args.data)).map_err(|e| e.to_string())?;
+    let scenario = std::fs::read_to_string(&args.scenario)
+        .map_err(|e| format!("{}: {e}", args.scenario))
+        .and_then(|text| mofact_headless::parse(&text))?;
+    let sim = mofact_headless::build(&content, &scenario)?;
+    let camera = framing(&content, &sim);
+    if let Some(dir) = &args.screenshot {
+        return screenshots(&content, sim, camera, Path::new(dir));
+    }
 
     let sdl = sdl3::init().map_err(|e| e.to_string())?;
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
-    let mut app = App::new(&video, sim)?;
+    let mut app = App::new(&video, sim, Look::new(&content), camera)?;
     let info = app.gpu.info();
     println!(
         "mofact {}: {} ({:?}), surface {:?}",
@@ -211,4 +255,81 @@ fn run() -> Result<(), String> {
             }
         }
     }
+}
+
+/// A camera on the middle of everything built, at the medium zoom band.
+fn framing(content: &Content, sim: &Sim) -> Camera {
+    let snap = sim.snapshot();
+    let (mut lo, mut hi) = ([f32::MAX; 2], [f32::MIN; 2]);
+    for e in &snap.entities {
+        let size = content
+            .buildings
+            .iter()
+            .find(|b| b.id == e.building)
+            .map_or((1, 1), |b| b.size);
+        lo = [lo[0].min(e.pos.x as f32), lo[1].min(e.pos.y as f32)];
+        hi = [
+            hi[0].max((e.pos.x + i32::from(size.0)) as f32),
+            hi[1].max((e.pos.y + i32::from(size.1)) as f32),
+        ];
+    }
+    let center = if snap.entities.is_empty() {
+        [0.0, 0.0]
+    } else {
+        [(lo[0] + hi[0]) / 2.0, (lo[1] + hi[1]) / 2.0]
+    };
+    Camera {
+        center,
+        pixels_per_tile: 32.0,
+    }
+}
+
+/// Run the scenario for ten seconds, then write it at three zooms, one per band.
+fn screenshots(content: &Content, mut sim: Sim, camera: Camera, dir: &Path) -> Result<(), String> {
+    for _ in 0..10 * mofact_core::TICKS_PER_SECOND {
+        sim.step();
+    }
+    let prev = sim.snapshot();
+    sim.step();
+    let latest = sim.snapshot();
+    let gpu = Gpu::headless().map_err(|e| e.to_string())?;
+    let mut renderer = Renderer::new(&gpu, scene::atlases());
+    let look = Look::new(content);
+    let mut scene = Scene::default();
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let size = (960, 540);
+    for ppt in [14.0, 32.0, 64.0] {
+        let camera = Camera {
+            pixels_per_tile: ppt,
+            ..camera
+        };
+        scene.build(
+            &look,
+            renderer.atlases(),
+            &camera,
+            size,
+            &prev,
+            &latest,
+            0.5,
+        );
+        let pixels = renderer.capture(&gpu, size, &camera, &scene, FLOOR);
+        let path = dir.join(format!("zoom-{ppt}.png"));
+        write_png(&path, size, &pixels)?;
+        println!(
+            "{}: {} sprites, band {}",
+            path.display(),
+            scene.instances.len(),
+            scene.band
+        );
+    }
+    Ok(())
+}
+
+fn write_png(path: &Path, (w, h): (u32, u32), rgba: &[u8]) -> Result<(), String> {
+    let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let mut encoder = png::Encoder::new(std::io::BufWriter::new(file), w, h);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header().map_err(|e| e.to_string())?;
+    writer.write_image_data(rgba).map_err(|e| e.to_string())
 }
