@@ -8,7 +8,7 @@ use crate::palette::{self, Rgba};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId};
 use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// What the screen shows: the world point at its centre and how many screen
 /// pixels one tile covers. Pan and pinch arrive with T15.
@@ -58,7 +58,32 @@ pub struct Scene {
     pub ore: Vec<Instance>,
     /// Belts, items and machines. Rebuilt by [`Scene::build`].
     pub instances: Vec<Instance>,
+    /// What the ground is made of under the camera. Rebuilt by [`Scene::terrain`].
+    pub terrain: TerrainMap,
+    /// Seconds since the game started, for water ripples.
+    pub time: f32,
+    /// The tiles buildings stand on, from the last [`Scene::build`]: no
+    /// decorations are drawn there.
+    occupied: HashSet<TilePos>,
 }
+
+/// The ground under the camera, one RGBA texel per tile, for the ground
+/// shader: the terrain number in red and its shade in green.
+#[derive(Default)]
+pub struct TerrainMap {
+    /// The tile at the texture's top-left texel.
+    pub origin: [i32; 2],
+    /// Width and height in tiles.
+    pub size: [u32; 2],
+    pub texels: Vec<u8>,
+    /// Goes up whenever `texels` changes, so the GPU copy knows to refresh.
+    pub version: u64,
+    /// What the texels were made from: the rectangle and the map's version.
+    made_from: Option<([i32; 4], u64)>,
+}
+
+/// What a tile with no terrain yet shows: plain grass.
+pub const UNKNOWN_TERRAIN: (u8, u8) = (3, 128);
 
 fn turns(dir: Dir) -> u32 {
     match dir {
@@ -118,6 +143,7 @@ impl Scene {
 
         let mut belt_dirs = HashMap::new();
         let mut machines = Vec::new();
+        self.occupied.clear();
         let mut badges = Vec::new();
         // Badges keep a readable size on screen when zoomed out, as in the prototype.
         let badge = (7.0 / camera.pixels_per_tile).max(0.2) * 2.0;
@@ -133,6 +159,12 @@ impl Scene {
             }
             if !seen(x, y, w, h) {
                 continue;
+            }
+            for dy in 0..h as i32 {
+                for dx in 0..w as i32 {
+                    self.occupied
+                        .insert(TilePos::new(e.pos.x + dx, e.pos.y + dy));
+                }
             }
             let working = e.state == MachineState::Working;
             let Some(sprite) = look.linked(&e.building, e.dir, setting(e), working, e.links) else {
@@ -304,6 +336,102 @@ impl Scene {
                 });
             }
         }
+    }
+}
+
+impl Scene {
+    /// Lay trees, bushes and stones (`kind` numbered from 1, as the world
+    /// numbers them) on the ground, over the ore and under everything built.
+    /// Call after [`Scene::ore`]; none are drawn under a building.
+    pub fn decor(
+        &mut self,
+        atlases: &[Atlas],
+        camera: &Camera,
+        (width, height): (u32, u32),
+        decor: impl IntoIterator<Item = (TilePos, u8)>,
+    ) {
+        // Too small to read from far out, and there would be thousands.
+        if camera.pixels_per_tile < 7.0 {
+            return;
+        }
+        let atlas = &atlases[self.band];
+        let uvs: Vec<Uv> = (1..=sprites::DECOR_KINDS)
+            .map(|k| atlas.get(&sprites::decor_name(k)).unwrap_or([0.0; 4]))
+            .collect();
+        let (lo, hi) = camera.visible(width, height);
+        let mut seen: Vec<(TilePos, u8)> = decor
+            .into_iter()
+            .filter(|(t, k)| {
+                let (x, y) = (t.x as f32, t.y as f32);
+                (1..=sprites::DECOR_KINDS).contains(k)
+                    && x + 2.0 >= lo[0]
+                    && y + 2.0 >= lo[1]
+                    && x - 1.0 <= hi[0]
+                    && y - 1.0 <= hi[1]
+                    && !self.occupied.contains(t)
+            })
+            .collect();
+        // Back to front, so a tree further down overlaps the one above it.
+        seen.sort_by_key(|(t, _)| (t.y, t.x));
+        for (tile, kind) in seen {
+            let h = (tile.x as u32).wrapping_mul(0x27d4_eb2d)
+                ^ (tile.y as u32).wrapping_mul(0x1656_67b1);
+            let h = h ^ (h >> 15);
+            let jitter = |shift: u32| ((h >> shift) & 0xff) as f32 / 255.0 - 0.5;
+            // Trees and boulders spread past their tile; the rest stay inside it.
+            let base = match kind {
+                1 | 2 => 1.45,
+                5 => 1.15,
+                _ => 0.9,
+            };
+            let size = base * (1.0 + 0.25 * jitter(0));
+            let (x, y) = (
+                tile.x as f32 + 0.5 + 0.3 * jitter(8) - size / 2.0,
+                tile.y as f32 + 0.5 + 0.3 * jitter(16) - size / 2.0,
+            );
+            self.ore.push(Instance {
+                pos: [x, y],
+                size: [size, size],
+                uv: uvs[usize::from(kind - 1)],
+                tint: palette::WHITE,
+                turns: 0,
+            });
+        }
+    }
+
+    /// Fill [`Scene::terrain`] for what the camera sees, from `at` (terrain
+    /// number and shade, or `None` where nothing is generated yet). `version`
+    /// is the map's: it is only read again when that or the view changes.
+    pub fn terrain(
+        &mut self,
+        camera: &Camera,
+        (width, height): (u32, u32),
+        version: u64,
+        at: impl Fn(TilePos) -> Option<(u8, u8)>,
+    ) {
+        let (lo, hi) = camera.visible(width, height);
+        // A tile's edges blend with its neighbours, so take one more all round.
+        let rect = [
+            lo[0].floor() as i32 - 2,
+            lo[1].floor() as i32 - 2,
+            hi[0].ceil() as i32 + 2,
+            hi[1].ceil() as i32 + 2,
+        ];
+        let map = &mut self.terrain;
+        if map.made_from == Some((rect, version)) {
+            return;
+        }
+        map.made_from = Some((rect, version));
+        map.origin = [rect[0], rect[1]];
+        map.size = [(rect[2] - rect[0]) as u32, (rect[3] - rect[1]) as u32];
+        map.texels.clear();
+        for y in rect[1]..rect[3] {
+            for x in rect[0]..rect[2] {
+                let (kind, shade) = at(TilePos::new(x, y)).unwrap_or(UNKNOWN_TERRAIN);
+                map.texels.extend_from_slice(&[kind, shade, 0, 255]);
+            }
+        }
+        map.version += 1;
     }
 }
 
@@ -541,12 +669,11 @@ mod tests {
             [px[i], px[i + 1], px[i + 2]]
         };
         let close = |a: [u8; 3], b: [u8; 4]| a.iter().zip(b).all(|(&a, b)| a.abs_diff(b) <= 3);
-        // The ground shader: between the two ground tones.
+        // The ground shader, with no terrain map: grass, give or take its mottling.
         let g = at(2, 2);
-        let between = (0..3).all(|i| {
-            (palette::GROUND[i].saturating_sub(3)..=palette::GROUND2[i] + 3).contains(&g[i])
-        });
-        assert!(between, "ground: {g:?}");
+        let grass = palette::TERRAIN[3];
+        let near = (0..3).all(|i| g[i].abs_diff(grass[i]) <= 12);
+        assert!(near, "ground: {g:?}, grass {grass:?}");
         // Between a roller and the rail, clear of the chevrons.
         assert!(
             close(at(20, 24), palette::BELT),
