@@ -35,7 +35,13 @@ const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
 
 impl Renderer {
     /// Upload `atlases` (one per zoom band) and build the sprite pipeline.
-    pub fn new(gpu: &Gpu, atlases: Vec<Atlas>) -> Self {
+    /// Bands whose atlas is bigger than the GPU takes are left out; the
+    /// closest zoom then uses the largest band left.
+    pub fn new(gpu: &Gpu, mut atlases: Vec<Atlas>) -> Self {
+        let max = gpu.device.limits().max_texture_dimension_2d;
+        while atlases.len() > 1 && atlases.last().is_some_and(|a| a.size > max) {
+            atlases.pop();
+        }
         let device = &gpu.device;
         let shader = device.create_shader_module(wgpu::include_wgsl!("shader.wgsl"));
         let globals_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {

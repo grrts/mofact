@@ -47,7 +47,7 @@ pub enum Pointer {
     },
 }
 
-/// Closest and furthest zoom, in screen pixels per tile.
+/// Closest and furthest zoom, in points per tile (screen pixels at scale 1).
 pub const ZOOM: (f32, f32) = (8.0, 128.0);
 /// How much one wheel notch zooms.
 const WHEEL_STEP: f32 = 1.15;
@@ -58,6 +58,9 @@ pub struct CameraControl {
     /// The world point, in tiles, at the middle of the screen.
     pub center: [f32; 2],
     pub pixels_per_tile: f32,
+    /// Screen pixels per point: 3 on most phones, so a tile looks the same
+    /// size on every screen.
+    scale: f32,
     /// The screen size in pixels.
     viewport: [f32; 2],
     /// The camera centre stays inside this box of tiles: (min, max).
@@ -71,12 +74,27 @@ impl CameraControl {
         let mut c = Self {
             center,
             pixels_per_tile,
+            scale: 1.0,
             viewport,
             bounds: ([-5_000.0; 2], [5_000.0; 2]),
             down: Vec::new(),
         };
         c.clamp();
         c
+    }
+
+    /// Follow the display's pixels per point, keeping the view the same size.
+    pub fn set_scale(&mut self, scale: f32) {
+        let scale = if scale.is_finite() && scale > 0.0 {
+            scale
+        } else {
+            1.0
+        };
+        if scale != self.scale {
+            self.pixels_per_tile *= scale / self.scale;
+            self.scale = scale;
+            self.clamp();
+        }
     }
 
     /// Follow a window resize.
@@ -145,7 +163,8 @@ impl CameraControl {
     /// Zoom by `factor`, keeping the world point under screen pixel `at` still.
     fn zoom_at(&mut self, factor: f32, at: [f32; 2]) {
         let anchor = self.world_at(at);
-        self.pixels_per_tile = (self.pixels_per_tile * factor).clamp(ZOOM.0, ZOOM.1);
+        self.pixels_per_tile *= factor;
+        self.clamp();
         let moved = self.world_at(at);
         self.center[0] += anchor[0] - moved[0];
         self.center[1] += anchor[1] - moved[1];
@@ -153,7 +172,9 @@ impl CameraControl {
     }
 
     fn clamp(&mut self) {
-        self.pixels_per_tile = self.pixels_per_tile.clamp(ZOOM.0, ZOOM.1);
+        self.pixels_per_tile = self
+            .pixels_per_tile
+            .clamp(ZOOM.0 * self.scale, ZOOM.1 * self.scale);
         for i in 0..2 {
             self.center[i] = self.center[i].clamp(self.bounds.0[i], self.bounds.1[i]);
         }
@@ -547,5 +568,24 @@ mod tests {
         let b = replay(&ron::from_str::<Vec<Pointer>>(mouse).unwrap());
         assert_eq!(a, b);
         assert!(near(a.center, [3.125, 1.5625]));
+    }
+
+    #[test]
+    fn a_tile_looks_the_same_size_at_any_scale() {
+        let mut c = CameraControl::new([0.0, 0.0], 32.0, [1170.0, 2532.0]);
+        c.set_scale(3.0);
+        assert_eq!(c.pixels_per_tile, 96.0);
+        c.handle(Pointer::Wheel {
+            steps: 100.0,
+            x: 0.0,
+            y: 0.0,
+        });
+        assert_eq!(
+            c.pixels_per_tile,
+            ZOOM.1 * 3.0,
+            "zooms in as far, in points"
+        );
+        c.set_scale(1.0);
+        assert_eq!(c.pixels_per_tile, ZOOM.1);
     }
 }

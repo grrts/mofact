@@ -7,7 +7,10 @@
 use std::collections::HashMap;
 
 /// Pixels per tile for each zoom band, smallest first.
-pub const BANDS: [u32; 3] = [16, 32, 64];
+///
+/// The largest is for phones: a tile at the default zoom covers about 100
+/// screen pixels on a 3x display, so smaller bands would be blown up and blur.
+pub const BANDS: [u32; 4] = [16, 32, 64, 128];
 
 /// The band to draw with when a tile covers `pixels_per_tile` screen pixels:
 /// the smallest band at least that big, so sprites are only ever scaled down.
@@ -94,33 +97,77 @@ pub mod sprites {
     pub use crate::look::ORE;
 
     /// Paint the ore pebbles at `px` pixels a tile. Returns false if the atlas is full.
+    /// Four variants, with the chunks laid out differently, so a field of
+    /// ore doesn't repeat tile after tile.
     pub fn paint_ore(atlas: &mut super::Atlas, px: u32) -> bool {
         let f = px as f32;
-        atlas
-            .add(ORE, px, px, |x, y| ore(x as f32 / f, y as f32 / f))
-            .is_some()
+        (0..ORE_VARIANTS).all(|k| {
+            atlas
+                .add(&ore_name(k), px, px, |x, y| {
+                    ore(x as f32 / f, y as f32 / f, k)
+                })
+                .is_some()
+        })
     }
 
-    /// Five pebbles scattered over the tile, the same on every tile.
-    fn ore(u: f32, v: f32) -> [u8; 4] {
-        const PEBBLES: [(f32, f32, f32); 5] = [
-            (0.25, 0.28, 0.14),
-            (0.68, 0.22, 0.11),
-            (0.52, 0.55, 0.16),
-            (0.2, 0.74, 0.1),
-            (0.78, 0.76, 0.12),
+    pub const ORE_VARIANTS: u32 = 4;
+
+    /// The name of ore variant `k`.
+    pub fn ore_name(k: u32) -> String {
+        if k == 0 {
+            ORE.to_owned()
+        } else {
+            format!("{ORE}:{k}")
+        }
+    }
+
+    /// An ore tile: a faint wash of the ore's colour with a seam at its
+    /// edge, under four faceted chunks lit from the top left. Painted white
+    /// and grey; the tint gives the ore its colour.
+    fn ore(u: f32, v: f32, variant: u32) -> [u8; 4] {
+        // (centre x, centre y, radius, turn) of each chunk.
+        const CHUNKS: [(f32, f32, f32, f32); 4] = [
+            (0.3, 0.3, 0.17, 0.3),
+            (0.7, 0.32, 0.13, 1.1),
+            (0.56, 0.7, 0.18, 0.7),
+            (0.22, 0.72, 0.11, 1.6),
         ];
-        let lit = PEBBLES
-            .iter()
-            .find(|(x, y, r)| (u - x).hypot(v - y) < *r)
-            .map(|(x, y, r)| ((x - u) + (y - v)) / r);
-        match lit {
-            // Lighter on the top-left of each pebble.
-            Some(l) => {
-                let shade = (200.0 + 55.0 * l.clamp(-1.0, 1.0)) as u8;
-                [shade, shade, shade, 235]
+        for (cx, cy, r, turn) in CHUNKS {
+            // Variants mirror where the chunks sit, not how they are lit.
+            let cx = if variant & 1 == 1 { 1.0 - cx } else { cx };
+            let cy = if variant & 2 == 2 { 1.0 - cy } else { cy };
+            let (dx, dy) = (u - cx, v - cy);
+            let (s, c) = turn.sin_cos();
+            let (x, y) = (dx * c - dy * s, dx * s + dy * c);
+            // Between a diamond and a square: a cut stone.
+            let d = x.abs().max(y.abs()) * 0.55 + (x.abs() + y.abs()) * 0.45;
+            if d < r {
+                // Facets: the top-left face catches the light, the bottom-right is in shade.
+                let face = if dx + dy < -0.02 * r / 0.15 {
+                    250.0
+                } else if dx - dy > 0.0 {
+                    175.0
+                } else {
+                    140.0
+                };
+                // A darker rim around each chunk.
+                let shade = if d > r * 0.82 { face * 0.72 } else { face };
+                let g = shade as u8;
+                return [g, g, g, 255];
             }
-            None => [255, 255, 255, 0],
+            // A soft shadow down and to the right of each chunk.
+            let (sx, sy) = (x - 0.025, y - 0.03);
+            let ds = sx.abs().max(sy.abs()) * 0.55 + (sx.abs() + sy.abs()) * 0.45;
+            if ds < r {
+                return [40, 40, 40, 140];
+            }
+        }
+        // The wash, inset so neighbouring ore tiles show a seam.
+        let inset = (0.04..0.96).contains(&u) && (0.04..0.96).contains(&v);
+        if inset {
+            [255, 255, 255, 46]
+        } else {
+            [255, 255, 255, 0]
         }
     }
 }

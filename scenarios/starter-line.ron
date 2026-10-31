@@ -4,6 +4,14 @@
     name: "Starter iron line",
     stock: [("iron-plate", 60)],
     ore: [(19, 27, "iron-ore")],
+    // Iron beside the starter drill and a little way north, copper to the
+    // east of the hub, as on the phone prototype's map.
+    patches: [
+        (16.0, 27.0, 3.3, "iron-ore"),
+        (24.0, 15.0, 2.8, "iron-ore"),
+        (37.0, 34.0, 3.0, "copper-ore"),
+        (40.0, 21.0, 2.6, "copper-ore"),
+    ],
     build: [
         At(building: "hub", x: 26, y: 26, dir: East),
         At(building: "drill", x: 19, y: 27, dir: East),
