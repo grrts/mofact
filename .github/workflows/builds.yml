@@ -53,7 +53,12 @@ jobs:
           gradle-version: "8.12"
       - name: Build libmain.so
         run: |
+          sudo apt-get install -y -q ninja-build
           export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          # SDL builds with CMake: use the NDK's own toolchain file, which
+          # knows Android's ABIs, rather than cmake-rs's guesses.
+          export CMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          export ANDROID_ABI=arm64-v8a ANDROID_PLATFORM=android-26 CMAKE_GENERATOR=Ninja
           cargo ndk -t arm64-v8a --platform 26 -o platform/android/app/libs build --release -p mofact-android
           ls -l platform/android/app/libs/arm64-v8a
       - name: SDL's Java activity, matching the SDL in libmain.so
