@@ -276,12 +276,16 @@ fn everything_stays_on_screen() {
                 (None, false, true, None),
                 (None, false, false, Some([0.0, 0.0])),
                 (None, false, false, Some([4000.0, 4000.0])),
+                (None, false, false, None),
             ] {
                 let mut f = Fixture::new();
                 f.hud.select(selected);
                 f.hud.research = research;
                 f.hud.more = more;
                 f.hud.radial = radial;
+                if selected.is_none() && !research && !more && radial.is_none() {
+                    f.hud.browse = Some("iron-plate".into());
+                }
                 f.draw(size, scale, tool);
                 let (w, h) = (size.0 as f32, size.1 as f32);
                 for (r, hit) in &f.hud.hits {
@@ -514,4 +518,39 @@ fn a_long_press_opens_the_radial_menu_and_any_building_is_two_taps_away() {
         y: 900.0,
     });
     assert!(f.hud.poll(Instant::now() + LONG_PRESS).is_empty());
+}
+
+#[test]
+fn any_item_icon_opens_its_recipes_in_one_tap() {
+    let mut f = Fixture::new();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    // The stock along the top.
+    let plates = f.find(&Hit::Item("iron-plate".into()));
+    assert_eq!(f.tap(centre(plates)), (true, vec![]));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    // Iron plates go into gears; the gear's icon leads on.
+    let gear = f.find(&Hit::Item("gear".into()));
+    f.find(&Hit::Item("iron-ore".into()));
+    let links = |f: &Fixture, item: &str| {
+        let want = Hit::Item(item.into());
+        f.hud.hits.iter().filter(|(_, h)| *h == want).count()
+    };
+    assert_eq!(
+        links(&f, "iron-plate"),
+        1,
+        "only the stock chip links to itself"
+    );
+    f.tap(centre(gear));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    f.find(&Hit::Item("iron-plate".into()));
+    let close = f.find(&Hit::Close);
+    f.tap(centre(close));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert_eq!(links(&f, "iron-ore"), 0);
+
+    // A crafter's recipe line in the inspect sheet links its items too.
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.hud.select(Some(EntityId(2)));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    f.find(&Hit::Item("gear".into()));
 }

@@ -187,6 +187,8 @@ enum Hit {
     Study(Option<ResearchId>),
     /// Pick a building from the build sheet.
     Build(BuildingId),
+    /// An item's icon: opens the recipe browser on it.
+    Item(ItemId),
     Close,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
@@ -225,6 +227,8 @@ pub struct Hud {
     more: bool,
     /// Where the radial build menu is open, in pixels.
     radial: Option<[f32; 2]>,
+    /// The item the recipe browser shows.
+    browse: Option<ItemId>,
     /// Where each control went in the last frame, topmost last.
     hits: Vec<(Rect, Hit)>,
     press: Option<Press>,
@@ -256,6 +260,11 @@ impl Hud {
     /// Whether the research sheet is open.
     pub fn researching(&self) -> bool {
         self.research
+    }
+
+    /// Open the recipe browser on `item`, as tapping its icon does.
+    pub fn browse(&mut self, item: ItemId) {
+        self.tapped(Hit::Item(item));
     }
 
     /// Open or close the research sheet, as its button does.
@@ -412,11 +421,19 @@ impl Hud {
                 Vec::new()
             }
             Hit::Study(research) => vec![Action::Send(Command::SetResearch { research })],
+            Hit::Item(item) => {
+                self.browse = Some(item);
+                self.selected = None;
+                self.research = false;
+                self.more = false;
+                Vec::new()
+            }
             Hit::Close => {
                 self.selected = None;
                 self.research = false;
                 self.more = false;
                 self.radial = None;
+                self.browse = None;
                 Vec::new()
             }
             Hit::Block => Vec::new(),
@@ -470,7 +487,7 @@ impl Hud {
                 self.toast = None;
             }
         }
-        if selected.is_none() && !self.research && !self.more {
+        if selected.is_none() && !self.research && !self.more && self.browse.is_none() {
             chip(o, tip(view.tool), [m, tip_y], corner[0] - m, u, TEXT);
         }
         let width = if portrait {
@@ -481,6 +498,11 @@ impl Hud {
 
         if let Some(at) = self.radial {
             self.radial_menu(view, o, at, [w, h]);
+            return;
+        }
+        if let Some(item) = self.browse.clone() {
+            let room = corner[1] - tip_y;
+            self.browser(view, o, &item, [corner[0] - width, corner[1]], width, room);
             return;
         }
         if self.more {
@@ -687,7 +709,7 @@ impl Hud {
             }
             let base = at[1] + (h + o.cap_height(px)) / 2.0;
             o.text(&text, [x + 8.0 * u + s + 5.0 * u, base], px, TEXT);
-            self.hits.push(([x, at[1], w, h], Hit::Block));
+            self.hits.push(([x, at[1], w, h], Hit::Item(item.clone())));
             x += w + 6.0 * u;
         }
         at[1] + h
@@ -739,6 +761,180 @@ impl Hud {
         );
         self.hits.push(([at[0], at[1], w, h], Hit::Research));
         at[1] + h
+    }
+
+    /// The recipe browser for `item`, bottom-left at `at`, at most `room`
+    /// tall: the recipes that make it, then those that use it. Every other
+    /// item's icon in it opens the browser on that item.
+    fn browser(
+        &mut self,
+        view: &View,
+        o: &mut Overlay,
+        item: &ItemId,
+        at: [f32; 2],
+        width: f32,
+        room: f32,
+    ) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let title = 34.0 * u;
+        let head = 24.0 * u;
+        let row = 50.0 * u;
+        let has = |list: &[Stack]| list.iter().any(|s| &s.item == item);
+        let made: Vec<&RecipeDef> = view
+            .content
+            .recipes
+            .iter()
+            .filter(|r| has(&r.outputs))
+            .collect();
+        let used: Vec<&RecipeDef> = view
+            .content
+            .recipes
+            .iter()
+            .filter(|r| has(&r.inputs))
+            .collect();
+        let research: Vec<&ResearchDef> = view
+            .content
+            .research
+            .iter()
+            .filter(|r| has(&r.cost))
+            .collect();
+        // Fit what we can, makers first.
+        let mut budget = ((room - 2.0 * pad - title) / row).floor().max(1.0) as usize;
+        let mut take = |n: usize| {
+            let k = n.min(budget.saturating_sub(usize::from(n > 0)));
+            budget -= k + usize::from(k > 0);
+            k
+        };
+        let (nm, nu) = (take(made.len()), take(used.len()));
+        let nr = usize::from(!research.is_empty() && take(1) > 0);
+        let sections = [nm, nu, nr].iter().filter(|&&n| n > 0).count() as f32;
+        let rows = (nm + nu + nr) as f32;
+        let empty = rows == 0.0;
+        let height =
+            pad + title + sections * head + rows * row + if empty { row } else { 0.0 } + pad;
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let mut y = r[1] + pad;
+
+        // Title: the item's icon and name, and a close button.
+        let name = view
+            .content
+            .items
+            .iter()
+            .find(|i| &i.id == item)
+            .map_or(item.as_str(), |i| i.name.as_str());
+        let s = 26.0 * u;
+        let mut x = left;
+        if let Some((sprite, t)) = view.look.item(item) {
+            o.icon(sprite, [x, y], s, t);
+            x += s + 8.0 * u;
+        }
+        let px = 20.0 * u;
+        o.text(name, [x, y + (s + o.cap_height(px)) / 2.0], px, TEXT);
+        let close = 32.0 * u;
+        let c = [r[0] + r[2] - pad - close, y - 2.0 * u, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+        y += title;
+
+        let hpx = 12.0 * u;
+        let header = |o: &mut Overlay, y: &mut f32, text: &str| {
+            o.text(text, [left, *y + head * 0.7], hpx, MUTED);
+            *y += head;
+        };
+        if empty {
+            o.text(
+                "Nothing makes or uses this yet.",
+                [left, y + row / 2.0],
+                14.0 * u,
+                MUTED,
+            );
+        }
+        for (label, list, n) in [("MADE BY", &made, nm), ("USED IN", &used, nu)] {
+            if n == 0 {
+                continue;
+            }
+            header(o, &mut y, label);
+            for rd in &list[..n] {
+                self.recipe_row(
+                    view,
+                    o,
+                    rd,
+                    item,
+                    [left, y, r[2] - 2.0 * pad, row - 6.0 * u],
+                );
+                y += row;
+            }
+        }
+        if nr > 0 {
+            header(o, &mut y, "RESEARCH");
+            let names: Vec<&str> = research.iter().map(|r| r.name.as_str()).collect();
+            let text = names.join(", ");
+            let px = fit(o, &text, 14.0 * u, r[2] - 2.0 * pad);
+            o.text(&text, [left, y + row / 2.0], px, TEXT);
+        }
+    }
+
+    /// One recipe in the browser: inputs, an arrow, outputs, then its
+    /// name, time and the buildings that make it. Icons other than `item`
+    /// open the browser on theirs.
+    fn recipe_row(&mut self, view: &View, o: &mut Overlay, rd: &RecipeDef, item: &ItemId, b: Rect) {
+        let u = self.unit;
+        let open = view.recipe_open(&rd.id);
+        o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, RAISED);
+        let s = 20.0 * u;
+        let px = 13.0 * u;
+        let top = b[1] + 4.0 * u;
+        let mut x = b[0] + 10.0 * u;
+        let stacks = |hud: &mut Hud, o: &mut Overlay, x: &mut f32, list: &[Stack]| {
+            for st in list {
+                let start = *x;
+                if let Some((sprite, t)) = view.look.item(&st.item) {
+                    o.icon(sprite, [*x, top], s, t);
+                }
+                *x += s + 2.0 * u;
+                *x += o.text(&st.count.to_string(), [*x, top + s * 0.8], px, TEXT) + 8.0 * u;
+                if &st.item != item {
+                    hud.hits.push((
+                        [start - 2.0 * u, b[1], *x - start, b[3]],
+                        Hit::Item(st.item.clone()),
+                    ));
+                }
+            }
+        };
+        stacks(self, o, &mut x, &rd.inputs);
+        x += o.text("→", [x, top + s * 0.8], px, MUTED) + 8.0 * u;
+        stacks(self, o, &mut x, &rd.outputs);
+        let makers: Vec<&str> = view
+            .content
+            .buildings
+            .iter()
+            .filter(|bd| match &bd.role {
+                BuildingRole::Crafter { categories, .. } => categories.contains(&rd.category),
+                _ => false,
+            })
+            .map(|bd| bd.name.as_str())
+            .collect();
+        let lock = if open { "" } else { " · Locked" };
+        let text = format!(
+            "{} · {:.1}s · {}{lock}",
+            rd.name,
+            rd.seconds,
+            makers.join(", ")
+        );
+        let spx = fit(o, &text, 11.0 * u, b[2] - 20.0 * u);
+        let ink = if open { MUTED } else { palette::STARVE };
+        o.text(&text, [b[0] + 10.0 * u, b[1] + b[3] - 7.0 * u], spx, ink);
     }
 
     /// The radial build menu around `at`: every open building but the hub
@@ -1181,18 +1377,22 @@ impl Hud {
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
             } else if let Some(rd) = recipe {
-                let stacks = |o: &mut Overlay, x: &mut f32, list: &[Stack]| {
-                    for st in list {
-                        if let Some((sprite, t)) = view.look.item(&st.item) {
-                            o.icon(sprite, [*x, y + (row - s) / 2.0], s, t);
+                // Each item opens the recipe browser.
+                let stacks =
+                    |hits: &mut Vec<(Rect, Hit)>, o: &mut Overlay, x: &mut f32, list: &[Stack]| {
+                        for st in list {
+                            let start = *x;
+                            if let Some((sprite, t)) = view.look.item(&st.item) {
+                                o.icon(sprite, [*x, y + (row - s) / 2.0], s, t);
+                            }
+                            *x += s + 2.0 * u;
+                            *x += o.text(&format!("{}", st.count), [*x, base], px, TEXT) + 8.0 * u;
+                            hits.push(([start, y, *x - start, row], Hit::Item(st.item.clone())));
                         }
-                        *x += s + 2.0 * u;
-                        *x += o.text(&format!("{}", st.count), [*x, base], px, TEXT) + 8.0 * u;
-                    }
-                };
-                stacks(o, &mut x, &rd.inputs);
+                    };
+                stacks(&mut self.hits, o, &mut x, &rd.inputs);
                 x += o.text("→", [x, base], px, MUTED) + 8.0 * u;
-                stacks(o, &mut x, &rd.outputs);
+                stacks(&mut self.hits, o, &mut x, &rd.outputs);
                 o.text(
                     &format!("{} · {:.1}s", rd.name, rd.seconds),
                     [x + 4.0 * u, base],
