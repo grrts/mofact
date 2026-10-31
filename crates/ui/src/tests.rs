@@ -268,17 +268,20 @@ fn everything_stays_on_screen() {
     ];
     for (size, scale) in sizes {
         for tool in &tools {
-            for (selected, research, more) in [
-                (None, false, false),
-                (Some(EntityId(1)), false, false),
-                (Some(EntityId(2)), false, false),
-                (None, true, false),
-                (None, false, true),
+            for (selected, research, more, radial) in [
+                (None, false, false, None),
+                (Some(EntityId(1)), false, false, None),
+                (Some(EntityId(2)), false, false, None),
+                (None, true, false, None),
+                (None, false, true, None),
+                (None, false, false, Some([0.0, 0.0])),
+                (None, false, false, Some([4000.0, 4000.0])),
             ] {
                 let mut f = Fixture::new();
                 f.hud.select(selected);
                 f.hud.research = research;
                 f.hud.more = more;
+                f.hud.radial = radial;
                 f.draw(size, scale, tool);
                 let (w, h) = (size.0 as f32, size.1 as f32);
                 for (r, hit) in &f.hud.hits {
@@ -435,4 +438,80 @@ fn the_belt_tool_offers_researched_tiers() {
         f.tap(centre(fast)),
         (true, vec![Action::Belt("fast-belt".into())])
     );
+}
+
+#[test]
+fn every_building_is_one_key_away() {
+    let f = Fixture::new();
+    let keys = hotkeys(&f.content);
+    let others: Vec<_> = f
+        .content
+        .buildings
+        .iter()
+        .filter(|b| !matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. }))
+        .collect();
+    assert_eq!(keys.len(), others.len());
+    for (i, (k, b)) in keys.iter().enumerate() {
+        assert!(!RESERVED_KEYS.contains(k), "{b} took {k}");
+        assert!(keys[i + 1..].iter().all(|(o, _)| o != k), "{k} twice");
+    }
+    assert!(keys.contains(&('d', "drill".into())));
+    assert!(keys.contains(&('l', "lab".into())));
+}
+
+#[test]
+fn a_long_press_opens_the_radial_menu_and_any_building_is_two_taps_away() {
+    let mut f = Fixture::new();
+    f.snapshot.research.done = vec!["logistics".into()];
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    // A finger held still on the world.
+    let (taken, _) = f.hud.pointer(Pointer::Down {
+        id: 3,
+        x: 500.0,
+        y: 900.0,
+    });
+    assert!(!taken);
+    assert!(f.hud.poll(Instant::now()).is_empty(), "not yet");
+    assert_eq!(
+        f.hud.poll(Instant::now() + LONG_PRESS),
+        vec![Action::Cancel]
+    );
+    assert!(f.hud.radial_open());
+    // Lifting it is no tap.
+    assert_eq!(f.hud.pointer(Pointer::Up { id: 3 }), (false, vec![]));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    for b in [
+        "drill",
+        "furnace",
+        "assembler",
+        "lab",
+        "pole",
+        "wind-turbine",
+        "splitter",
+    ] {
+        f.find(&Hit::Build(b.into()));
+    }
+    let splitter = f.find(&Hit::Build("splitter".into()));
+    assert_eq!(
+        f.tap(centre(splitter)),
+        (true, vec![Action::Tool(Tool::Place("splitter".into()))])
+    );
+    assert!(!f.hud.radial_open());
+
+    // A tap anywhere else closes it; a drag never opens it.
+    f.hud.radial = Some([10.0, 10.0]);
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    f.tap([5.0, 2300.0]);
+    assert!(!f.hud.radial_open());
+    f.hud.pointer(Pointer::Down {
+        id: 4,
+        x: 500.0,
+        y: 900.0,
+    });
+    f.hud.pointer(Pointer::Move {
+        id: 4,
+        x: 600.0,
+        y: 900.0,
+    });
+    assert!(f.hud.poll(Instant::now() + LONG_PRESS).is_empty());
 }

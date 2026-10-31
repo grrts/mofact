@@ -34,6 +34,8 @@ const WORKING: Rgba = [0x63, 0xd4, 0x8a, 0xff];
 /// A finger that moves further than this (in points) is dragging, not tapping.
 const TAP_SLOP: f32 = 12.0;
 const TOAST_FOR: Duration = Duration::from_millis(2500);
+/// A finger held still on the world this long opens the radial build menu.
+pub const LONG_PRESS: Duration = Duration::from_millis(450);
 
 /// The toolbar, left to right (top to bottom in landscape).
 const TOOLS: [(&str, Option<&str>); 7] = [
@@ -165,6 +167,8 @@ pub enum Action {
     Send(Command),
     /// A tap on the world with the hand tool, at this screen point: inspect what's there.
     Inspect([f32; 2]),
+    /// A long press opened the radial menu: drop the gesture its finger started.
+    Cancel,
 }
 
 /// A control on screen, and what tapping it does.
@@ -206,6 +210,7 @@ struct Press {
 struct Tap {
     id: u64,
     start: [f32; 2],
+    at: Instant,
 }
 
 /// The heads-up display: toolbar, rotate button, recipe pills, stock, tips and
@@ -218,6 +223,8 @@ pub struct Hud {
     research: bool,
     /// Whether the build sheet is open.
     more: bool,
+    /// Where the radial build menu is open, in pixels.
+    radial: Option<[f32; 2]>,
     /// Where each control went in the last frame, topmost last.
     hits: Vec<(Rect, Hit)>,
     press: Option<Press>,
@@ -254,6 +261,28 @@ impl Hud {
     /// Open or close the research sheet, as its button does.
     pub fn toggle_research(&mut self) {
         self.tapped(Hit::Research);
+    }
+
+    /// Call once a frame before drawing. A finger held still on the world
+    /// for [`LONG_PRESS`] by `now` opens the radial build menu where it is;
+    /// the game must then drop the gesture that finger started.
+    pub fn poll(&mut self, now: Instant) -> Vec<Action> {
+        match &self.tap {
+            Some(tap) if now.saturating_duration_since(tap.at) >= LONG_PRESS => {
+                self.radial = Some(tap.start);
+                self.tap = None;
+                self.selected = None;
+                self.more = false;
+                self.research = false;
+                vec![Action::Cancel]
+            }
+            _ => Vec::new(),
+        }
+    }
+
+    /// Whether the radial build menu is open.
+    pub fn radial_open(&self) -> bool {
+        self.radial.is_some()
     }
 
     /// Open or close the build sheet, as the More slot does.
@@ -296,7 +325,11 @@ impl Hud {
                 }
                 // A second finger makes it a pinch, not a tap.
                 self.tap = match self.tap {
-                    None if id != MOUSE_PAN => Some(Tap { id, start: [x, y] }),
+                    None if id != MOUSE_PAN => Some(Tap {
+                        id,
+                        start: [x, y],
+                        at: Instant::now(),
+                    }),
                     _ => None,
                 };
                 (false, Vec::new())
@@ -354,6 +387,7 @@ impl Hud {
             }
             Hit::Build(b) => {
                 self.more = false;
+                self.radial = None;
                 self.selected = None;
                 vec![Action::Tool(Tool::Place(b))]
             }
@@ -382,6 +416,7 @@ impl Hud {
                 self.selected = None;
                 self.research = false;
                 self.more = false;
+                self.radial = None;
                 Vec::new()
             }
             Hit::Block => Vec::new(),
@@ -444,6 +479,10 @@ impl Hud {
             (360.0 * u).min(corner[0] - m)
         };
 
+        if let Some(at) = self.radial {
+            self.radial_menu(view, o, at, [w, h]);
+            return;
+        }
         if self.more {
             let room = corner[1] - tip_y;
             self.build_sheet(view, o, [corner[0] - width, corner[1]], width, room);
@@ -700,6 +739,64 @@ impl Hud {
         );
         self.hits.push(([at[0], at[1], w, h], Hit::Research));
         at[1] + h
+    }
+
+    /// The radial build menu around `at`: every open building but the hub
+    /// and belts in a ring, kept on a `screen`-sized screen. A tap on one
+    /// picks it; a tap anywhere else closes the menu.
+    fn radial_menu(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], screen: [f32; 2]) {
+        let u = self.unit;
+        let list: Vec<&BuildingDef> = view
+            .content
+            .buildings
+            .iter()
+            .filter(|b| {
+                !matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. })
+                    && view.building_open(&b.id)
+            })
+            .collect();
+        // Everywhere else closes it; a scrim says so and keeps the ring readable.
+        o.panel([0.0, 0.0], screen, 0.0, [0, 0, 0, 0x70]);
+        self.hits
+            .push(([0.0, 0.0, screen[0], screen[1]], Hit::Close));
+        let d = 60.0 * u;
+        let n = list.len().max(1) as f32;
+        // Room on the ring for every button with a little gap.
+        let r = ((d + 10.0 * u) * n / std::f32::consts::TAU).max(80.0 * u);
+        let edge = r + d / 2.0 + 18.0 * u;
+        let c = [
+            at[0].clamp(edge, (screen[0] - edge).max(edge)),
+            at[1].clamp(edge, (screen[1] - edge).max(edge)),
+        ];
+        o.panel(
+            [c[0] - 6.0 * u, c[1] - 6.0 * u],
+            [12.0 * u, 12.0 * u],
+            6.0 * u,
+            TEXT,
+        );
+        for (k, b) in list.iter().enumerate() {
+            let a = -std::f32::consts::FRAC_PI_2 + k as f32 * std::f32::consts::TAU / n;
+            let (x, y) = (c[0] + r * a.cos() - d / 2.0, c[1] + r * a.sin() - d / 2.0);
+            let afford = view.affordable(&b.cost);
+            let ring = 2.0 * u;
+            o.panel(
+                [x - ring, y - ring],
+                [d + 2.0 * ring, d + 2.0 * ring],
+                d / 2.0 + ring,
+                PANEL,
+            );
+            o.panel([x, y], [d, d], d / 2.0, RAISED);
+            let icon = 32.0 * u;
+            if let Some((sprite, t)) = view.look.building(&b.id) {
+                let t = if afford { t } else { [t[0], t[1], t[2], 0x70] };
+                o.icon(sprite, [x + (d - icon) / 2.0, y + 6.0 * u], icon, t);
+            }
+            let px = fit(o, &b.name, 10.0 * u, d - 6.0 * u);
+            let lw = o.measure(&b.name, px);
+            let ink = if afford { TEXT } else { palette::STARVE };
+            o.text(&b.name, [x + (d - lw) / 2.0, y + d - 8.0 * u], px, ink);
+            self.hits.push(([x, y, d, d], Hit::Build(b.id.clone())));
+        }
     }
 
     /// The build sheet, bottom-left at `at`, at most `room` tall: a grid of
@@ -1159,6 +1256,31 @@ impl Hud {
             }
         }
     }
+}
+
+/// Letters the keyboard already uses: R rotates, T opens research, X removes.
+const RESERVED_KEYS: [char; 3] = ['r', 't', 'x'];
+
+/// One key for every building but the hub and belts (which have number
+/// keys): the first letter of its name that is free, in content order.
+pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
+    let mut out: Vec<(char, BuildingId)> = Vec::new();
+    for b in &content.buildings {
+        if matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. }) {
+            continue;
+        }
+        let key = b
+            .name
+            .to_lowercase()
+            .chars()
+            .filter(char::is_ascii_lowercase)
+            .chain('a'..='z')
+            .find(|c| !RESERVED_KEYS.contains(c) && !out.iter().any(|(k, _)| k == c));
+        if let Some(k) = key {
+            out.push((k, b.id.clone()));
+        }
+    }
+    out
 }
 
 /// A pill: its label, icon, whether it is the one chosen, and what a tap does.
