@@ -398,7 +398,16 @@ mod tests {
         // Bricks go into labs; research takes the packs.
         assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
-        assert_eq!(order, ["steel-working", "motors", "fast-belts"]);
+        assert_eq!(
+            order,
+            [
+                "steel-working",
+                "motors",
+                "fast-belts",
+                "logistics",
+                "express-belts"
+            ]
+        );
     }
 
     #[test]

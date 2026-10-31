@@ -437,10 +437,12 @@ fn a_drill_reports_the_ore_under_it() {
     assert_eq!(at(3, 10).ore, None, "only miners have ore");
 }
 
-/// A world where fast belts (4 tiles a second) are researched.
+/// A world where every belt tier, splitters and underground belts are researched.
 fn with_fast_belts() -> Sim {
     let mut sim = Sim::with_content(&content());
-    sim.complete_research(&"fast-belts".into());
+    for r in ["fast-belts", "logistics", "express-belts"] {
+        sim.complete_research(&r.into());
+    }
     sim
 }
 
@@ -449,6 +451,7 @@ fn first_delivery(belt: &str, len: i32) -> u32 {
     let mut sim = with_fast_belts();
     sim.add_stock(&item("iron-plate"), 100);
     sim.add_stock(&item("gear"), 100);
+    sim.add_stock(&item("steel"), 100);
     sim.set_ore(TilePos::new(0, 1), &item("iron-ore"));
     place(&mut sim, "drill", 0, 1, Dir::East, None);
     for x in 1..=len {
@@ -469,9 +472,11 @@ fn belt_tiers_move_items_at_their_speed() {
     let mine = ticks(1.2);
     let slow = first_delivery("belt", 12) - mine;
     let fast = first_delivery("fast-belt", 12) - mine;
-    // 12 tiles at 2 and 4 tiles a second, give or take a tick per hand-over.
+    let express = first_delivery("express-belt", 12) - mine;
+    // 12 tiles at 2, 4 and 6 tiles a second, give or take a tick per hand-over.
     assert!(slow.abs_diff(360) <= 14, "slow: {slow} ticks");
     assert!(fast.abs_diff(180) <= 14, "fast: {fast} ticks");
+    assert!(express.abs_diff(120) <= 14, "express: {express} ticks");
 }
 
 #[test]
@@ -752,4 +757,134 @@ fn machines_off_the_grid_have_no_power() {
     run(&mut sim, 5);
     assert_eq!(view(&sim).progress, p);
     assert_eq!(view(&sim).state, MachineState::NoPower);
+}
+
+/// A world with splitters and underground belts researched and plenty in stock.
+fn logistics() -> Sim {
+    let mut sim = with_fast_belts();
+    for (i, n) in [("iron-plate", 500), ("gear", 200), ("circuit", 100)] {
+        sim.add_stock(&item(i), n);
+    }
+    sim
+}
+
+/// Items on belt tiles matching `on`.
+fn items_on(sim: &Sim, on: impl Fn(TilePos) -> bool) -> usize {
+    sim.snapshot()
+        .belt_items
+        .iter()
+        .filter(|i| on(i.tile))
+        .count()
+}
+
+#[test]
+fn splitters_are_locked_until_logistics() {
+    let mut sim = Sim::with_content(&content());
+    sim.add_stock(&item("iron-plate"), 100);
+    sim.add_stock(&item("circuit"), 100);
+    let splitter = Command::Place {
+        building: "splitter".into(),
+        pos: TilePos::new(0, 0),
+        dir: Dir::East,
+        recipe: None,
+    };
+    assert_eq!(
+        sim.apply(&splitter),
+        CommandResult::Refused(CommandError::Locked)
+    );
+    sim.complete_research(&"logistics".into());
+    assert!(matches!(
+        sim.apply(&splitter),
+        CommandResult::Applied { .. }
+    ));
+}
+
+#[test]
+fn two_rows_of_splitters_balance_four_lines() {
+    let mut sim = logistics();
+    // One line east into a splitter, which sends north and south into two
+    // more; those send east and west: four lines of 13 belts.
+    belts(&mut sim, 0..=2, 0, Dir::East);
+    place(&mut sim, "splitter", 3, 0, Dir::East, None);
+    belts(&mut sim, -2..=-1, 0, Dir::East);
+    for y in [-1, -2] {
+        place(&mut sim, "belt", 3, y, Dir::North, None);
+    }
+    for y in [1, 2] {
+        place(&mut sim, "belt", 3, y, Dir::South, None);
+    }
+    place(&mut sim, "splitter", 3, -3, Dir::North, None);
+    place(&mut sim, "splitter", 3, 3, Dir::South, None);
+    for y in [-3, 3] {
+        belts(&mut sim, -10..=2, y, Dir::West);
+        belts(&mut sim, 4..=16, y, Dir::East);
+    }
+    let first = sim.entity_at(TilePos::new(-2, 0)).unwrap();
+    for _ in 0..40 {
+        assert!(sim.feed(first, &item("iron-plate")));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 20);
+    let lines = [
+        items_on(&sim, |t| t.y == -3 && t.x < 3),
+        items_on(&sim, |t| t.y == -3 && t.x > 3),
+        items_on(&sim, |t| t.y == 3 && t.x < 3),
+        items_on(&sim, |t| t.y == 3 && t.x > 3),
+    ];
+    assert_eq!(lines, [10; 4], "40 plates split four ways");
+}
+
+#[test]
+fn underground_belts_pass_under_buildings() {
+    let mut sim = logistics();
+    belts(&mut sim, 0..=1, 0, Dir::East);
+    let entrance = place(&mut sim, "underground-belt", 2, 0, Dir::East, None);
+    // Something in the way above.
+    place(&mut sim, "furnace", 4, 0, Dir::East, None);
+    let exit = place(&mut sim, "underground-belt", 6, 0, Dir::East, None);
+    belts(&mut sim, 7..=12, 0, Dir::East);
+    let view = |sim: &Sim, id| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == id)
+            .unwrap()
+    };
+    assert!(!view(&sim, entrance).exit);
+    assert!(view(&sim, exit).exit);
+
+    let first = sim.entity_at(TilePos::new(0, 0)).unwrap();
+    for _ in 0..5 {
+        sim.feed(first, &item("iron-plate"));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 10);
+    assert_eq!(items_on(&sim, |t| t.x >= 7), 5, "all five came out");
+    assert_eq!(
+        sim.inventory(sim.entity_at(TilePos::new(4, 0)).unwrap()),
+        vec![]
+    );
+
+    // Taking the exit away leaves the entrance holding what arrives; putting
+    // it back pairs them again, and the pair survives a save.
+    sim.apply(&Command::Remove { entity: exit });
+    for _ in 0..2 {
+        sim.feed(first, &item("iron-plate"));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 5);
+    assert_eq!(items_on(&sim, |t| t.x >= 7), 5);
+    let exit = place(&mut sim, "underground-belt", 6, 0, Dir::East, None);
+    let bytes = sim.save();
+    let (mut loaded, warnings) = Sim::load(&content(), &bytes).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.save(), bytes);
+    assert!(view(&loaded, exit).exit);
+    run(&mut loaded, 10);
+    assert_eq!(items_on(&loaded, |t| t.x >= 7), 7);
+
+    // Too far apart, two ends don't pair.
+    let far = place(&mut sim, "underground-belt", 0, 5, Dir::East, None);
+    let other = place(&mut sim, "underground-belt", 7, 5, Dir::East, None);
+    assert!(!view(&sim, far).exit && !view(&sim, other).exit);
 }

@@ -71,6 +71,9 @@ fn turns(dir: Dir) -> u32 {
 
 /// What picks an entity's variant: its recipe, or the ore under a drill.
 fn setting(e: &EntityView) -> Option<&str> {
+    if e.exit {
+        return Some("exit");
+    }
     e.recipe
         .as_ref()
         .map(|r| r.as_str())
@@ -123,8 +126,9 @@ impl Scene {
                 continue;
             };
             let belt = look.is_belt(&e.building);
+            let turned = look.turns(&e.building);
             let (x, y, w, h) = (e.pos.x as f32, e.pos.y as f32, f32::from(w), f32::from(h));
-            if belt {
+            if turned {
                 belt_dirs.insert(e.pos, e.dir);
             }
             if !seen(x, y, w, h) {
@@ -139,7 +143,7 @@ impl Scene {
                 size: [w, h],
                 uv: uv(sprite),
                 tint: palette::WHITE,
-                turns: if belt { turns(e.dir) } else { 0 },
+                turns: if turned { turns(e.dir) } else { 0 },
             };
             if belt {
                 self.instances.push(instance);
@@ -234,11 +238,7 @@ impl Scene {
                 size: [f32::from(w), f32::from(h)],
                 uv: atlas.get(sprite).unwrap_or([0.0; 4]),
                 tint: [255, 255, 255, 140],
-                turns: if look.is_belt(building) {
-                    turns(dir)
-                } else {
-                    0
-                },
+                turns: if look.turns(building) { turns(dir) } else { 0 },
             });
         }
     }
@@ -302,6 +302,7 @@ mod tests {
             recipe: None,
             ore: None,
             grid: None,
+            exit: false,
             state: MachineState::Idle,
             progress: 0.0,
         }
@@ -396,6 +397,7 @@ mod tests {
             recipe: Some("copper-plate".into()),
             ore: None,
             grid: None,
+            exit: false,
             state,
             progress: 0.0,
         };

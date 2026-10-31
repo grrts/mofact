@@ -36,6 +36,11 @@ pub enum Role {
     Generator {
         watts: u32,
     },
+    Splitter,
+    Underground {
+        per_tick: u32,
+        reach: u8,
+    },
 }
 
 /// One research, interned.
@@ -84,6 +89,11 @@ pub struct Tables {
     building_index: HashMap<BuildingId, u16>,
 }
 
+/// Belt speed in position units per tick.
+fn per_tick(tiles_per_second: f32) -> u32 {
+    (tiles_per_second * UNIT as f32 / TICKS_PER_SECOND as f32).round() as u32
+}
+
 fn watts(kw: f32) -> u32 {
     (kw * 1000.0).round().max(0.0) as u32
 }
@@ -119,8 +129,15 @@ impl Tables {
             let role = match &b.role {
                 BuildingRole::Hub => Role::Hub,
                 BuildingRole::Belt { tiles_per_second } => Role::Belt {
-                    per_tick: (tiles_per_second * UNIT as f32 / TICKS_PER_SECOND as f32).round()
-                        as u32,
+                    per_tick: per_tick(*tiles_per_second),
+                },
+                BuildingRole::Splitter => Role::Splitter,
+                BuildingRole::Underground {
+                    tiles_per_second,
+                    reach,
+                } => Role::Underground {
+                    per_tick: per_tick(*tiles_per_second),
+                    reach: *reach,
                 },
                 BuildingRole::Miner { seconds_per_ore } => Role::Miner {
                     ticks: ticks(*seconds_per_ore),

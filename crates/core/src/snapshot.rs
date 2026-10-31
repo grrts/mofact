@@ -36,6 +36,9 @@ pub struct EntityView {
     /// The power grid it is on, as an index into [`Snapshot::grids`].
     #[serde(default)]
     pub grid: Option<u16>,
+    /// For an underground belt, whether this end is the exit.
+    #[serde(default)]
+    pub exit: bool,
     pub state: MachineState,
     /// Craft progress, 0.0 to 1.0.
     pub progress: f32,

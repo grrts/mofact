@@ -84,6 +84,16 @@ pub enum BuildingRole {
     Generator {
         kw: f32,
     },
+    /// Takes items from behind and hands them out to its left and right in
+    /// turn, so a line splits evenly.
+    Splitter,
+    /// One end of an underground belt. Placed facing the same way within
+    /// `reach` tiles after an entrance, it becomes that entrance's exit;
+    /// items pass between them under whatever is built above.
+    Underground {
+        tiles_per_second: f32,
+        reach: u8,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

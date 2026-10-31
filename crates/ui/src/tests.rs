@@ -16,6 +16,7 @@ fn snapshot() -> Snapshot {
         recipe: None,
         ore: None,
         grid: None,
+        exit: false,
         state: MachineState::Starved,
         progress: 0.4,
     };
@@ -39,6 +40,7 @@ struct Fixture {
     snapshot: Snapshot,
     overlay: Overlay,
     hud: Hud,
+    belt: BuildingId,
 }
 
 impl Fixture {
@@ -51,6 +53,7 @@ impl Fixture {
             content,
             snapshot: snapshot(),
             hud: Hud::new(),
+            belt: "belt".into(),
         }
     }
 
@@ -64,6 +67,7 @@ impl Fixture {
             tool,
             dir: Dir::East,
             recipe: None,
+            belt: &self.belt,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -396,6 +400,7 @@ fn a_pole_sheet_shows_its_grid() {
         recipe: None,
         ore: None,
         grid: Some(0),
+        exit: false,
         state: MachineState::Working,
         progress: 0.0,
     });
@@ -407,4 +412,27 @@ fn a_pole_sheet_shows_its_grid() {
     f.hud.select(Some(EntityId(9)));
     f.draw((1280, 720), 1.0, &Tool::Hand);
     f.find(&Hit::Remove(EntityId(9)));
+}
+
+#[test]
+fn the_belt_tool_offers_researched_tiers() {
+    let mut f = Fixture::new();
+    f.draw((1080, 2340), 3.0, &Tool::Belt);
+    assert!(
+        !f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Belt(_))),
+        "one tier: nothing to pick"
+    );
+    f.snapshot.research.done = vec!["fast-belts".into()];
+    f.draw((1080, 2340), 3.0, &Tool::Belt);
+    f.find(&Hit::Belt("belt".into()));
+    assert!(!f
+        .hud
+        .hits
+        .iter()
+        .any(|(_, h)| *h == Hit::Belt("express-belt".into())));
+    let fast = f.find(&Hit::Belt("fast-belt".into()));
+    assert_eq!(
+        f.tap(centre(fast)),
+        (true, vec![Action::Belt("fast-belt".into())])
+    );
 }

@@ -58,10 +58,10 @@ pub struct Builder {
     /// The way new buildings face.
     pub dir: Dir,
     pub recipe: Option<RecipeId>,
+    /// The belt tier the belt tool lays.
+    pub belt: BuildingId,
     gesture: Option<Gesture>,
 }
-
-const BELT: &str = "belt";
 
 impl Default for Builder {
     fn default() -> Self {
@@ -69,6 +69,7 @@ impl Default for Builder {
             tool: Tool::Hand,
             dir: Dir::East,
             recipe: None,
+            belt: "belt".into(),
             gesture: None,
         }
     }
@@ -142,7 +143,7 @@ impl Builder {
                         }
                         Some(_) => {}
                         None => out.push(Command::Place {
-                            building: BELT.into(),
+                            building: self.belt.clone(),
                             pos: tile,
                             dir,
                             recipe: None,
@@ -179,7 +180,7 @@ impl Builder {
             (Some(Gesture::Belt { path, .. }), _) => path
                 .iter()
                 .map(|&(tile, dir)| Ghost {
-                    building: BELT.into(),
+                    building: self.belt.clone(),
                     tile,
                     dir,
                 })
