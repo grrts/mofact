@@ -1377,6 +1377,10 @@ impl Hud {
             BuildingRole::Generator { kw } => Some(kw),
             _ => None,
         });
+        let engine = def.and_then(|d| match &d.role {
+            BuildingRole::Engine { kw, fluid, .. } => Some((*kw, fluid)),
+            _ => None,
+        });
         // Pipes, tanks and underground pipes show what they hold instead of a state.
         let plumbing = def.is_some_and(|d| {
             matches!(
@@ -1482,6 +1486,17 @@ impl Hud {
                     px,
                     MUTED,
                 );
+            } else if let Some((kw, fluid)) = engine {
+                let text = match grid {
+                    Some(_) => format!(
+                        "Gives {:.0} of {kw:.0} kW, burning {}",
+                        e.progress.clamp(0.0, 1.0) * kw,
+                        fluid_name(fluid).to_lowercase()
+                    ),
+                    None => format!("Gives up to {kw:.0} kW once a pole covers it"),
+                };
+                let px = fit(o, &text, px, r[2] - 2.0 * pad);
+                o.text(&text, [x, base], px, MUTED);
             } else if wired {
                 let text = match (grid, generator) {
                     (Some(g), _) => format!(

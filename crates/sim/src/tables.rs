@@ -60,6 +60,12 @@ pub enum Role {
         fluid: Item,
         per_tick: u64,
     },
+    /// Gives up to `watts` while it burns `per_tick` milli-units of `fluid` a tick.
+    Engine {
+        watts: u32,
+        fluid: Item,
+        per_tick: u64,
+    },
 }
 
 /// Fluid amounts are fixed point: one unit of fluid is this many milli-units.
@@ -210,6 +216,15 @@ impl Tables {
                     } else {
                         0
                     },
+                },
+                BuildingRole::Engine {
+                    kw,
+                    fluid,
+                    per_second,
+                } => Role::Engine {
+                    watts: watts(*kw),
+                    fluid: t.item(fluid).unwrap_or(0),
+                    per_tick: (milli(*per_second) / TICKS_PER_SECOND as u64).max(1),
                 },
             };
             t.buildings.push(Building {

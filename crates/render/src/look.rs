@@ -55,6 +55,10 @@ enum Art {
     Well {
         fluid: Rgba,
     },
+    Boiler {
+        pose: Pose,
+    },
+    Engine,
     Drill {
         ore: Rgba,
         pose: Pose,
@@ -98,6 +102,9 @@ enum Kind {
     Pump,
     UndergroundPipe,
     Well,
+    /// Boilers are crafters, painted per direction and lit or cold.
+    Boiler,
+    Engine,
 }
 
 #[derive(Clone, Debug)]
@@ -205,6 +212,7 @@ impl Look {
                 BuildingRole::Pump { .. } => (Kind::Pump, Vec::new()),
                 BuildingRole::UndergroundPipe { .. } => (Kind::UndergroundPipe, Vec::new()),
                 BuildingRole::Well { .. } => (Kind::Well, Vec::new()),
+                BuildingRole::Engine { .. } => (Kind::Engine, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -222,9 +230,12 @@ impl Look {
                         .map(|r| r.id.as_str().to_owned())
                         .collect();
                     let smelts = categories.iter().any(|c| c == "smelting");
+                    let boils = categories.iter().any(|c| c == "boiling");
                     (
                         if smelts {
                             Kind::Furnace
+                        } else if boils {
+                            Kind::Boiler
                         } else {
                             Kind::Assembler
                         },
@@ -266,6 +277,7 @@ impl Look {
                     push(&mut look, format!("{id}:fluid"), b.size, Art::TankFluid);
                 }
                 Kind::Pump => push(&mut look, id.to_owned(), b.size, Art::Pump),
+                Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
                         BuildingRole::Well { fluid, .. } => item_look(fluid).map(|l| l.1),
@@ -311,6 +323,7 @@ impl Look {
                                         ring: product.map(|p| p.1),
                                         pose,
                                     },
+                                    Kind::Boiler => Art::Boiler { pose },
                                     Kind::Lab => Art::Assembler {
                                         product: Some((Shape::Pack, palette::item("pack-survey"))),
                                         pose: Pose {
@@ -452,7 +465,7 @@ impl Look {
         let at = match b.kind {
             Kind::Belt => return Some(BELT),
             Kind::Hub | Kind::Pole | Kind::Generator | Kind::Splitter => b.base,
-            Kind::Tank | Kind::Pump | Kind::Well => b.base,
+            Kind::Tank | Kind::Pump | Kind::Well | Kind::Engine => b.base,
             // A pipe on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe => b.base + 5,
             Kind::Underground | Kind::UndergroundPipe => {
@@ -462,8 +475,8 @@ impl Look {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
                     .map_or(0, |i| i + 1);
-                // Only furnaces look different while working.
-                let lit = usize::from(working && b.kind == Kind::Furnace);
+                // Only furnaces and boilers look different while working.
+                let lit = usize::from(working && matches!(b.kind, Kind::Furnace | Kind::Boiler));
                 b.base + (r * 2 + lit) * 4 + dir_index(dir)
             }
         };
@@ -551,6 +564,8 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Pump => draw::pump(&mut c, z, fine),
         Art::UndergroundPipe { exit } => draw::underground_pipe(&mut c, z, fine, exit),
         Art::Well { fluid } => draw::well(&mut c, z, fine, fluid),
+        Art::Boiler { ref pose } => draw::boiler(&mut c, z, fine, pose),
+        Art::Engine => draw::engine(&mut c, z, fine, 0.3),
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
         Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
         Art::Assembler { product, ref pose } => draw::assembler(&mut c, z, product, fine, pose),

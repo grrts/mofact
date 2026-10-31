@@ -166,6 +166,11 @@ pub fn analyse(content: &Content) -> Report {
                 .iter()
                 .flat_map(|r| r.cost.iter().map(|s| &s.item)),
         )
+        // Engines burn their fluid into power.
+        .chain(content.buildings.iter().filter_map(|b| match &b.role {
+            BuildingRole::Engine { fluid, .. } => Some(fluid),
+            _ => None,
+        }))
         .collect();
     for r in &content.recipes {
         for s in r.outputs.iter().skip(1) {
@@ -413,7 +418,8 @@ mod tests {
                 "fast-belts",
                 "logistics",
                 "express-belts",
-                "fluid-handling"
+                "fluid-handling",
+                "steam-power"
             ]
         );
     }

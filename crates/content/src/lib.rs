@@ -205,6 +205,18 @@ pub fn check(content: &Content) -> Vec<String> {
                     problems.push(format!("{owner} is a well that gives nothing"));
                 }
             }
+            BuildingRole::Engine {
+                kw,
+                ref fluid,
+                per_second,
+            } => {
+                if !fluids.contains(fluid.as_str()) {
+                    problems.push(format!("{owner} burns `{fluid}`, which isn't a fluid"));
+                }
+                if kw <= 0.0 || kw.is_nan() || per_second <= 0.0 || per_second.is_nan() {
+                    problems.push(format!("{owner} is an engine that gives nothing"));
+                }
+            }
             _ => {}
         }
     }
@@ -354,7 +366,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len()
             ),
-            (15, 10, 17, 6)
+            (16, 11, 19, 7)
         );
         let circuit = c
             .recipes
