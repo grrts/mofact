@@ -26,8 +26,9 @@ pub struct Overlay {
 impl Overlay {
     /// An overlay that can show `look`'s buildings and items as icons.
     pub fn new(look: &Look) -> Self {
-        let mut atlas = Atlas::new(1024);
-        look.paint(&mut atlas, ICON_PX);
+        // 2,048 is the largest texture every WebGL2 device takes; icons fill
+        // about a third of it and glyphs come in as text needs them.
+        let mut atlas = Atlas::new(2048);
         let n = PANEL_R * 2 + 1;
         let r = PANEL_R as f32;
         atlas.add("panel", n, n, |x, y| {
@@ -35,6 +36,10 @@ impl Overlay {
             let d = (x as f32 + 0.5 - r - 0.5).hypot(y as f32 + 0.5 - r - 0.5) - r + 0.5;
             [255, 255, 255, ((0.5 - d).clamp(0.0, 1.0) * 255.0) as u8]
         });
+        // Panels first: without them there is no HUD, so they must never be
+        // what's left out when the icons run out of room.
+        let painted = look.paint(&mut atlas, ICON_PX);
+        debug_assert!(painted, "the overlay atlas has room for every icon");
         let font = fontdue::Font::from_bytes(FONT, fontdue::FontSettings::default())
             .expect("the bundled font parses");
         Self {
@@ -182,6 +187,23 @@ mod tests {
         assert_eq!(o.atlas.version, v, "cached");
         o.text("a", [0.0, 60.0], 20.0, [255; 4]);
         assert_eq!(o.atlas.version, v + 1, "a new size is a new glyph");
+    }
+
+    #[test]
+    fn every_icon_and_the_panel_fit() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
+        let content = mofact_core::content::Content {
+            items: ron::from_str(&read("items.ron")).unwrap(),
+            recipes: ron::from_str(&read("recipes.ron")).unwrap(),
+            buildings: ron::from_str(&read("buildings.ron")).unwrap(),
+            research: Vec::new(),
+        };
+        let look = Look::new(&content);
+        let overlay = Overlay::new(&look);
+        assert!(overlay.atlas.get("panel").is_some());
+        let mut atlas = Atlas::new(2048);
+        assert!(look.paint(&mut atlas, ICON_PX), "icons fit");
     }
 
     #[test]
