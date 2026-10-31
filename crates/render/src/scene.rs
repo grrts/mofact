@@ -5,7 +5,7 @@
 use crate::atlas::{band_for, sprites, Atlas, Uv, BANDS};
 use crate::palette::{self, Rgba};
 use mofact_core::content::{BuildingRole, Content, IconShape};
-use mofact_core::geom::Dir;
+use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId};
 use mofact_core::snapshot::{BeltItemView, MachineState, Snapshot};
 use std::collections::HashMap;
@@ -97,6 +97,9 @@ impl Look {
 #[derive(Default)]
 pub struct Scene {
     pub band: usize,
+    /// Ore on the ground, drawn first. Rebuilt by [`Scene::ore`].
+    pub ore: Vec<Instance>,
+    /// Belts, items and machines. Rebuilt by [`Scene::build`].
     pub instances: Vec<Instance>,
 }
 
@@ -227,6 +230,38 @@ impl Scene {
     }
 }
 
+impl Scene {
+    /// Lay `ore` (tile and ore item) on the ground, keeping what the camera sees.
+    /// Call after [`Scene::build`], which picks the band.
+    pub fn ore<'a>(
+        &mut self,
+        look: &Look,
+        atlases: &[Atlas],
+        camera: &Camera,
+        (width, height): (u32, u32),
+        ore: impl IntoIterator<Item = (TilePos, &'a ItemId)>,
+    ) {
+        self.ore.clear();
+        let uv = atlases[self.band].get(sprites::ORE).unwrap_or([0.0; 4]);
+        let (lo, hi) = camera.visible(width, height);
+        for (tile, item) in ore {
+            let (x, y) = (tile.x as f32, tile.y as f32);
+            if x + 1.0 < lo[0] || y + 1.0 < lo[1] || x > hi[0] || y > hi[1] {
+                continue;
+            }
+            if let Some(&(_, tint)) = look.items.get(item) {
+                self.ore.push(Instance {
+                    pos: [x, y],
+                    size: [1.0, 1.0],
+                    uv,
+                    tint,
+                    turns: 0,
+                });
+            }
+        }
+    }
+}
+
 /// The atlases for every band, painted with the placeholder sprites.
 pub fn atlases() -> Vec<Atlas> {
     BANDS
@@ -242,7 +277,6 @@ pub fn atlases() -> Vec<Atlas> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use mofact_core::geom::TilePos;
     use mofact_core::ids::EntityId;
     use mofact_core::snapshot::EntityView;
 
@@ -382,7 +416,12 @@ mod tests {
             [px[i], px[i + 1], px[i + 2]]
         };
         let close = |a: [u8; 3], b: [u8; 4]| a.iter().zip(b).all(|(&a, b)| a.abs_diff(b) <= 3);
-        assert!(close(at(2, 2), palette::GROUND), "floor: {:?}", at(2, 2));
+        // The ground shader: between the two ground tones.
+        let g = at(2, 2);
+        let between = (0..3).all(|i| {
+            (palette::GROUND[i].saturating_sub(3)..=palette::GROUND2[i] + 3).contains(&g[i])
+        });
+        assert!(between, "ground: {g:?}");
         assert!(
             close(at(16, 32), palette::BELT),
             "belt body: {:?}",
@@ -394,6 +433,33 @@ mod tests {
             "plate: {:?}",
             at(48, 32)
         );
+    }
+
+    #[test]
+    fn ore_in_view_is_laid_under_everything() {
+        let (look, atlases, mut scene) = (Look::new(&content()), atlases(), Scene::default());
+        scene.build(
+            &look,
+            &atlases,
+            &CAMERA,
+            (640, 360),
+            &snap(0.5),
+            &snap(0.5),
+            1.0,
+        );
+        let iron = ItemId::from("iron-ore");
+        let near = TilePos::new(3, 2);
+        let far = TilePos::new(300, 2);
+        scene.ore(
+            &look,
+            &atlases,
+            &CAMERA,
+            (640, 360),
+            [(near, &iron), (far, &iron)],
+        );
+        assert_eq!(scene.ore.len(), 1, "the far tile is culled");
+        assert_eq!(scene.ore[0].pos, [3.0, 2.0]);
+        assert_eq!(scene.ore[0].tint, palette::item("iron-ore"));
     }
 
     /// The CPU side of 10,000 sprites; prints the time per frame.

@@ -88,11 +88,16 @@ impl Atlas {
 
 /// The placeholder sprites. Items are painted white and tinted per item when drawn.
 pub mod sprites {
-    use crate::palette::{self, BELT_RAIL, CHEVRON, GROUND, MACHINE_EDGE, MACHINE_HI};
+    use crate::palette::{self, BELT_RAIL, CHEVRON, MACHINE_EDGE, MACHINE_HI};
+
+    /// Lets the ground show through.
+    const CLEAR: [u8; 4] = [0, 0, 0, 0];
 
     pub const BELT: &str = "belt";
     pub const MACHINE: &str = "machine";
     pub const HUB: &str = "hub";
+    /// Ore lying on a tile, painted white and tinted per ore.
+    pub const ORE: &str = "ore-tile";
     /// Item shapes, in [`mofact_core::content::IconShape`] order.
     pub const SHAPES: [&str; 6] = ["ore", "plate", "gear", "wire", "circuit", "droplet"];
 
@@ -106,6 +111,7 @@ pub mod sprites {
         atlas.add(HUB, px * 3, px * 3, |x, y| {
             machine(x as f32 / f, y as f32 / f, 3.0)
         });
+        atlas.add(ORE, px, px, |x, y| ore(x as f32 / f, y as f32 / f));
         let item = (px / 2).max(4);
         let fi = item as f32;
         for (i, name) in SHAPES.iter().enumerate() {
@@ -118,7 +124,7 @@ pub mod sprites {
     /// A belt running east; the shader rotates it for other directions.
     fn belt(u: f32, v: f32) -> [u8; 4] {
         if !(0.08..0.92).contains(&v) {
-            return GROUND;
+            return CLEAR;
         }
         if !(0.16..0.84).contains(&v) {
             return BELT_RAIL;
@@ -132,6 +138,29 @@ pub mod sprites {
         }
     }
 
+    /// Five pebbles scattered over the tile, the same on every tile.
+    fn ore(u: f32, v: f32) -> [u8; 4] {
+        const PEBBLES: [(f32, f32, f32); 5] = [
+            (0.25, 0.28, 0.14),
+            (0.68, 0.22, 0.11),
+            (0.52, 0.55, 0.16),
+            (0.2, 0.74, 0.1),
+            (0.78, 0.76, 0.12),
+        ];
+        let lit = PEBBLES
+            .iter()
+            .find(|(x, y, r)| (u - x).hypot(v - y) < *r)
+            .map(|(x, y, r)| ((x - u) + (y - v)) / r);
+        match lit {
+            // Lighter on the top-left of each pebble.
+            Some(l) => {
+                let shade = (200.0 + 55.0 * l.clamp(-1.0, 1.0)) as u8;
+                [shade, shade, shade, 235]
+            }
+            None => [255, 255, 255, 0],
+        }
+    }
+
     /// A machine body `tiles` tiles across: rounded, bevelled, with a dark edge.
     fn machine(u: f32, v: f32, tiles: f32) -> [u8; 4] {
         let inset = 0.08 / tiles;
@@ -142,7 +171,7 @@ pub mod sprites {
         let r = 0.12 / tiles;
         let outside = (du + r).max(0.0).hypot((dv + r).max(0.0)) - r;
         if outside > 0.0 {
-            GROUND
+            CLEAR
         } else if outside > -0.04 / tiles {
             MACHINE_EDGE
         } else if v / tiles < 0.3 {
@@ -204,7 +233,7 @@ mod tests {
         for px in BANDS {
             let mut atlas = Atlas::new(px * 8);
             sprites::paint_all(&mut atlas, px);
-            for name in [sprites::BELT, sprites::MACHINE, sprites::HUB]
+            for name in [sprites::BELT, sprites::MACHINE, sprites::HUB, sprites::ORE]
                 .into_iter()
                 .chain(sprites::SHAPES)
             {

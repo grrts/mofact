@@ -11,7 +11,9 @@ pub struct Renderer {
     atlases: Vec<Atlas>,
     shader: wgpu::ShaderModule,
     layout: wgpu::PipelineLayout,
-    pipelines: HashMap<wgpu::TextureFormat, wgpu::RenderPipeline>,
+    ground_layout: wgpu::PipelineLayout,
+    /// The sprite and ground pipelines for each target format.
+    pipelines: HashMap<wgpu::TextureFormat, (wgpu::RenderPipeline, wgpu::RenderPipeline)>,
     globals: wgpu::Buffer,
     globals_group: wgpu::BindGroup,
     bands: Vec<wgpu::BindGroup>,
@@ -32,7 +34,7 @@ impl Renderer {
             label: Some("globals"),
             entries: &[wgpu::BindGroupLayoutEntry {
                 binding: 0,
-                visibility: wgpu::ShaderStages::VERTEX,
+                visibility: wgpu::ShaderStages::VERTEX_FRAGMENT,
                 ty: wgpu::BindingType::Buffer {
                     ty: wgpu::BufferBindingType::Uniform,
                     has_dynamic_offset: false,
@@ -67,9 +69,14 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&atlas_layout)],
             ..Default::default()
         });
+        let ground_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+            label: Some("ground"),
+            bind_group_layouts: &[Some(&globals_layout)],
+            ..Default::default()
+        });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
-            size: 16,
+            size: 32,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -132,6 +139,7 @@ impl Renderer {
             capacity,
             shader,
             layout,
+            ground_layout,
             pipelines: HashMap::new(),
             globals,
             globals_group,
@@ -144,13 +152,30 @@ impl Renderer {
         &self.atlases
     }
 
-    fn pipeline(
-        &mut self,
-        device: &wgpu::Device,
-        format: wgpu::TextureFormat,
-    ) -> &wgpu::RenderPipeline {
+    fn pipeline(&mut self, device: &wgpu::Device, format: wgpu::TextureFormat) {
         self.pipelines.entry(format).or_insert_with(|| {
-            device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+            let ground = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
+                label: Some("ground"),
+                layout: Some(&self.ground_layout),
+                vertex: wgpu::VertexState {
+                    module: &self.shader,
+                    entry_point: Some("vs_ground"),
+                    compilation_options: Default::default(),
+                    buffers: &[],
+                },
+                fragment: Some(wgpu::FragmentState {
+                    module: &self.shader,
+                    entry_point: Some("fs_ground"),
+                    compilation_options: Default::default(),
+                    targets: &[Some(format.into())],
+                }),
+                primitive: Default::default(),
+                depth_stencil: None,
+                multisample: Default::default(),
+                multiview_mask: None,
+                cache: None,
+            });
+            let sprites = device.create_render_pipeline(&wgpu::RenderPipelineDescriptor {
                 label: Some("sprites"),
                 layout: Some(&self.layout),
                 vertex: wgpu::VertexState {
@@ -178,8 +203,9 @@ impl Renderer {
                 multisample: Default::default(),
                 multiview_mask: None,
                 cache: None,
-            })
-        })
+            });
+            (sprites, ground)
+        });
     }
 
     /// Clear `view` to `clear` and draw `scene` into it.
@@ -195,7 +221,7 @@ impl Renderer {
         scene: &Scene,
         clear: wgpu::Color,
     ) {
-        let n = scene.instances.len();
+        let n = scene.ore.len() + scene.instances.len();
         if n > self.capacity {
             self.capacity = n.next_power_of_two();
             self.instances = instance_buffer(&gpu.device, self.capacity);
@@ -203,11 +229,29 @@ impl Renderer {
         gpu.queue.write_buffer(
             &self.globals,
             0,
-            bytemuck::cast_slice(&camera.transform(width, height)),
+            bytemuck::cast_slice(&{
+                let [a, b, c, d] = camera.transform(width, height);
+                [
+                    a,
+                    b,
+                    c,
+                    d,
+                    camera.pixels_per_tile,
+                    width as f32,
+                    height as f32,
+                    0.0,
+                ]
+            }),
         );
-        if n > 0 {
+        // Ore lies on the ground, under everything else.
+        let ore = std::mem::size_of_val(scene.ore.as_slice()) as u64;
+        if !scene.ore.is_empty() {
             gpu.queue
-                .write_buffer(&self.instances, 0, bytemuck::cast_slice(&scene.instances));
+                .write_buffer(&self.instances, 0, bytemuck::cast_slice(&scene.ore));
+        }
+        if !scene.instances.is_empty() {
+            gpu.queue
+                .write_buffer(&self.instances, ore, bytemuck::cast_slice(&scene.instances));
         }
         self.pipeline(&gpu.device, format);
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
@@ -223,9 +267,12 @@ impl Renderer {
             })],
             ..Default::default()
         });
+        let (sprites, ground) = &self.pipelines[&format];
+        pass.set_bind_group(0, &self.globals_group, &[]);
+        pass.set_pipeline(ground);
+        pass.draw(0..3, 0..1);
         if n > 0 {
-            pass.set_pipeline(&self.pipelines[&format]);
-            pass.set_bind_group(0, &self.globals_group, &[]);
+            pass.set_pipeline(sprites);
             pass.set_bind_group(1, &self.bands[scene.band], &[]);
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..6, 0..n as u32);
