@@ -445,11 +445,21 @@ fn screenshots(
     ore.fill(&camera, size);
     scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
     let mut overlay = Overlay::new(&look);
-    for sheet in ["toolbar", "build", "research", "radial", "recipes"] {
+    // The problems list needs something stuck: say the machines are starved.
+    let mut stuck = latest.clone();
+    for e in &mut stuck.entities {
+        if look.has_badge(&e.building) {
+            e.state = mofact_core::snapshot::MachineState::Starved;
+        }
+    }
+    for sheet in [
+        "toolbar", "build", "research", "radial", "recipes", "problems",
+    ] {
         let mut hud = Hud::new();
         match sheet {
             "build" => hud.toggle_build_sheet(),
             "research" => hud.toggle_research(),
+            "problems" => hud.toggle_problems(),
             "recipes" => hud.browse("iron-plate".into()),
             "radial" => {
                 hud.pointer(Pointer::Down {
@@ -467,7 +477,7 @@ fn screenshots(
             scale: 3.0,
             content,
             look: &look,
-            snapshot: &latest,
+            snapshot: if sheet == "problems" { &stuck } else { &latest },
             tool: &Tool::Hand,
             dir: mofact_core::geom::Dir::East,
             recipe: None,

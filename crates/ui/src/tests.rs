@@ -579,3 +579,79 @@ fn any_item_icon_opens_its_recipes_in_one_tap() {
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     f.find(&Hit::Item("gear".into()));
 }
+
+#[test]
+fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
+    use mofact_core::snapshot::GridView;
+    let mut f = Fixture::new();
+    let at = |id, building: &str, x, y, state| EntityView {
+        id: EntityId(id),
+        building: building.into(),
+        pos: TilePos::new(x, y),
+        dir: Dir::East,
+        recipe: None,
+        ore: None,
+        grid: None,
+        exit: false,
+        fluid: None,
+        links: 0,
+        state,
+        progress: 0.0,
+    };
+    f.snapshot.entities = vec![
+        at(1, "hub", 0, 0, MachineState::Working),
+        at(2, "furnace", 10, 4, MachineState::Starved),
+        at(3, "furnace", 20, 4, MachineState::Starved),
+        at(4, "pipe", 7, 7, MachineState::Working),
+        EntityView {
+            grid: Some(0),
+            ..at(5, "lab", 30, 2, MachineState::Working)
+        },
+        at(6, "belt", 3, 3, MachineState::Starved),
+    ];
+    f.snapshot.grids = vec![GridView {
+        supply_kw: 60.0,
+        demand_kw: 120.0,
+        satisfaction: 0.5,
+    }];
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let lines: Vec<_> = f
+        .hud
+        .found
+        .iter()
+        .map(|p| (p.trouble, p.at.len()))
+        .collect();
+    use problems::Trouble as T;
+    assert_eq!(
+        lines,
+        vec![(T::ShortPower, 1), (T::Starved, 2), (T::EmptyPipe, 1)],
+        "worst first; belts never count"
+    );
+
+    // The button opens the list; a line goes to the first of its places
+    // and shows it in the inspect sheet.
+    f.tap(centre(f.find(&Hit::Problems)));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let starved = f.find(&Hit::Problem(1));
+    assert_eq!(
+        f.tap(centre(starved)),
+        (true, vec![Action::Focus([10.5, 4.5])])
+    );
+    assert_eq!(f.hud.selected(), Some(EntityId(2)));
+    // The same line again goes on to the next one.
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::Problems)));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let starved = f.find(&Hit::Problem(1));
+    assert_eq!(
+        f.tap(centre(starved)),
+        (true, vec![Action::Focus([20.5, 4.5])])
+    );
+    assert_eq!(f.hud.selected(), Some(EntityId(3)));
+
+    // Nothing stuck, no button.
+    f.snapshot.entities.truncate(1);
+    f.snapshot.grids.clear();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == Hit::Problems));
+}
