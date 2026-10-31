@@ -85,8 +85,11 @@ dependencies = [
 name = "mofact-headless"
 version = "0.1.0"
 dependencies = [
+ "mofact-content",
  "mofact-core",
  "mofact-sim",
+ "ron",
+ "serde",
 ]
 
 [[package]]

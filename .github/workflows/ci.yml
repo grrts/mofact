@@ -42,6 +42,7 @@ jobs:
       - run: cargo test --workspace
       - run: cargo run -p mofact
       - run: cargo run -p mofact-balance -- data
+      - run: cargo run --release -p mofact-headless -- scenarios data
 
   web:
     name: Web engine

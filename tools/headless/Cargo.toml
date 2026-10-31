@@ -1,6 +1,6 @@
 [package]
 name = "mofact-headless"
-description = "Headless runner: plays scenario saves with no renderer and checks rates."
+description = "Headless runner: plays scenarios with no renderer and checks their rates."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,7 +9,10 @@ publish.workspace = true
 
 [dependencies]
 mofact-core.workspace = true
+mofact-content.workspace = true
 mofact-sim.workspace = true
+serde.workspace = true
+ron.workspace = true
 
 [lints]
 workspace = true
