@@ -12,7 +12,7 @@ use mofact_artkit::draw::{self, Pose, Shape};
 use mofact_artkit::Canvas;
 use mofact_core::content::{BuildingRole, Content, IconShape};
 use mofact_core::geom::Dir;
-use mofact_core::ids::{BuildingId, ItemId, RecipeId};
+use mofact_core::ids::{BuildingId, ItemId};
 use std::collections::HashMap;
 
 /// At this many pixels a tile and up, sprites carry the prototype's close-zoom detail.
@@ -64,8 +64,9 @@ enum Kind {
 struct BuildingLook {
     kind: Kind,
     size: (u8, u8),
-    /// The recipes it can be set to; variants follow this order, after "none".
-    recipes: Vec<RecipeId>,
+    /// What tells its variants apart, in order after "none": the recipes a
+    /// crafter can be set to, or the ores a drill can stand on.
+    settings: Vec<String>,
     /// Its first sprite in the catalogue.
     base: usize,
 }
@@ -146,13 +147,21 @@ impl Look {
             let (kind, recipes) = match &b.role {
                 BuildingRole::Belt { .. } => (Kind::Belt, Vec::new()),
                 BuildingRole::Hub => (Kind::Hub, Vec::new()),
-                BuildingRole::Miner { .. } => (Kind::Drill, Vec::new()),
+                BuildingRole::Miner { .. } => (
+                    Kind::Drill,
+                    content
+                        .items
+                        .iter()
+                        .filter(|i| i.shape == IconShape::Ore)
+                        .map(|i| i.id.as_str().to_owned())
+                        .collect(),
+                ),
                 BuildingRole::Crafter { categories, .. } => {
                     let recipes = content
                         .recipes
                         .iter()
                         .filter(|r| categories.contains(&r.category))
-                        .map(|r| r.id.clone())
+                        .map(|r| r.id.as_str().to_owned())
                         .collect();
                     let smelts = categories.iter().any(|c| c == "smelting");
                     (
@@ -172,11 +181,12 @@ impl Look {
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
                 _ => {
                     let none = std::iter::once(None);
-                    let choices: Vec<Option<&RecipeId>> =
-                        none.chain(recipes.iter().map(Some)).collect();
-                    for recipe in &choices {
-                        let product = recipe
-                            .and_then(|r| content.recipes.iter().find(|d| &d.id == r))
+                    let choices: Vec<Option<&str>> = none
+                        .chain(recipes.iter().map(|r| Some(r.as_str())))
+                        .collect();
+                    for setting in &choices {
+                        let product = setting
+                            .and_then(|r| content.recipes.iter().find(|d| d.id.as_str() == r))
                             .and_then(|d| d.outputs.first())
                             .and_then(|s| item_look(&s.item));
                         for working in [false, true] {
@@ -190,7 +200,13 @@ impl Look {
                                 };
                                 let art = match kind {
                                     Kind::Drill => Art::Drill {
-                                        ore: palette::item("iron-ore"),
+                                        ore: setting
+                                            .and_then(|o| {
+                                                content.items.iter().find(|i| i.id.as_str() == o)
+                                            })
+                                            .map_or(palette::item("iron-ore"), |i| {
+                                                palette::item(&i.color)
+                                            }),
                                         pose: Pose {
                                             working: false,
                                             ..pose
@@ -208,7 +224,7 @@ impl Look {
                                         },
                                     },
                                 };
-                                let r = recipe.map_or("none", |r| r.as_str());
+                                let r = setting.unwrap_or("none");
                                 let lit = if working { "lit" } else { "cold" };
                                 push(&mut look, format!("{id}:{r}:{lit}:{d}"), b.size, art);
                             }
@@ -221,7 +237,7 @@ impl Look {
                 BuildingLook {
                     kind,
                     size: b.size,
-                    recipes,
+                    settings: recipes,
                     base,
                 },
             );
@@ -247,13 +263,14 @@ impl Look {
             .is_some_and(|b| !matches!(b.kind, Kind::Belt | Kind::Hub))
     }
 
-    /// The sprite that draws `building` facing `dir`, set to `recipe`, and
+    /// The sprite that draws `building` facing `dir`, set to `setting` (a
+    /// crafter's recipe or the ore under a drill), and
     /// working or not. Belts face east; turn them by `dir` when drawing.
     pub fn sprite(
         &self,
         building: &BuildingId,
         dir: Dir,
-        recipe: Option<&RecipeId>,
+        setting: Option<&str>,
         working: bool,
     ) -> Option<&str> {
         let b = self.buildings.get(building)?;
@@ -261,8 +278,8 @@ impl Look {
             Kind::Belt => return Some(BELT),
             Kind::Hub => b.base,
             _ => {
-                let r = recipe
-                    .and_then(|r| b.recipes.iter().position(|x| x == r))
+                let r = setting
+                    .and_then(|r| b.settings.iter().position(|x| x == r))
                     .map_or(0, |i| i + 1);
                 // Only furnaces look different while working.
                 let lit = usize::from(working && b.kind == Kind::Furnace);
@@ -367,21 +384,17 @@ mod tests {
     fn every_variant_has_its_own_sprite() {
         let look = Look::new(&content());
         let furnace = BuildingId::from("furnace");
-        let iron = RecipeId::from("iron-plate");
-        let cold = look
-            .sprite(&furnace, Dir::East, Some(&iron), false)
-            .unwrap();
-        let lit = look.sprite(&furnace, Dir::East, Some(&iron), true).unwrap();
-        let south = look
-            .sprite(&furnace, Dir::South, Some(&iron), true)
-            .unwrap();
+        let iron = "iron-plate";
+        let cold = look.sprite(&furnace, Dir::East, Some(iron), false).unwrap();
+        let lit = look.sprite(&furnace, Dir::East, Some(iron), true).unwrap();
+        let south = look.sprite(&furnace, Dir::South, Some(iron), true).unwrap();
         assert_eq!(cold, "furnace:iron-plate:cold:0");
         assert_eq!(lit, "furnace:iron-plate:lit:0");
         assert_eq!(south, "furnace:iron-plate:lit:1");
-        let gear = RecipeId::from("gear");
+        let gear = "gear";
         let asm = BuildingId::from("assembler");
         assert_eq!(
-            look.sprite(&asm, Dir::North, Some(&gear), true),
+            look.sprite(&asm, Dir::North, Some(gear), true),
             Some("assembler:gear:cold:3"),
             "assemblers look the same working"
         );
@@ -399,8 +412,18 @@ mod tests {
         );
         // A recipe it can't make draws as unset.
         assert_eq!(
-            look.sprite(&asm, Dir::East, Some(&iron), false),
+            look.sprite(&asm, Dir::East, Some(iron), false),
             Some("assembler:none:cold:0")
+        );
+        // Drills show the ore they stand on.
+        let drill = BuildingId::from("drill");
+        assert_eq!(
+            look.sprite(&drill, Dir::South, Some("copper-ore"), true),
+            Some("drill:copper-ore:cold:1")
+        );
+        assert_eq!(
+            look.sprite(&drill, Dir::East, None, false),
+            Some("drill:none:cold:0")
         );
     }
 

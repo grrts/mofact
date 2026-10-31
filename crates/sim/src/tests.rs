@@ -421,3 +421,18 @@ fn history_keeps_twenty_steps() {
     );
     assert!(sim.entity_at(TilePos::new(5, 0)).is_none());
 }
+
+#[test]
+fn a_drill_reports_the_ore_under_it() {
+    let sim = circuit_chain();
+    let snap = sim.snapshot();
+    let at = |x, y| {
+        snap.entities
+            .iter()
+            .find(|e| e.pos == TilePos::new(x, y))
+            .unwrap()
+    };
+    assert_eq!(at(0, 10).ore, Some(item("iron-ore")));
+    assert_eq!(at(0, 12).ore, Some(item("copper-ore")));
+    assert_eq!(at(3, 10).ore, None, "only miners have ore");
+}

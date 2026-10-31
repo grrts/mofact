@@ -30,6 +30,9 @@ pub struct EntityView {
     pub pos: TilePos,
     pub dir: Dir,
     pub recipe: Option<RecipeId>,
+    /// For a miner, the ore under it.
+    #[serde(default)]
+    pub ore: Option<ItemId>,
     pub state: MachineState,
     /// Craft progress, 0.0 to 1.0.
     pub progress: f32,

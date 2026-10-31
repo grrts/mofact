@@ -14,6 +14,7 @@ fn snapshot() -> Snapshot {
         pos: TilePos::new(x, 0),
         dir: Dir::East,
         recipe: None,
+        ore: None,
         state: MachineState::Starved,
         progress: 0.4,
     };
