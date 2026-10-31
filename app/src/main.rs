@@ -11,6 +11,7 @@
 //! as PNGs instead of opening a window. `--scenario FILE` starts from one of
 //! the headless scenarios (the starter line by default).
 
+mod ore;
 mod surface;
 
 use mofact_core::content::Content;
@@ -18,7 +19,7 @@ use mofact_input::{CameraControl, Pointer, MOUSE};
 use mofact_render::{scene, wgpu, Camera, Frame, Gpu, Look, Renderer, Scene, Target, FLOOR};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui as _;
-use mofact_world as _;
+use ore::OreMap;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::mouse::MouseButton;
 use std::path::Path;
@@ -34,6 +35,7 @@ struct App {
     sim: SimHandle,
     look: Look,
     scene: Scene,
+    ore: OreMap,
     control: CameraControl,
     /// When the latest snapshot arrived, for smoothing between ticks.
     latest: (u64, Instant),
@@ -46,6 +48,7 @@ impl App {
         video: &sdl3::VideoSubsystem,
         sim: Sim,
         look: Look,
+        ore: OreMap,
         camera: Camera,
     ) -> Result<Self, String> {
         let window = video
@@ -70,6 +73,7 @@ impl App {
             sim: SimHandle::spawn(sim),
             look,
             scene: Scene::default(),
+            ore,
             control,
             latest: (0, Instant::now()),
             background: false,
@@ -119,6 +123,14 @@ impl App {
             &prev,
             &latest,
             alpha,
+        );
+        self.ore.update(&camera, target.size());
+        self.scene.ore(
+            &self.look,
+            atlases,
+            &camera,
+            target.size(),
+            self.ore.tiles(),
         );
         target.draw(&self.gpu, &mut self.renderer, &camera, &self.scene)
     }
@@ -193,6 +205,7 @@ struct Args {
     screenshot: Option<String>,
     scenario: String,
     data: String,
+    seed: u64,
 }
 
 fn args() -> Result<Args, String> {
@@ -201,6 +214,7 @@ fn args() -> Result<Args, String> {
         screenshot: None,
         scenario: "scenarios/starter-line.ron".into(),
         data: "data".into(),
+        seed: 42,
     };
     let mut it = std::env::args().skip(1);
     while let Some(arg) = it.next() {
@@ -210,13 +224,17 @@ fn args() -> Result<Args, String> {
                 args.frames = Some(n.parse().map_err(|_| format!("bad frame count `{n}`"))?);
             }
             "--data" => args.data = it.next().ok_or("--data needs a folder")?,
+            "--seed" => {
+                let n = it.next().ok_or("--seed needs a number")?;
+                args.seed = n.parse().map_err(|_| format!("bad seed `{n}`"))?;
+            }
             "--scenario" => args.scenario = it.next().ok_or("--scenario needs a file")?,
             "--screenshot" => {
                 args.screenshot = Some(it.next().ok_or("--screenshot needs a folder")?)
             }
             other => {
                 return Err(format!(
-                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --scenario FILE, --data DIR)"
+                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --scenario FILE, --seed N, --data DIR)"
                 ))
             }
         }
@@ -242,8 +260,14 @@ fn run() -> Result<(), String> {
         .and_then(|text| mofact_headless::parse(&text))?;
     let sim = mofact_headless::build(&content, &scenario)?;
     let camera = framing(&content, &sim);
+    let placed = scenario
+        .ore
+        .iter()
+        .map(|(x, y, item)| (mofact_core::geom::TilePos::new(*x, *y), item.clone()))
+        .collect();
+    let mut ore = OreMap::new(&content, args.seed, placed);
     if let Some(dir) = &args.screenshot {
-        return screenshots(&content, sim, camera, Path::new(dir));
+        return screenshots(&content, sim, &mut ore, camera, Path::new(dir));
     }
 
     // Touches arrive as finger events; don't also turn them into mouse events.
@@ -251,7 +275,7 @@ fn run() -> Result<(), String> {
     let sdl = sdl3::init().map_err(|e| e.to_string())?;
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
-    let mut app = App::new(&video, sim, Look::new(&content), camera)?;
+    let mut app = App::new(&video, sim, Look::new(&content), ore, camera)?;
     let info = app.gpu.info();
     println!(
         "mofact {}: {} ({:?}), surface {:?}",
@@ -363,7 +387,13 @@ fn framing(content: &Content, sim: &Sim) -> Camera {
 }
 
 /// Run the scenario for ten seconds, then write it at three zooms, one per band.
-fn screenshots(content: &Content, mut sim: Sim, camera: Camera, dir: &Path) -> Result<(), String> {
+fn screenshots(
+    content: &Content,
+    mut sim: Sim,
+    ore: &mut OreMap,
+    camera: Camera,
+    dir: &Path,
+) -> Result<(), String> {
     for _ in 0..10 * mofact_core::TICKS_PER_SECOND {
         sim.step();
     }
@@ -390,13 +420,15 @@ fn screenshots(content: &Content, mut sim: Sim, camera: Camera, dir: &Path) -> R
             &latest,
             0.5,
         );
+        ore.fill(&camera, size);
+        scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
         let pixels = renderer.capture(&gpu, size, &camera, &scene, FLOOR);
         let path = dir.join(format!("zoom-{ppt}.png"));
         write_png(&path, size, &pixels)?;
         println!(
             "{}: {} sprites, band {}",
             path.display(),
-            scene.instances.len(),
+            scene.ore.len() + scene.instances.len(),
             scene.band
         );
     }
