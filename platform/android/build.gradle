@@ -1,0 +1,21 @@
+// The Android build (T02). CI fills in what isn't checked in:
+// - app/libs/arm64-v8a/libmain.so, from `cargo ndk -p mofact-android`;
+// - sdl-java/, SDL's Java activity, copied from the sdl3-src crate so it
+//   always matches the SDL that was built into libmain.so.
+// See README.md for building by hand.
+buildscript {
+    repositories {
+        mavenCentral()
+        google()
+    }
+    dependencies {
+        classpath 'com.android.tools.build:gradle:8.7.3'
+    }
+}
+
+allprojects {
+    repositories {
+        mavenCentral()
+        google()
+    }
+}

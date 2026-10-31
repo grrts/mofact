@@ -11,6 +11,8 @@ members = [
     "crates/input",
     "app",
     "platform/web",
+    "platform/android/native",
+    "platform/ios/native",
     "tools/headless",
     "tools/bench",
     "tools/balance",
@@ -33,6 +35,7 @@ mofact-artkit = { path = "crates/artkit" }
 mofact-ui = { path = "crates/ui" }
 mofact-input = { path = "crates/input" }
 mofact-headless = { path = "tools/headless" }
+mofact = { path = "app" }
 serde = { version = "1", features = ["derive", "rc"] }
 ron = "0.8"
 wgpu = "30"

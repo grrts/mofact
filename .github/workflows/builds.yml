@@ -1,0 +1,122 @@
+name: Builds
+
+# Installable builds of every commit for the three ship platforms (T02):
+# an Android APK, an iOS app (run on the simulator as a smoke test) and a
+# Windows exe. Signed store uploads (TestFlight, Play internal testing, the
+# Steam beta branch) join once the store accounts and keys exist (T04).
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: builds-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    name: Windows
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p mofact
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mofact-windows
+          path: target/release/mofact.exe
+
+  android:
+    name: Android
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+      - uses: Swatinem/rust-cache@v2
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-ndk
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 17
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.12"
+      - name: Build libmain.so
+        run: |
+          sudo apt-get install -y -q ninja-build
+          export ANDROID_NDK_HOME="$ANDROID_NDK_LATEST_HOME"
+          # SDL builds with CMake: use the NDK's own toolchain file, which
+          # knows Android's ABIs, rather than cmake-rs's guesses.
+          export CMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake"
+          export ANDROID_ABI=arm64-v8a ANDROID_PLATFORM=android-26 CMAKE_GENERATOR=Ninja
+          cargo ndk -t arm64-v8a --platform 26 -o platform/android/app/libs build --release -p mofact-android
+          ls -l platform/android/app/libs/arm64-v8a
+      - name: SDL's Java activity, matching the SDL in libmain.so
+        run: |
+          sdl=$(cargo metadata --format-version 1 | jq -r '.packages[] | select(.name == "sdl3-src") | .manifest_path')
+          cp -r "$(dirname "$sdl")/SDL/android-project/app/src/main/java" platform/android/sdl-java
+      - name: Build the APK
+        env:
+          MOFACT_VERSION_CODE: ${{ github.run_number }}
+        run: |
+          gradle -p platform/android assembleDebug
+          cp platform/android/app/build/outputs/apk/debug/app-debug.apk mofact.apk
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mofact-android
+          path: mofact.apk
+
+  ios:
+    name: iOS
+    runs-on: macos-latest
+    env:
+      # Matches MinimumOSVersion in Info.plist; SDL (via CMake) and Rust must agree.
+      IPHONEOS_DEPLOYMENT_TARGET: "15.0"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-ios, aarch64-apple-ios-sim
+      - uses: Swatinem/rust-cache@v2
+      - name: Build for devices
+        run: cargo build --release -p mofact-ios --target aarch64-apple-ios
+      - name: Build for the simulator
+        run: cargo build --release -p mofact-ios --target aarch64-apple-ios-sim
+      - name: Bundle the apps
+        run: |
+          for t in aarch64-apple-ios aarch64-apple-ios-sim; do
+            app=platform/ios/build/$t/Mofact.app
+            mkdir -p "$app"
+            cp target/$t/release/Mofact "$app/"
+            cp platform/ios/Info.plist "$app/"
+          done
+      # Install on a simulator, launch, and check the game is still running
+      # and drawing a few seconds later.
+      - name: Smoke test on the simulator
+        run: |
+          udid=$(xcrun simctl list devices available -j | jq -r '[.devices[][] | select(.name | startswith("iPhone"))][0].udid')
+          echo "simulator $udid"
+          xcrun simctl boot "$udid"
+          xcrun simctl bootstatus "$udid"
+          xcrun simctl install "$udid" platform/ios/build/aarch64-apple-ios-sim/Mofact.app
+          xcrun simctl launch "$udid" com.mofact.game
+          sleep 20
+          xcrun simctl io "$udid" screenshot ios-simulator.png
+          pgrep -fl "Mofact.app/Mofact" || { echo "the game is not running"; exit 1; }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mofact-ios
+          path: |
+            platform/ios/build/aarch64-apple-ios/Mofact.app
+            ios-simulator.png

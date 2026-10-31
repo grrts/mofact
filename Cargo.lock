@@ -562,6 +562,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mofact-android"
+version = "0.1.0"
+dependencies = [
+ "mofact",
+ "sdl3",
+]
+
+[[package]]
 name = "mofact-artkit"
 version = "0.1.0"
 dependencies = [
@@ -623,6 +631,14 @@ dependencies = [
  "mofact-core",
  "ron",
  "serde",
+]
+
+[[package]]
+name = "mofact-ios"
+version = "0.1.0"
+dependencies = [
+ "mofact",
+ "sdl3-main",
 ]
 
 [[package]]
@@ -1055,6 +1071,22 @@ dependencies = [
  "sdl3-sys",
  "vcpkg",
 ]
+
+[[package]]
+name = "sdl3-main"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7f0c163d06ec899fa2a80e9d26a77bb34a198222f234aa26795e8515e7df303b"
+dependencies = [
+ "sdl3-main-macros",
+ "sdl3-sys",
+]
+
+[[package]]
+name = "sdl3-main-macros"
+version = "0.2.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0bf074641b7c496da67374dda3e41317904a58851f51617d5f713560e897c082"
 
 [[package]]
 name = "sdl3-mixer-src"

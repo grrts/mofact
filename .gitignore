@@ -4,3 +4,10 @@
 *.mofsave
 /web/mofact.wasm
 /screenshots/
+# Filled in by the Android build (see platform/android/README.md).
+/platform/android/app/libs/
+/platform/android/sdl-java/
+/platform/android/.gradle/
+/platform/android/build/
+/platform/android/app/build/
+/platform/ios/build/
