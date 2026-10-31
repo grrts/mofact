@@ -16,14 +16,20 @@ pub use mofact_core as core;
 mod clock;
 pub mod entities;
 mod history;
+mod local;
 mod power;
 pub mod save;
 mod tables;
+#[cfg(not(target_arch = "wasm32"))]
 mod thread;
 
 pub use clock::Stepper;
 pub use history::{History, UNDO_STEPS};
+pub use local::LocalSim;
+#[cfg(target_arch = "wasm32")]
+pub use local::LocalSim as SimHandle;
 pub use tables::UNIT;
+#[cfg(not(target_arch = "wasm32"))]
 pub use thread::SimHandle;
 
 use entities::{Entities, Entity};

@@ -78,12 +78,15 @@ jobs:
         run: cargo run --release -p mofact-bench -- --summary "$GITHUB_STEP_SUMMARY"
 
   web:
-    name: Web engine
+    name: Web game
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: wasm32-unknown-unknown
+          components: clippy
       - uses: Swatinem/rust-cache@v2
+      # The browser shell only compiles for wasm, so lint it there too.
+      - run: cargo clippy -p mofact-web --target wasm32-unknown-unknown -- -D warnings
       - run: cargo build --release -p mofact-web --target wasm32-unknown-unknown

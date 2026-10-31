@@ -22,7 +22,7 @@ Each lane owns its own folder, so parallel work rarely touches the same files.
 | `data/`, `crates/content` | Content | Items, recipes, research, biomes (`*.ron`) and their loader |
 | `tools/balance` | Content | Validator and balance report |
 | `app/`, `platform/*` | Platform | App shell, builds, saves, store, cloud |
-| `web/`, `platform/web` | Platform | The playable web link: the prototype page on the engine compiled to WebAssembly |
+| `web/`, `platform/web` | Platform | The playable web link: the real game compiled to WebAssembly, on a canvas |
 | `tools/headless`, `tools/bench` | QA | Headless scenarios and benchmarks |
 
 ## Architecture in one paragraph
