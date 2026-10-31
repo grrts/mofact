@@ -26,7 +26,7 @@ pub type Uv = [f32; 4];
 
 /// Padding around each sprite, filled by repeating its edge so linear
 /// filtering never picks up a neighbour.
-const PAD: u32 = 2;
+pub const PAD: u32 = 2;
 
 /// A square RGBA image with sprites packed into shelves.
 pub struct Atlas {

@@ -8,6 +8,7 @@
 
 use crate::atlas::{Atlas, BANDS};
 use crate::palette::{self, Rgba};
+use mofact_artkit::belt::{self, Bend, Joins};
 use mofact_artkit::draw::{self, Pose, Shape};
 use mofact_artkit::Canvas;
 use mofact_core::content::{BuildingRole, Content, IconShape};
@@ -31,6 +32,16 @@ const PIPE_FLUID: &str = "pipe-fluid";
 #[derive(Clone, Debug, PartialEq)]
 enum Art {
     Belt,
+    /// The moving layer of a belt tile at one phase of [`belt::FRAMES`].
+    BeltSurface {
+        bend: Bend,
+        frame: u8,
+    },
+    /// The still layer of a belt tile: rails, caps and side openings.
+    BeltFrame {
+        bend: Bend,
+        joins: Joins,
+    },
     Hub,
     Pole,
     Turbine,
@@ -157,6 +168,22 @@ pub struct Look {
     items: HashMap<ItemId, (usize, Rgba)>,
     /// The first of the sixteen pipe-fluid sprites, one per set of sides.
     pipe_fluid: usize,
+    /// The first belt surface sprite: [`belt::FRAMES`] per bend.
+    belt_surface: usize,
+    /// The first belt frame sprite: sixteen straight, then two per corner.
+    belt_frame: usize,
+    /// How fast each belt runs, in tiles a second, to move its surface.
+    belt_speed: HashMap<BuildingId, f32>,
+}
+
+/// What carries items from tile to tile, for joining belts up when drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Conveyor {
+    Belt,
+    /// Takes from behind, gives out left and right.
+    Splitter,
+    /// An underground belt end: entrances take from behind, exits give ahead.
+    Underground,
 }
 
 fn shape(s: IconShape) -> Shape {
@@ -206,6 +233,32 @@ impl Look {
             (1, 1),
             Art::Badge { starved: false },
         );
+        look.belt_surface = look.sprites.len();
+        for (b, bend) in Bend::ALL.into_iter().enumerate() {
+            for frame in 0..belt::FRAMES {
+                let art = Art::BeltSurface { bend, frame };
+                push(&mut look, format!("belt-surface:{b}:{frame}"), (1, 1), art);
+            }
+        }
+        look.belt_frame = look.sprites.len();
+        for bits in 0..16u8 {
+            let art = Art::BeltFrame {
+                bend: Bend::Straight,
+                joins: Joins::from_bits(bits),
+            };
+            push(&mut look, format!("belt-frame:0:{bits}"), (1, 1), art);
+        }
+        for (b, bend) in [(1, Bend::FromLeft), (2, Bend::FromRight)] {
+            for end in [false, true] {
+                let joins = Joins {
+                    end,
+                    ..Joins::default()
+                };
+                let art = Art::BeltFrame { bend, joins };
+                let bits = joins.bits();
+                push(&mut look, format!("belt-frame:{b}:{bits}"), (1, 1), art);
+            }
+        }
         look.pipe_fluid = look.sprites.len();
         for links in 0..16u8 {
             let art = Art::PipeFluid { links };
@@ -222,7 +275,10 @@ impl Look {
         }
         for b in &content.buildings {
             let (kind, recipes) = match &b.role {
-                BuildingRole::Belt { .. } => (Kind::Belt, Vec::new()),
+                BuildingRole::Belt { tiles_per_second } => {
+                    look.belt_speed.insert(b.id.clone(), *tiles_per_second);
+                    (Kind::Belt, Vec::new())
+                }
                 BuildingRole::Hub => (Kind::Hub, Vec::new()),
                 BuildingRole::Lab { .. } => (Kind::Lab, Vec::new()),
                 BuildingRole::Pole { .. } => (Kind::Pole, Vec::new()),
@@ -415,6 +471,36 @@ impl Look {
             .is_some_and(|b| b.kind == Kind::Belt)
     }
 
+    /// How `building` carries items on, if it does.
+    pub fn conveyor(&self, building: &BuildingId) -> Option<Conveyor> {
+        match self.buildings.get(building)?.kind {
+            Kind::Belt => Some(Conveyor::Belt),
+            Kind::Splitter => Some(Conveyor::Splitter),
+            Kind::Underground => Some(Conveyor::Underground),
+            _ => None,
+        }
+    }
+
+    /// How fast belt `building` runs, in tiles a second.
+    pub fn belt_speed(&self, building: &BuildingId) -> Option<f32> {
+        self.belt_speed.get(building).copied()
+    }
+
+    /// The two layers that draw a belt tile, both facing east and turned
+    /// with it: its surface at `phase` (0 to 1) of its cycle, then its frame.
+    pub fn belt_layers(&self, bend: Bend, joins: Joins, phase: f32) -> (&str, &str) {
+        let frames = usize::from(belt::FRAMES);
+        let frame = ((phase.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1);
+        let b = Bend::ALL.iter().position(|&x| x == bend).unwrap_or(0);
+        let surface = self.belt_surface + b * frames + frame;
+        let framed = match bend {
+            Bend::Straight => usize::from(joins.bits()),
+            _ => 16 + (b - 1) * 2 + usize::from(joins.end),
+        };
+        let name = |i: usize| self.sprites.get(i).map_or(BELT, |s| s.name.as_str());
+        (name(surface), name(self.belt_frame + framed))
+    }
+
     /// Whether `building` is drawn facing east and turned by its direction:
     /// belts, splitters and underground belts. Items ride across these.
     pub fn turns(&self, building: &BuildingId) -> bool {
@@ -573,7 +659,7 @@ impl Look {
         BANDS
             .iter()
             .map(|&px| {
-                let mut atlas = Atlas::new(px * ATLAS_TILES);
+                let mut atlas = Atlas::new(atlas_size(px));
                 let painted = self.paint(&mut atlas, px);
                 debug_assert!(painted, "band {px} has room for every sprite");
                 atlas
@@ -582,11 +668,18 @@ impl Look {
     }
 }
 
-/// Each band's atlas is this many tiles on a side: 1,536 pixels at the
-/// closest zoom, well inside what every target GPU takes. Machines have a
-/// sprite per recipe, state and direction, so this grows with content; when
-/// tier 3-4 fills it, turn machine bodies on the GPU instead.
+/// Each band's atlas is this many tiles on a side, padding included: 3,168
+/// pixels at the closest zoom, inside what every target GPU takes. Machines
+/// have a sprite per recipe, state and direction, so this grows with content;
+/// when tier 3-4 fills it, turn machine bodies on the GPU instead.
 pub const ATLAS_TILES: u32 = 24;
+
+/// The side of the atlas for the band of `px` pixels a tile. Each sprite
+/// carries its padding, which is most of a tile's room in the smallest band,
+/// so it is counted in: every band then fits the same set of sprites.
+pub fn atlas_size(px: u32) -> u32 {
+    (px + 2 * crate::atlas::PAD) * ATLAS_TILES
+}
 
 /// Items and badges are drawn at this fraction of a tile.
 pub const ITEM_TILES: f32 = 0.5;
@@ -601,6 +694,11 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
     let mut c = Canvas::new(w, h);
     match *art {
         Art::Belt => draw::belt(&mut c, z, fine, 0.0, 2.0),
+        Art::BeltSurface { bend, frame } => {
+            let phase = f32::from(frame) / f32::from(belt::FRAMES);
+            belt::surface(&mut c, z, fine, bend, phase);
+        }
+        Art::BeltFrame { bend, joins } => belt::frame(&mut c, z, fine, bend, joins),
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
@@ -703,7 +801,7 @@ mod tests {
     fn every_band_fits_every_sprite() {
         let look = Look::new(&content());
         for px in BANDS {
-            let mut atlas = Atlas::new(px * ATLAS_TILES);
+            let mut atlas = Atlas::new(atlas_size(px));
             assert!(look.paint(&mut atlas, px), "band {px} is full");
             for s in &look.sprites {
                 assert!(atlas.get(&s.name).is_some(), "{} at {px}", s.name);
