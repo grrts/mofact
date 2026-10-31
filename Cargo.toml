@@ -9,6 +9,7 @@ members = [
     "crates/artkit",
     "crates/ui",
     "crates/input",
+    "crates/audio",
     "app",
     "platform/web",
     "platform/android/native",
@@ -34,6 +35,7 @@ mofact-render = { path = "crates/render" }
 mofact-artkit = { path = "crates/artkit" }
 mofact-ui = { path = "crates/ui" }
 mofact-input = { path = "crates/input" }
+mofact-audio = { path = "crates/audio" }
 mofact-headless = { path = "tools/headless" }
 mofact = { path = "app" }
 serde = { version = "1", features = ["derive", "rc"] }

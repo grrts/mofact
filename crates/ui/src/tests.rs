@@ -692,3 +692,21 @@ fn the_goal_card_shows_how_far_along_and_says_when_a_goal_is_met() {
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     assert!(!f.hud.hits.iter().any(|(_, h)| *h == Hit::Goal));
 }
+
+#[test]
+fn the_sound_button_turns_sound_off_and_on() {
+    let mut f = Fixture::new();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let button = f.find(&Hit::Sound);
+    // A full 44-point target, at whatever scale the toolbar left.
+    let pt = 44.0 * f.hud.unit - 0.01;
+    assert!(button[2] >= pt && button[3] >= pt, "{button:?}");
+    assert_eq!(f.tap(centre(button)), (true, vec![Action::Mute(true)]));
+    assert!(f.hud.muted());
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Sound))),
+        (true, vec![Action::Mute(false)])
+    );
+    assert!(!f.hud.muted());
+}

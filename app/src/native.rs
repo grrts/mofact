@@ -157,6 +157,54 @@ impl App {
     }
 }
 
+/// SDL's audio thread pulls the game's sound through this.
+struct Speaker {
+    audio: mofact_audio::Audio,
+    buf: Vec<f32>,
+}
+
+impl sdl3::audio::AudioCallback<f32> for Speaker {
+    fn callback(&mut self, stream: &mut sdl3::audio::AudioStream, requested: i32) {
+        // Whole stereo frames.
+        let n = (requested.max(0) as usize + 1) & !1;
+        self.buf.resize(n, 0.0);
+        self.audio.render(&mut self.buf);
+        if stream.put_data_f32(&self.buf).is_err() {
+            self.buf.clear();
+        }
+    }
+}
+
+/// Start the game's sound, or say why there is none: a machine with no
+/// audio device (CI) still plays, silently.
+fn speaker(
+    sdl: &sdl3::Sdl,
+    audio: mofact_audio::Audio,
+) -> Option<sdl3::audio::AudioStreamWithCallback<Speaker>> {
+    let open = || -> Result<_, String> {
+        let sub = sdl.audio().map_err(|e| e.to_string())?;
+        let spec = sdl3::audio::AudioSpec {
+            freq: Some(audio.lock().rate() as i32),
+            channels: Some(2),
+            format: Some(sdl3::audio::AudioFormat::f32_sys()),
+        };
+        let stream = sub
+            .open_playback_stream(
+                &spec,
+                Speaker {
+                    audio,
+                    buf: Vec::new(),
+                },
+            )
+            .map_err(|e| e.to_string())?;
+        stream.resume().map_err(|e| e.to_string())?;
+        Ok(stream)
+    };
+    open()
+        .inspect_err(|e| eprintln!("mofact: no sound ({e})"))
+        .ok()
+}
+
 struct Args {
     frames: Option<u64>,
     screenshot: Option<String>,
@@ -255,6 +303,13 @@ pub fn run() -> Result<(), String> {
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut app = App::new(&video, content.clone(), sim, ore, camera)?;
+    let speaker = speaker(&sdl, app.game.sound.audio());
+    // Quiet in the background, as the game is paused there.
+    let hush = |quiet: bool| {
+        if let Some(s) = &speaker {
+            let _ = if quiet { s.pause() } else { s.resume() };
+        }
+    };
     let info = app.game.gpu.info();
     println!(
         "mofact {}: {} ({:?}), surface {:?}",
@@ -304,16 +359,22 @@ pub fn run() -> Result<(), String> {
                 }
                 Event::AppWillEnterBackground { .. } => {
                     app.suspend();
+                    hush(true);
                     report(saves.now(&app.game.sim));
                 }
-                Event::AppDidEnterForeground { .. } => app.resume()?,
+                Event::AppDidEnterForeground { .. } => {
+                    app.resume()?;
+                    hush(false);
+                }
                 Event::Window { win_event, .. } => match win_event {
                     WindowEvent::Minimized | WindowEvent::Hidden => {
                         app.suspend();
+                        hush(true);
                         report(saves.now(&app.game.sim));
                     }
                     WindowEvent::Restored | WindowEvent::Shown | WindowEvent::Maximized => {
-                        app.resume()?
+                        app.resume()?;
+                        hush(false);
                     }
                     WindowEvent::PixelSizeChanged(w, h) => {
                         app.game.resize(w.max(1) as u32, h.max(1) as u32)
@@ -348,6 +409,7 @@ pub fn run() -> Result<(), String> {
                 // Exercise the background path the way a phone would.
                 let before = app.game.sim.latest().tick;
                 app.suspend();
+                hush(true);
                 saves.now(&app.game.sim)?;
                 std::thread::sleep(Duration::from_millis(200));
                 let during = app.game.sim.latest().tick;

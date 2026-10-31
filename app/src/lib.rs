@@ -27,6 +27,7 @@ mod native;
 mod ore;
 #[cfg(test)]
 mod replay;
+pub mod sound;
 #[cfg(not(target_arch = "wasm32"))]
 mod surface;
 

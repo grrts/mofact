@@ -536,6 +536,7 @@ dependencies = [
 name = "mofact"
 version = "0.1.0"
 dependencies = [
+ "mofact-audio",
  "mofact-content",
  "mofact-core",
  "mofact-headless",
@@ -566,6 +567,10 @@ dependencies = [
  "png",
  "tiny-skia",
 ]
+
+[[package]]
+name = "mofact-audio"
+version = "0.1.0"
 
 [[package]]
 name = "mofact-balance"
@@ -671,6 +676,7 @@ version = "0.1.0"
 dependencies = [
  "js-sys",
  "mofact",
+ "mofact-audio",
  "mofact-core",
  "mofact-input",
  "mofact-render",

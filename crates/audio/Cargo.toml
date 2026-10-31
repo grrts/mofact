@@ -1,0 +1,11 @@
+[package]
+name = "mofact-audio"
+description = "The game's sound: a small synthesiser for machine hums and cues, and the soundscape that drives it."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lints]
+workspace = true

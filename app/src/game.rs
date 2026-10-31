@@ -6,6 +6,7 @@
 
 use crate::built::Built;
 use crate::ore::OreMap;
+use crate::sound::Sound;
 use mofact_core::content::Content;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
@@ -31,6 +32,8 @@ pub struct Game {
     built: Built,
     /// When the latest snapshot arrived, for smoothing between ticks.
     latest: (u64, Instant),
+    /// What it sounds like; the platform plays [`Sound::audio`].
+    pub sound: Sound,
 }
 
 impl Game {
@@ -60,6 +63,7 @@ impl Game {
             hud: Hud::new(),
             hotkeys: mofact_ui::hotkeys(&content),
             built: Built::new(&content),
+            sound: Sound::new(&content),
             content,
             ore,
             controls,
@@ -79,7 +83,9 @@ impl Game {
     /// presses, and draw at `size` pixels with `scale` pixels per point.
     pub fn frame(&mut self, size: (u32, u32), scale: f32) -> Frame {
         self.sim.pump();
-        for result in self.sim.results() {
+        let results: Vec<_> = self.sim.results().collect();
+        self.sound.results(&results);
+        for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
                 self.hud.toast(match why {
@@ -127,6 +133,7 @@ impl Game {
             &latest,
             alpha,
         );
+        self.sound.frame(&latest, &camera, target.size());
         self.ore.update(&camera, target.size());
         self.scene.ore(
             &self.look,
@@ -190,9 +197,10 @@ impl Game {
     ///
     /// Keys follow the toolbar: 1 to 5 pick hand, belt, drill, furnace and
     /// assembler, 6 opens the build sheet and 7 (or X) removes; T opens
-    /// research; R rotates; Escape goes back to the hand. The shells send
-    /// "undo" and "redo" for Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y). Every other
-    /// building has a letter of its own (see [`mofact_ui::hotkeys`]).
+    /// research; R rotates; M turns the sound off and on; Escape goes back
+    /// to the hand. The shells send "undo" and "redo" for Ctrl+Z and
+    /// Ctrl+Shift+Z (or Ctrl+Y). Every other building has a letter of its
+    /// own (see [`mofact_ui::hotkeys`]).
     pub fn key(&mut self, name: &str) {
         let tool = match name {
             "1" | "escape" => Tool::Hand,
@@ -204,6 +212,11 @@ impl Game {
             "t" => return self.hud.toggle_research(),
             "7" | "x" => Tool::Remove,
             "r" => return self.controls.builder.rotate(),
+            "m" => {
+                let muted = !self.hud.muted();
+                self.hud.set_muted(muted);
+                return self.sound.set_muted(muted);
+            }
             "undo" => return self.sim.undo(),
             "redo" => return self.sim.redo(),
             other => {
@@ -253,6 +266,7 @@ impl Game {
             Action::Cancel => self.controls.builder.cancel(),
             // A problem from the list: look at it, with the hand, so its
             // inspect sheet (opened by the HUD) says what's wrong.
+            Action::Mute(muted) => self.sound.set_muted(muted),
             Action::Focus(at) => {
                 self.controls.camera.center = at;
                 self.controls.builder.set_tool(Tool::Hand);
@@ -263,6 +277,9 @@ impl Game {
     /// A pointer event goes to the HUD first, then to the camera and build tools.
     pub fn handle(&mut self, p: Pointer) {
         let (taken, actions) = self.hud.pointer(p);
+        if !actions.is_empty() && taken {
+            self.sound.tap();
+        }
         for action in actions {
             self.act(action);
         }

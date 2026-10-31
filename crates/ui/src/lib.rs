@@ -176,6 +176,8 @@ pub enum Action {
     Redo,
     /// Centre the camera on this point, in tiles: a problem's whereabouts.
     Focus([f32; 2]),
+    /// Turn the game's sound off (true) or back on.
+    Mute(bool),
 }
 
 /// A control on screen, and what tapping it does.
@@ -208,6 +210,8 @@ enum Hit {
     Goal,
     /// A line of the problems list, by its place in it.
     Problem(usize),
+    /// The sound button: turns sound off and on.
+    Sound,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -237,6 +241,8 @@ struct Tap {
 /// the inspect sheet.
 #[derive(Debug, Default)]
 pub struct Hud {
+    /// Whether the player turned the sound off.
+    muted: bool,
     /// The entity the inspect sheet shows.
     selected: Option<EntityId>,
     /// Whether the research sheet is open.
@@ -301,6 +307,17 @@ impl Hud {
     /// Open the recipe browser on `item`, as tapping its icon does.
     pub fn browse(&mut self, item: ItemId) {
         self.tapped(Hit::Item(item));
+    }
+
+    /// Whether the player turned the sound off.
+    pub fn muted(&self) -> bool {
+        self.muted
+    }
+
+    /// Turn the sound off or on, as its button does (for the M key, and to
+    /// restore what the player chose last time).
+    pub fn set_muted(&mut self, muted: bool) {
+        self.muted = muted;
     }
 
     /// Open or close the problems list, as its button does.
@@ -494,6 +511,10 @@ impl Hud {
                 self.hint = !self.hint;
                 Vec::new()
             }
+            Hit::Sound => {
+                self.muted = !self.muted;
+                vec![Action::Mute(self.muted)]
+            }
             Hit::Problems => {
                 self.problems = !self.problems;
                 self.research = false;
@@ -559,7 +580,9 @@ impl Hud {
         };
 
         let top = self.stock(view, o, [m, m]);
-        let top = self.research_button(view, o, [m, top + gap], corner[0] - m);
+        // The sound button leads the research row.
+        let left = self.sound_button(o, [m, top + gap]) + gap;
+        let top = self.research_button(view, o, [left, top + gap], corner[0] - left);
         let top = self.goal_card(view, o, [m, top + gap], corner[0] - m);
         self.found = problems::find(view);
         if self.found.is_empty() {
@@ -882,6 +905,49 @@ impl Hud {
             x += w + 6.0 * u;
         }
         at[1] + h
+    }
+
+    /// A round button that turns the sound off and on: a speaker's three
+    /// bars, or one bar and a cross when off. Returns its right edge.
+    fn sound_button(&mut self, o: &mut Overlay, at: [f32; 2]) -> f32 {
+        let u = self.unit;
+        let d = 36.0 * u;
+        o.panel(at, [d, d], d / 2.0, RAISED);
+        let (cx, cy) = (at[0] + d / 2.0, at[1] + d / 2.0);
+        let bar = 4.0 * u;
+        if self.muted {
+            o.panel(
+                [cx - 9.0 * u, cy - 3.0 * u],
+                [bar, 6.0 * u],
+                bar / 2.0,
+                MUTED,
+            );
+            let px = 20.0 * u;
+            let xw = o.measure("×", px);
+            o.text(
+                "×",
+                [cx - xw / 2.0 + 4.0 * u, cy + o.cap_height(px) / 2.0],
+                px,
+                MUTED,
+            );
+        } else {
+            for (k, tall) in [6.0, 11.0, 16.0].into_iter().enumerate() {
+                let x = cx - 9.0 * u + k as f32 * 7.0 * u;
+                o.panel(
+                    [x, cy + 8.0 * u - tall * u],
+                    [bar, tall * u],
+                    bar / 2.0,
+                    TEXT,
+                );
+            }
+        }
+        // The touch target reaches 44 points, past the drawn circle.
+        let pad = 4.0 * u;
+        self.hits.push((
+            [at[0] - pad, at[1] - pad, d + 2.0 * pad, d + 2.0 * pad],
+            Hit::Sound,
+        ));
+        at[0] + d
     }
 
     /// The research button under the stock: what labs study and how far
@@ -1850,8 +1916,9 @@ impl Hud {
     }
 }
 
-/// Letters the keyboard already uses: R rotates, T opens research, X removes.
-const RESERVED_KEYS: [char; 3] = ['r', 't', 'x'];
+/// Letters the keyboard already uses: M mutes, R rotates, T opens research,
+/// X removes.
+const RESERVED_KEYS: [char; 4] = ['m', 'r', 't', 'x'];
 
 /// One key for every building but the hub and belts (which have number
 /// keys): the first letter of its name that is free, in content order.
