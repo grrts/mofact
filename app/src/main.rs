@@ -23,12 +23,13 @@ mod replay;
 mod surface;
 
 use mofact_core::content::Content;
+use mofact_input::Ground;
 use mofact_input::{CameraControl, Controls, Pointer, Tool, MOUSE, MOUSE_PAN};
 use mofact_render::{
     scene, wgpu, Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target, FLOOR,
 };
 use mofact_sim::{Sim, SimHandle};
-use mofact_ui as _;
+use mofact_ui::{Action, Hud, View};
 use ore::OreMap;
 use sdl3::event::{Event, WindowEvent};
 use sdl3::keyboard::Keycode;
@@ -47,6 +48,8 @@ struct App {
     look: Look,
     scene: Scene,
     overlay: Overlay,
+    hud: Hud,
+    content: Content,
     ore: OreMap,
     controls: Controls,
     built: built::Built,
@@ -61,6 +64,7 @@ struct App {
 impl App {
     fn new(
         video: &sdl3::VideoSubsystem,
+        content: Content,
         sim: Sim,
         look: Look,
         ore: OreMap,
@@ -93,6 +97,8 @@ impl App {
             look,
             scene: Scene::default(),
             overlay: Overlay::new(),
+            hud: Hud::new(),
+            content,
             ore,
             controls,
             built,
@@ -127,6 +133,12 @@ impl App {
         let Some(target) = self.target.as_mut().filter(|_| !self.background) else {
             return Frame::Skipped;
         };
+        // Some platforms resize without telling us; follow the window every frame.
+        let (w, h) = self.window.size_in_pixels();
+        if (w, h) != target.size() {
+            target.resize(&self.gpu, w, h);
+            self.controls.camera.set_viewport(w as f32, h as f32);
+        }
         let (prev, latest) = self.sim.snapshots();
         if latest.tick != self.latest.0 {
             self.latest = (latest.tick, Instant::now());
@@ -161,11 +173,18 @@ impl App {
             ghosts.iter().map(|g| (&g.building, g.tile, g.dir)),
         );
         self.overlay.clear();
-        hint(
-            &mut self.overlay,
-            &self.controls.builder.tool,
-            target.size(),
-        );
+        let builder = &self.controls.builder;
+        let view = View {
+            size: target.size(),
+            scale: self.window.display_scale(),
+            content: &self.content,
+            look: &self.look,
+            snapshot: &latest,
+            tool: &builder.tool,
+            dir: builder.dir,
+            recipe: builder.recipe.as_ref(),
+        };
+        self.hud.draw(&view, &mut self.overlay);
         target.draw(
             &self.gpu,
             &mut self.renderer,
@@ -188,7 +207,36 @@ impl App {
             Keycode::R => return self.controls.builder.rotate(),
             _ => return,
         };
+        if tool != Tool::Hand {
+            self.hud.select(None);
+        }
         self.controls.builder.set_tool(tool);
+    }
+
+    /// A pointer event goes to the HUD first, then to the camera and build tools.
+    fn handle(&mut self, p: Pointer) {
+        let (taken, actions) = self.hud.pointer(p);
+        for action in actions {
+            match action {
+                Action::Tool(tool) => self.controls.builder.set_tool(tool),
+                Action::Rotate => self.controls.builder.rotate(),
+                Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
+                Action::Send(command) => self.sim.send(command),
+                Action::Inspect(at) if self.controls.builder.tool == Tool::Hand => {
+                    let [x, y] = self.controls.camera.world_at(at);
+                    let tile = mofact_core::geom::TilePos::new(x.floor() as i32, y.floor() as i32);
+                    self.built.update(&self.sim.latest());
+                    self.hud.select(self.built.at(tile).map(|o| o.id));
+                }
+                Action::Inspect(_) => {}
+            }
+        }
+        if !taken {
+            self.built.update(&self.sim.latest());
+            for command in self.controls.handle(p, &self.built) {
+                self.sim.send(command);
+            }
+        }
     }
 
     /// An SDL event as a pointer event in screen pixels, if it is one.
@@ -366,6 +414,7 @@ fn run() -> Result<(), String> {
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut app = App::new(
         &video,
+        content.clone(),
         sim,
         Look::new(&content),
         ore,
@@ -388,10 +437,7 @@ fn run() -> Result<(), String> {
     loop {
         for event in events.poll_iter() {
             if let Some(p) = app.pointer(&event) {
-                app.built.update(&app.sim.latest());
-                for command in app.controls.handle(p, &app.built) {
-                    app.sim.send(command);
-                }
+                app.handle(p);
                 continue;
             }
             if let Event::KeyDown {
@@ -432,8 +478,14 @@ fn run() -> Result<(), String> {
 
         for result in app.sim.results() {
             if let mofact_core::command::CommandResult::Refused(why) = result {
-                // The inspect sheet and toasts (T21) will show these.
-                eprintln!("mofact: can't build there: {why:?}");
+                use mofact_core::command::CommandError as E;
+                app.hud.toast(match why {
+                    E::Blocked => "Something is in the way.",
+                    E::CannotAfford => "Not enough plates in stock.",
+                    E::Locked => "That isn't unlocked yet.",
+                    E::NoSuchEntity => "That's already gone.",
+                    E::UnknownContent => "That isn't in this game's data.",
+                });
             }
         }
         report(saves.update(&app.sim));
@@ -484,40 +536,6 @@ fn run() -> Result<(), String> {
             }
         }
     }
-}
-
-/// The prototype's tip for the current tool, in a chip at the bottom of the
-/// screen, until the toolbar and inspect sheet arrive (T21).
-fn hint(overlay: &mut Overlay, tool: &Tool, (w, h): (u32, u32)) {
-    let tip = match tool {
-        Tool::Hand => "Move: drag to look around, pinch or scroll to zoom. Keys 1-6 pick a tool.",
-        Tool::Belt => "Belt: drag to draw a belt along your path. Two fingers pan and zoom.",
-        Tool::Place(b) if b.as_str() == "drill" => "Drill: tap ore to place. R rotates.",
-        Tool::Place(b) if b.as_str() == "furnace" => {
-            "Furnace: tap to place. Ore goes in any side, plates come out of the arrow."
-        }
-        Tool::Place(_) => "Assembler: tap to place. It picks its recipe from what arrives.",
-        Tool::Remove => "Remove: tap or drag over things to remove them. You get the plates back.",
-    };
-    let scale = (h as f32 / 720.0).clamp(1.0, 3.0);
-    let px = 15.0 * scale;
-    let width = overlay.measure(tip, px) + 24.0 * scale;
-    let height = 34.0 * scale;
-    let x = ((w as f32 - width) / 2.0).max(8.0);
-    let y = h as f32 - height - 16.0 * scale;
-    overlay.panel(
-        [x, y],
-        [width, height],
-        8.0 * scale,
-        [0x1d, 0x23, 0x2a, 0xeb],
-    );
-    let baseline = y + (height + overlay.cap_height(px)) / 2.0;
-    overlay.text(
-        tip,
-        [x + 12.0 * scale, baseline],
-        px,
-        [0xe9, 0xed, 0xf0, 0xff],
-    );
 }
 
 /// Saving must never crash the game; say what went wrong and play on.

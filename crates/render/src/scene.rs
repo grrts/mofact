@@ -91,6 +91,20 @@ impl Look {
             .collect();
         Self { buildings, items }
     }
+
+    /// The sprite and tint that draw `item`, for icons.
+    pub fn item(&self, item: &ItemId) -> Option<(&'static str, Rgba)> {
+        self.items
+            .get(item)
+            .map(|&(shape, tint)| (sprites::SHAPES[shape], tint))
+    }
+
+    /// The sprite and tint that draw `building`, for icons.
+    pub fn building(&self, building: &BuildingId) -> Option<(&'static str, Rgba)> {
+        self.buildings
+            .get(building)
+            .map(|&(sprite, _, tint)| (sprite, tint))
+    }
 }
 
 /// The sprites for one frame, in draw order, and the band they come from.
