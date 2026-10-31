@@ -230,3 +230,118 @@ fn ten_thousand_belt_tiles_tick_fast() {
     };
     assert!(per_tick.as_micros() < limit_us, "{per_tick:?} per tick");
 }
+
+/// What undo must restore: every building, where it faces, an assembler's recipe, and the stock.
+fn fingerprint(sim: &Sim) -> (Vec<String>, Vec<(ItemId, u32)>) {
+    let snap = sim.snapshot();
+    let mut ents: Vec<String> = snap
+        .entities
+        .iter()
+        .map(|e| {
+            let recipe = if e.building.as_str() == "assembler" {
+                e.recipe.clone()
+            } else {
+                None
+            };
+            format!("{} {:?} {:?} {:?}", e.building, e.pos, e.dir, recipe)
+        })
+        .collect();
+    ents.sort();
+    (ents, snap.stock)
+}
+
+#[test]
+fn do_then_undo_restores_state() {
+    // Property test over many random action sequences of up to UNDO_STEPS actions.
+    let buildings = ["belt", "drill", "furnace", "assembler"];
+    let recipes = ["gear", "wire", "circuit"];
+    for seed in 0..300u64 {
+        let mut rng = seed
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        let mut next = move |n: u64| {
+            rng = rng
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (rng >> 33) % n
+        };
+        let mut sim = prototype_start();
+        sim.add_stock(&item("copper-plate"), 1000);
+        sim.add_stock(&item("iron-plate"), 1000);
+        for x in 10..16 {
+            sim.set_ore(TilePos::new(x, 20), &item("iron-ore"));
+        }
+        let before = fingerprint(&sim);
+        let mut history = History::new();
+        let mut applied = 0;
+        while applied < UNDO_STEPS {
+            let ids: Vec<EntityId> = sim
+                .snapshot()
+                .entities
+                .iter()
+                .filter(|e| e.building.as_str() != "hub")
+                .map(|e| e.id)
+                .collect();
+            let pick = |n: u64| ids[n as usize % ids.len().max(1)];
+            let cmd = match next(4) {
+                0 | 1 => Command::Place {
+                    building: BuildingId::from(buildings[next(4) as usize]),
+                    pos: TilePos::new(10 + next(6) as i32, 18 + next(4) as i32),
+                    dir: Dir::ALL[next(4) as usize],
+                    recipe: None,
+                },
+                2 if !ids.is_empty() => Command::Remove {
+                    entity: pick(next(1000)),
+                },
+                3 if !ids.is_empty() => Command::Rotate {
+                    entity: pick(next(1000)),
+                    dir: Dir::ALL[next(4) as usize],
+                },
+                _ if !ids.is_empty() => Command::SetRecipe {
+                    entity: pick(next(1000)),
+                    recipe: Some(RecipeId::from(recipes[next(3) as usize])),
+                },
+                _ => continue,
+            };
+            if matches!(history.apply(&mut sim, &cmd), CommandResult::Applied { .. }) {
+                applied += 1;
+            }
+        }
+        let after = fingerprint(&sim);
+        for i in 0..applied {
+            assert!(history.undo(&mut sim), "seed {seed}: undo {i} failed");
+        }
+        assert!(!history.can_undo());
+        assert_eq!(fingerprint(&sim), before, "seed {seed}: undo all");
+        for i in 0..applied {
+            assert!(history.redo(&mut sim), "seed {seed}: redo {i} failed");
+        }
+        assert_eq!(fingerprint(&sim), after, "seed {seed}: redo all");
+    }
+}
+
+#[test]
+fn history_keeps_twenty_steps() {
+    let mut sim = prototype_start();
+    sim.add_stock(&item("iron-plate"), 1000);
+    let mut history = History::new();
+    for x in 0..25 {
+        let cmd = Command::Place {
+            building: BuildingId::from("belt"),
+            pos: TilePos::new(x, 0),
+            dir: Dir::East,
+            recipe: None,
+        };
+        history.apply(&mut sim, &cmd);
+    }
+    let mut n = 0;
+    while history.undo(&mut sim) {
+        n += 1;
+    }
+    assert_eq!(n, UNDO_STEPS);
+    assert!(
+        sim.entity_at(TilePos::new(4, 0)).is_some(),
+        "the oldest five stay"
+    );
+    assert!(sim.entity_at(TilePos::new(5, 0)).is_none());
+}
