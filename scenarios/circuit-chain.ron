@@ -1,0 +1,34 @@
+// The prototype's last goal: gears and wire belted into one circuit assembler.
+// One iron line makes 25 gears a minute, which limits circuits to 25 a minute;
+// two wire lines make more wire than needed and back up.
+(
+    name: "Circuit chain",
+    stock: [("iron-plate", 500), ("copper-plate", 100)],
+    ore: [(0, 10, "iron-ore"), (0, 12, "copper-ore"), (0, 13, "copper-ore")],
+    build: [
+        At(building: "hub", x: 30, y: 9, dir: East),
+        // Three smelting lines feeding an assembler each.
+        At(building: "drill", x: 0, y: 10, dir: East), Belts(x: 1, y: 10, len: 2, dir: East),
+        At(building: "furnace", x: 3, y: 10, dir: East), Belts(x: 4, y: 10, len: 1, dir: East),
+        At(building: "assembler", x: 5, y: 10, dir: East, recipe: Some("gear")),
+        At(building: "drill", x: 0, y: 12, dir: East), Belts(x: 1, y: 12, len: 2, dir: East),
+        At(building: "furnace", x: 3, y: 12, dir: East), Belts(x: 4, y: 12, len: 1, dir: East),
+        At(building: "assembler", x: 5, y: 12, dir: East, recipe: Some("wire")),
+        At(building: "drill", x: 0, y: 13, dir: East), Belts(x: 1, y: 13, len: 2, dir: East),
+        At(building: "furnace", x: 3, y: 13, dir: East), Belts(x: 4, y: 13, len: 1, dir: East),
+        At(building: "assembler", x: 5, y: 13, dir: East, recipe: Some("wire")),
+        // Gears east then south into the circuit assembler's top side.
+        Belts(x: 6, y: 10, len: 4, dir: East),
+        Belts(x: 10, y: 10, len: 1, dir: South),
+        // Wire merges going north at x = 9, then east into its left side.
+        Belts(x: 6, y: 12, len: 3, dir: East),
+        Belts(x: 6, y: 13, len: 3, dir: East),
+        Belts(x: 9, y: 13, len: 2, dir: North),
+        Belts(x: 9, y: 11, len: 1, dir: East),
+        At(building: "assembler", x: 10, y: 11, dir: East, recipe: Some("circuit")),
+        Belts(x: 11, y: 11, len: 19, dir: East),
+    ],
+    warmup_seconds: 60,
+    measure_seconds: 180,
+    expect: [(item: "circuit", per_minute: 25.0, tolerance: 1.0)],
+)

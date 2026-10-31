@@ -1,0 +1,17 @@
+// The prototype's new game: drill -> belt -> furnace -> belt -> hub.
+// One drill (1.2 s per ore) feeds one furnace (1.2 s per plate): 50 plates a minute.
+(
+    name: "Starter iron line",
+    stock: [("iron-plate", 60)],
+    ore: [(19, 27, "iron-ore")],
+    build: [
+        At(building: "hub", x: 26, y: 26, dir: East),
+        At(building: "drill", x: 19, y: 27, dir: East),
+        Belts(x: 20, y: 27, len: 2, dir: East),
+        At(building: "furnace", x: 22, y: 27, dir: East),
+        Belts(x: 23, y: 27, len: 3, dir: East),
+    ],
+    warmup_seconds: 60,
+    measure_seconds: 180,
+    expect: [(item: "iron-plate", per_minute: 50.0, tolerance: 1.0)],
+)
