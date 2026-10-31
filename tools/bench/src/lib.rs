@@ -64,6 +64,7 @@ pub fn base(name: &str, cells: usize) -> Scenario {
             ("copper-plate".into(), 10_000_000),
         ],
         ore: Vec::new(),
+        patches: Vec::new(),
         build: Vec::new(),
         warmup_seconds: 0,
         measure_seconds: 0,

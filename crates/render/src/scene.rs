@@ -107,7 +107,7 @@ impl Scene {
         latest: &Snapshot,
         alpha: f32,
     ) {
-        self.band = band_for(camera.pixels_per_tile);
+        self.band = band_for(camera.pixels_per_tile).min(atlases.len().saturating_sub(1));
         self.instances.clear();
         let atlas = &atlases[self.band];
         let uv = |name: &str| atlas.get(name).unwrap_or([0.0; 4]);
@@ -254,7 +254,13 @@ impl Scene {
         ore: impl IntoIterator<Item = (TilePos, &'a ItemId)>,
     ) {
         self.ore.clear();
-        let uv = atlases[self.band].get(sprites::ORE).unwrap_or([0.0; 4]);
+        let uvs: Vec<Uv> = (0..sprites::ORE_VARIANTS)
+            .map(|k| {
+                atlases[self.band]
+                    .get(&sprites::ore_name(k))
+                    .unwrap_or([0.0; 4])
+            })
+            .collect();
         let (lo, hi) = camera.visible(width, height);
         for (tile, item) in ore {
             let (x, y) = (tile.x as f32, tile.y as f32);
@@ -262,6 +268,10 @@ impl Scene {
                 continue;
             }
             if let Some(tint) = look.item_color(item) {
+                // The same tile always gets the same variant.
+                let h = (tile.x as u32).wrapping_mul(0x9e37_79b1)
+                    ^ (tile.y as u32).wrapping_mul(0x85eb_ca77);
+                let uv = uvs[((h >> 13) % sprites::ORE_VARIANTS) as usize];
                 self.ore.push(Instance {
                     pos: [x, y],
                     size: [1.0, 1.0],

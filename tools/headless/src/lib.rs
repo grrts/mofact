@@ -25,6 +25,10 @@ pub struct Scenario {
     pub stock: Vec<(ItemId, u32)>,
     #[serde(default)]
     pub ore: Vec<(i32, i32, ItemId)>,
+    /// Round patches of ore: centre x, y, radius in tiles, and the ore.
+    /// [`parse`] adds their tiles to `ore`.
+    #[serde(default)]
+    pub patches: Vec<(f32, f32, f32, ItemId)>,
     pub build: Vec<Build>,
     /// Seconds to run before measuring, so the chain fills up.
     pub warmup_seconds: u32,
@@ -84,7 +88,20 @@ impl fmt::Display for Measured {
 }
 
 pub fn parse(text: &str) -> Result<Scenario, String> {
-    ron::from_str(text).map_err(|e| e.to_string())
+    let mut s: Scenario = ron::from_str(text).map_err(|e| e.to_string())?;
+    for (cx, cy, r, item) in &s.patches {
+        let (lo_x, hi_x) = ((cx - r).floor() as i32, (cx + r).ceil() as i32);
+        let (lo_y, hi_y) = ((cy - r).floor() as i32, (cy + r).ceil() as i32);
+        for y in lo_y..=hi_y {
+            for x in lo_x..=hi_x {
+                let inside = (x as f32 - cx).hypot(y as f32 - cy) <= *r;
+                if inside && !s.ore.iter().any(|&(ox, oy, _)| (ox, oy) == (x, y)) {
+                    s.ore.push((x, y, item.clone()));
+                }
+            }
+        }
+    }
+    Ok(s)
 }
 
 /// Build the scenario and run it. Errors if a building can't be placed.

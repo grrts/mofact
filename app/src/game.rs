@@ -101,6 +101,7 @@ impl Game {
         let Some(target) = self.target.as_mut() else {
             return Frame::Skipped;
         };
+        self.controls.camera.set_scale(scale);
         // Some platforms resize without telling us; follow the window every frame.
         if (w, h) != target.size() {
             target.resize(&self.gpu, w, h);
