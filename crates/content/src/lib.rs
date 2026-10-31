@@ -246,11 +246,13 @@ mod tests {
         assert!(watcher.poll().is_none(), "quiet until something changes");
 
         let items = std::fs::read_to_string(dir.join("items.ron")).unwrap();
+        // Insert after the opening bracket, not "[\n": Windows checkouts may use CRLF.
         let added = items.replacen(
-            "[\n",
-            "[\n    (id: \"steel\", name: \"Steel\", kind: Solid, shape: Plate, color: \"iron\", tier: 2),\n",
+            '[',
+            "[(id: \"steel\", name: \"Steel\", kind: Solid, shape: Plate, color: \"iron\", tier: 2),",
             1,
         );
+        assert_ne!(added, items);
         std::fs::write(dir.join("items.ron"), added).unwrap();
 
         let reloaded = watcher.poll().expect("change seen").unwrap();
