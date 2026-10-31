@@ -1,0 +1,15 @@
+[package]
+name = "mofact-ui"
+description = "Touch-first game UI: radial menu, sheets, toolbar, dashboards."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mofact-core.workspace = true
+mofact-input.workspace = true
+
+[lints]
+workspace = true

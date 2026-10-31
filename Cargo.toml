@@ -1,0 +1,50 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/core",
+    "crates/sim",
+    "crates/world",
+    "crates/render",
+    "crates/artkit",
+    "crates/ui",
+    "crates/input",
+    "app",
+    "tools/headless",
+    "tools/bench",
+    "tools/balance",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+license = "LicenseRef-Proprietary"
+publish = false
+
+[workspace.dependencies]
+mofact-core = { path = "crates/core" }
+mofact-sim = { path = "crates/sim" }
+mofact-world = { path = "crates/world" }
+mofact-render = { path = "crates/render" }
+mofact-artkit = { path = "crates/artkit" }
+mofact-ui = { path = "crates/ui" }
+mofact-input = { path = "crates/input" }
+serde = { version = "1", features = ["derive"] }
+ron = "0.8"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+
+[profile.dev]
+# The simulation is too slow to playtest unoptimised; keep debug info but optimise dependencies.
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+lto = "thin"
+codegen-units = 1

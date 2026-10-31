@@ -1,0 +1,15 @@
+[package]
+name = "mofact-render"
+description = "wgpu renderer: instanced batches, atlases, zoom bands, tick smoothing."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mofact-core.workspace = true
+mofact-artkit.workspace = true
+
+[lints]
+workspace = true
