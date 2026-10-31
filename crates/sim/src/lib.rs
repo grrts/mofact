@@ -10,6 +10,7 @@
 pub use mofact_core as core;
 
 mod clock;
+pub mod entities;
 mod thread;
 
 pub use clock::Stepper;
