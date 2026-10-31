@@ -928,7 +928,7 @@ fn underground_belts_pass_under_buildings() {
 /// Fluid handling researched and plenty to build with.
 fn plumbing(content: &Content) -> Sim {
     let mut sim = Sim::with_content(content);
-    for r in ["steel-working", "motors", "fluid-handling"] {
+    for r in ["steel-working", "motors", "fluid-handling", "steam-power"] {
         sim.complete_research(&r.into());
     }
     for i in [
@@ -937,6 +937,7 @@ fn plumbing(content: &Content) -> Sim {
         "gear",
         "wire",
         "motor",
+        "brick",
         "steel",
     ] {
         sim.add_stock(&item(i), 100_000);
@@ -1098,5 +1099,83 @@ fn fluid_survives_saves_and_rebuilds() {
     assert!(
         left + right + 2 >= held - held / 25,
         "{left} + {right} of {held}"
+    );
+}
+
+/// Kilowatts the first grid gives, averaged over `seconds` while a coal
+/// goes into `boiler` every second.
+fn steam_kw(sim: &mut Sim, boiler: EntityId, seconds: u32) -> f32 {
+    let mut total = 0.0;
+    for _ in 0..seconds {
+        sim.feed(boiler, &item("coal"));
+        run(sim, 1);
+        total += sim.snapshot().grids[0].supply_kw;
+    }
+    total / seconds as f32
+}
+
+#[test]
+fn a_steam_engine_gives_less_when_the_water_runs_short() {
+    let mut sim = plumbing(&content());
+    // Water into a boiler facing east, steam out to an engine.
+    let well = place(&mut sim, "water-well", 0, 0, Dir::East, None);
+    let feed = place(&mut sim, "pipe", 1, 0, Dir::East, None);
+    let boiler = place(&mut sim, "boiler", 2, 0, Dir::East, None);
+    place(&mut sim, "pipe", 3, 0, Dir::East, None);
+    let engine = place(&mut sim, "steam-engine", 4, 0, Dir::East, None);
+    // One turbine to start the well, and more wells than it can run, so
+    // the grid wants all the engine can give.
+    place(&mut sim, "pole", 2, 2, Dir::East, None);
+    place(&mut sim, "wind-turbine", 3, 2, Dir::East, None);
+    for x in 0..4 {
+        place(&mut sim, "water-well", x, 4, Dir::East, None);
+    }
+    let warming = steam_kw(&mut sim, boiler, 10);
+    let full = steam_kw(&mut sim, boiler, 10);
+    assert!(
+        full > 300.0,
+        "wind and steam together: {full} kW (warming up: {warming})"
+    );
+    let view = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == engine)
+            .unwrap()
+    };
+    assert_eq!(view(&sim).state, MachineState::Working);
+
+    // Cut the water: the engine runs dry and the grid is back to the wind.
+    sim.apply(&Command::Remove { entity: feed });
+    sim.apply(&Command::Remove { entity: well });
+    // What's already in the boiler and the steam pipe lasts a while.
+    run(&mut sim, 20);
+    let dry = steam_kw(&mut sim, boiler, 5);
+    assert!(dry < 61.0, "only the wind left: {dry} kW");
+    assert_eq!(view(&sim).state, MachineState::Starved);
+
+    // An engine saves what it gave on its last tick.
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.save(), sim.save());
+}
+
+#[test]
+fn engines_burn_only_for_what_the_wind_does_not_give() {
+    let mut sim = plumbing(&content());
+    place(&mut sim, "water-well", 0, 0, Dir::East, None);
+    place(&mut sim, "pipe", 1, 0, Dir::East, None);
+    let boiler = place(&mut sim, "boiler", 2, 0, Dir::East, None);
+    place(&mut sim, "pipe", 3, 0, Dir::East, None);
+    place(&mut sim, "steam-engine", 4, 0, Dir::East, None);
+    place(&mut sim, "pole", 2, 2, Dir::East, None);
+    place(&mut sim, "wind-turbine", 3, 2, Dir::East, None);
+    // The well asks 90 kW; the turbine gives 60, so steam makes up 30.
+    let warming = steam_kw(&mut sim, boiler, 20);
+    let snap = sim.snapshot();
+    let g = &snap.grids[0];
+    assert!(
+        (85.0..=100.0).contains(&g.supply_kw),
+        "{warming} then {g:?}"
     );
 }

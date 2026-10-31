@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 5;
+pub const VERSION: u16 = 6;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -128,6 +128,10 @@ enum SavedState {
     },
     Pump,
     Well,
+    /// An engine and the share of its output it gave on its last tick.
+    Engine {
+        share: u32,
+    },
 }
 
 /// Bring an older payload up to [`VERSION`].
@@ -146,10 +150,10 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: None,
             })
         }
-        // Versions 3 to 5 added poles and generators, then splitters and
-        // underground belts, then fluids: new variants only, so a version 2
-        // payload reads as it is.
-        2..=5 => postcard::from_bytes(payload).map_err(corrupt),
+        // Versions 3 to 6 added poles and generators, then splitters and
+        // underground belts, then fluids, then engines: new variants only,
+        // so a version 2 payload reads as it is.
+        2..=6 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -213,6 +217,7 @@ impl Sim {
                     },
                     State::Pump => SavedState::Pump,
                     State::Well => SavedState::Well,
+                    State::Engine { share } => SavedState::Engine { share: *share },
                 };
                 let saved = Saved {
                     building: t.buildings[e.kind as usize].id.clone(),
@@ -437,6 +442,9 @@ impl Sim {
                 }
                 (SavedState::Pump, Role::Pump { .. }) => State::Pump,
                 (SavedState::Well, Role::Well { .. }) => State::Well,
+                (SavedState::Engine { share }, Role::Engine { .. }) => State::Engine {
+                    share: share.min(crate::power::FULL),
+                },
                 _ => {
                     warnings.push(format!(
                         "building `{}` changed role; rebuilt empty",

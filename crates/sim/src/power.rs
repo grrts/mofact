@@ -11,6 +11,10 @@
 //! tick follows from the tick number alone (see [`runs`]), so grids hold no
 //! state of their own: they are rebuilt from the buildings whenever a
 //! pole, generator or powered machine comes or goes, and after a load.
+//!
+//! Engines (steam engines, T30) give only what they burned fuel for on the
+//! last tick, and burn only for the demand the free generators don't meet:
+//! each grid's `load` says what share of its engines' output it needs.
 
 use crate::entities::Entities;
 use crate::tables::{Role, Tables};
@@ -22,8 +26,14 @@ pub const FULL: u32 = 1024;
 /// One grid: what it gives and what was asked of it this tick.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Grid {
-    /// Watts its generators give.
+    /// Watts its generators and engines give this tick.
     pub supply: u64,
+    /// Watts its generators give whatever happens: wind.
+    pub base: u64,
+    /// The most its engines can give, in watts.
+    pub engines: u64,
+    /// The share of its engines' output it needs, out of [`FULL`].
+    pub load: u32,
     /// Watts its working machines ask for.
     pub demand: u64,
     /// The share of demand met, out of [`FULL`].
@@ -103,7 +113,8 @@ impl Grids {
                 Role::Generator { watts } => Some(watts),
                 _ => None,
             };
-            if b.power == 0 && generator.is_none() {
+            let engine = matches!(b.role, Role::Engine { .. });
+            if b.power == 0 && generator.is_none() && !engine {
                 continue;
             }
             let (w, h) = (i32::from(e.size.0), i32::from(e.size.1));
@@ -118,7 +129,11 @@ impl Grids {
                 let g = pole_grid[k];
                 out.of[id.0 as usize] = Some(g);
                 if let Some(watts) = generator {
+                    out.grids[g as usize].base += u64::from(watts);
                     out.grids[g as usize].supply += u64::from(watts);
+                }
+                if let Role::Engine { watts, .. } = b.role {
+                    out.grids[g as usize].engines += u64::from(watts);
                 }
             }
         }
@@ -162,7 +177,7 @@ mod tests {
         let mut g = Grid {
             supply: 60_000,
             demand: 120_000,
-            sat: 0,
+            ..Grid::default()
         };
         g.settle();
         assert_eq!(g.sat, FULL / 2);

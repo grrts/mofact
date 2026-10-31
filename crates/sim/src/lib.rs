@@ -94,6 +94,11 @@ enum State {
     PipeTunnel(Tunnel),
     Pump,
     Well,
+    /// An engine, and the share of its full output it gave on the last
+    /// tick, out of [`power::FULL`].
+    Engine {
+        share: u32,
+    },
 }
 
 /// One end of an underground belt.
@@ -535,6 +540,7 @@ impl Sim {
             Role::UndergroundPipe { .. } => State::PipeTunnel(Tunnel::default()),
             Role::Pump { .. } => State::Pump,
             Role::Well { .. } => State::Well,
+            Role::Engine { .. } => State::Engine { share: 0 },
         }
     }
 
@@ -645,7 +651,12 @@ impl Sim {
     /// Rebuild the power grids if a building of `kind` changes them.
     fn regrid(&mut self, kind: u16) {
         let b = &self.tables.buildings[kind as usize];
-        if b.power > 0 || matches!(b.role, Role::Pole { .. } | Role::Generator { .. }) {
+        if b.power > 0
+            || matches!(
+                b.role,
+                Role::Pole { .. } | Role::Generator { .. } | Role::Engine { .. }
+            )
+        {
             self.rebuild_grids();
         }
     }
@@ -673,10 +684,20 @@ impl Sim {
         }
         for g in &mut self.grids.grids {
             g.demand = 0;
+            g.supply = g.base;
         }
         for (id, e) in self.entities.iter() {
-            let watts = self.tables.buildings[e.kind as usize].power;
             let slot = id.0 as usize;
+            // What each engine gave on the last tick.
+            if let (Role::Engine { watts, .. }, Some(g), Some(State::Engine { share })) = (
+                &self.tables.buildings[e.kind as usize].role,
+                self.grids.grid(slot),
+                self.states[slot].as_ref(),
+            ) {
+                self.grids.grids[g as usize].supply +=
+                    u64::from(*watts) * u64::from(*share) / u64::from(power::FULL);
+            }
+            let watts = self.tables.buildings[e.kind as usize].power;
             if let (true, Some(g), Some(state)) =
                 (watts > 0, self.grids.grid(slot), self.states[slot].as_ref())
             {
@@ -687,6 +708,10 @@ impl Sim {
         }
         for g in &mut self.grids.grids {
             g.settle();
+            let short = g.demand.saturating_sub(g.base) * u64::from(power::FULL);
+            g.load = short
+                .checked_div(g.engines)
+                .map_or(0, |l| l.min(u64::from(power::FULL)) as u32);
         }
     }
 
@@ -730,11 +755,30 @@ impl Sim {
                     }
                 }
             }
+            State::Engine { share } => {
+                let Role::Engine {
+                    fluid, per_tick, ..
+                } = self.tables.buildings[e.kind as usize].role
+                else {
+                    return;
+                };
+                // Burn for the share of output the grid needs, and give
+                // only as much as there was fluid for.
+                let slot = self.entities.at(e.pos).map_or(0, |id| id.0 as usize);
+                let load = self
+                    .grids
+                    .grid(slot)
+                    .map_or(0, |g| self.grids.grids[g as usize].load);
+                let want = per_tick * u64::from(load) / u64::from(power::FULL);
+                let got = self.fluids.pull(&self.entities, e, |_| true, fluid, want);
+                *share = (got * u64::from(power::FULL) / per_tick) as u32;
+            }
             State::Well => {
                 if let (true, Role::Well { fluid, per_tick }) =
                     (go, &self.tables.buildings[e.kind as usize].role)
                 {
-                    self.fluids.fill(&self.entities, e, *fluid, *per_tick);
+                    self.fluids
+                        .fill(&self.entities, e, |_| true, *fluid, *per_tick);
                 }
             }
             State::Splitter { held, right } => {
@@ -816,11 +860,19 @@ impl Sim {
                 if let Some(r) = c.recipe {
                     let t = &self.tables;
                     let def = &t.recipes[r as usize];
-                    // Fluid inputs come from the pipes around, up to two crafts' worth.
+                    // Fluid inputs come from the pipes on any side but the
+                    // front, up to two crafts' worth.
+                    let out_side = e.dir;
                     for (have, &(item, need)) in c.inputs.iter_mut().zip(&def.inputs) {
                         let want = (need * t.scale(item) * 2).saturating_sub(*have);
                         if t.fluid[item as usize] && want > 0 {
-                            let got = self.fluids.pull(&self.entities, e, item, u64::from(want));
+                            let got = self.fluids.pull(
+                                &self.entities,
+                                e,
+                                |d| d != out_side,
+                                item,
+                                u64::from(want),
+                            );
                             *have += got as u32;
                         }
                     }
@@ -862,8 +914,16 @@ impl Sim {
                 c.blocked = if full { c.blocked + 1 } else { 0 };
                 match c.out_item {
                     Some(item) if c.out > 0 && self.tables.fluid[item as usize] => {
-                        // Fluid goes out into the pipes on any side.
-                        let n = self.fluids.fill(&self.entities, e, item, u64::from(c.out));
+                        // Fluid goes out the front only, so it can't run
+                        // back into an input line that has run dry.
+                        let out_side = e.dir;
+                        let n = self.fluids.fill(
+                            &self.entities,
+                            e,
+                            |d| d == out_side,
+                            item,
+                            u64::from(c.out),
+                        );
                         c.out -= n as u32;
                     }
                     Some(item) if c.out > 0 && self.push(front, item, e.dir) => {
@@ -941,7 +1001,7 @@ impl Sim {
                 .into_iter()
                 .filter(|&d| self.fluids.toward(&self.entities, e.pos, d).is_some())
                 .fold(0, |m, d| m | fluids::bit(d)),
-            Some(State::Well) => Dir::ALL
+            Some(State::Well | State::Engine { .. }) => Dir::ALL
                 .into_iter()
                 .filter(|&d| self.fluids.toward(&self.entities, e.pos, d).is_some())
                 .fold(0, |m, d| m | fluids::bit(d)),
@@ -967,7 +1027,7 @@ impl Sim {
                             .entities
                             .get(other)
                             .is_some_and(|p| p.dir == d || p.dir == d.opposite()),
-                        Some(State::Well) => true,
+                        Some(State::Well | State::Engine { .. }) => true,
                         Some(State::Crafter(_)) => self.uses_fluid(o),
                         _ => false,
                     };
@@ -1026,7 +1086,8 @@ impl Sim {
             | State::Pipe
             | State::PipeTunnel(_)
             | State::Pump
-            | State::Well => false,
+            | State::Well
+            | State::Engine { .. } => false,
             State::Splitter { held, .. } => {
                 // Only from behind.
                 if dir != target.dir || held.is_some() {
@@ -1071,15 +1132,21 @@ impl Sim {
                     else {
                         return false;
                     };
+                    // The recipe whose only solid input is this item; its
+                    // fluid inputs come from pipes (a boiler takes coal).
                     let auto = recipes.iter().copied().find(|&r| {
                         let ins = &self.tables.recipes[r as usize].inputs;
                         let lock = self.tables.recipe_lock[r as usize];
                         let open = lock.is_none_or(|q| self.research.done[q as usize]);
-                        ins.len() == 1 && ins[0].0 == item && open
+                        let mut solid =
+                            ins.iter().filter(|&&(i, _)| !self.tables.fluid[i as usize]);
+                        solid.next().is_some_and(|&(i, _)| i == item)
+                            && solid.next().is_none()
+                            && open
                     });
                     let Some(r) = auto else { return false };
                     c.recipe = Some(r);
-                    c.inputs = vec![0];
+                    c.inputs = vec![0; self.tables.recipes[r as usize].inputs.len()];
                 }
                 let def = &self.tables.recipes[c.recipe.expect("set above") as usize];
                 let Some(slot) = def.inputs.iter().position(|&(i, _)| i == item) else {
@@ -1203,6 +1270,19 @@ impl Sim {
                         None if lab.idle > STARVED_AFTER => (MachineState::Starved, 0.0, None),
                         None => (MachineState::Working, 0.0, None),
                     }
+                }
+                Some(State::Engine { share }) => {
+                    let load = self
+                        .grids
+                        .grid(slot)
+                        .map_or(0, |g| self.grids.grids[g as usize].load);
+                    let st = match (*share, load) {
+                        (0, 0) => MachineState::Idle,
+                        (0, _) => MachineState::Starved,
+                        _ => MachineState::Working,
+                    };
+                    // Progress shows how hard it is working, from 0 to 1.
+                    (st, *share as f32 / power::FULL as f32, None)
                 }
                 _ => (MachineState::Working, 0.0, None),
             };

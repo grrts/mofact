@@ -35,4 +35,11 @@
         units: 20, seconds: 15.0,
         buildings: ["pipe", "underground-pipe", "tank", "pump", "water-well"],
     ),
+    (
+        id: "steam-power", name: "Steam power", tier: 2, requires: ["fluid-handling"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 20, seconds: 15.0,
+        buildings: ["boiler", "steam-engine"],
+        recipes: ["steam"],
+    ),
 ]

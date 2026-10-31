@@ -51,4 +51,11 @@
         inputs: [(item: "motor", count: 1), (item: "circuit", count: 1)],
         outputs: [(item: "engineering-pack", count: 1)],
     ),
+    // Steam (T30): sixty units of water and a lump of coal make sixty of
+    // steam, enough to run one steam engine for two seconds.
+    (
+        id: "steam", name: "Steam", category: "boiling", seconds: 2.0,
+        inputs: [(item: "water", count: 60), (item: "coal", count: 1)],
+        outputs: [(item: "steam", count: 60)],
+    ),
 ]

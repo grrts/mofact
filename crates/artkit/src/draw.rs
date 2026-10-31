@@ -999,3 +999,149 @@ pub fn well(c: &mut Canvas, z: f32, fine: bool, water: Rgba) {
         }
     }
 }
+
+/// A boiler: a steel drum lying along the way it faces, a firebox at its
+/// back that glows while it works, and the steam outlet on its front.
+pub fn boiler(c: &mut Canvas, z: f32, fine: bool, pose: &Pose) {
+    let s = z;
+    let sh = z * 0.07;
+    let along = pose.dir % 2 == 0;
+    // The drum's box in its own frame: long along the facing.
+    let (w, h) = if along {
+        (s * 0.86, s * 0.62)
+    } else {
+        (s * 0.62, s * 0.86)
+    };
+    let (x, y) = ((s - w) / 2.0, (s - h) / 2.0);
+    shadow(c, rr(x + sh, y + sh * 1.3, w, h, s * 0.28));
+    fill(c, rr(x, y, w, h, s * 0.28), pal::MACHINE_EDGE);
+    fill(
+        c,
+        rr(
+            x + s * 0.04,
+            y + s * 0.04,
+            w - s * 0.08,
+            h - s * 0.08,
+            s * 0.24,
+        ),
+        pal::PIPE,
+    );
+    // A lit stripe along the drum's top edge.
+    if along {
+        c.fill_rect(
+            x + s * 0.14,
+            y + s * 0.1,
+            w - s * 0.28,
+            s * 0.06,
+            pal::PIPE_HI,
+        );
+    } else {
+        c.fill_rect(
+            x + s * 0.1,
+            y + s * 0.14,
+            s * 0.06,
+            h - s * 0.28,
+            pal::PIPE_HI,
+        );
+    }
+    if fine {
+        // Riveted bands round the drum.
+        for f in [-0.18, 0.18] {
+            let (a, b) = (pose.local(z, f, -0.27), pose.local(z, f, 0.27));
+            c.line(&[a, b], pal::MACHINE_EDGE, (s * 0.04).max(1.0));
+            for k in [-0.15, 0.0, 0.15] {
+                let (bx, by) = pose.local(z, f, k);
+                c.fill_circle(bx, by, s * 0.018, pal::RIVET);
+            }
+        }
+    }
+    // The firebox at the back.
+    let (fx, fy) = pose.local(z, -0.25, 0.0);
+    c.fill_circle(fx, fy, s * 0.15, pal::MACHINE_EDGE);
+    if pose.working {
+        let fl = 0.8 + 0.2 * (pose.t * 11.0).sin();
+        c.fill_circle(fx, fy, s * 0.12, pal::FLAME[0]);
+        c.fill_circle(fx, fy, s * 0.08 * fl, pal::FLAME[1]);
+        c.fill_circle(fx, fy, s * 0.035 * fl, pal::FLAME[2]);
+    } else {
+        c.fill_circle(fx, fy, s * 0.12, pal::HEARTH);
+    }
+    // A pressure gauge on top.
+    let (gx, gy) = pose.local(z, 0.08, 0.0);
+    c.fill_circle(gx, gy, s * 0.09, pal::MACHINE_EDGE);
+    c.fill_circle(gx, gy, s * 0.07, pal::INK);
+    let (nx, ny) = pose.local(z, 0.12, -0.03);
+    c.line(&[(gx, gy), (nx, ny)], pal::STARVE, (s * 0.025).max(1.0));
+    notch(c, z, pose);
+}
+
+/// A 2×2 steam engine: a cylinder and its piston rod driving a flywheel.
+/// `t` turns the flywheel a little, so a row of them doesn't look stamped.
+pub fn engine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.04 + sh,
+            s * 0.06 + sh * 1.3,
+            s * 0.92,
+            s * 0.88,
+            s * 0.1,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.04, s * 0.06, s * 0.92, s * 0.88, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.08, s * 0.88, s * 0.84, s * 0.08),
+        pal::MACHINE,
+    );
+    // The cylinder on the left, lying east to west.
+    let (cy0, ch) = (s * 0.36, s * 0.28);
+    fill(
+        c,
+        rr(s * 0.1, cy0, s * 0.36, ch, s * 0.06),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.12, cy0 + s * 0.02, s * 0.32, ch - s * 0.04, s * 0.05),
+        pal::PIPE,
+    );
+    c.fill_rect(s * 0.14, cy0 + s * 0.04, s * 0.28, s * 0.03, pal::PIPE_HI);
+    // The flywheel on the right, and the rod between them.
+    let (wx, wy, wr) = (s * 0.7, s * 0.5, s * 0.22);
+    let a = t * 2.0;
+    let crank = (wx + a.cos() * wr * 0.45, wy + a.sin() * wr * 0.45);
+    shadow(c, ellipse(wx + sh * 0.6, wy + sh * 0.8, wr, wr));
+    c.fill_circle(wx, wy, wr, pal::MACHINE_EDGE);
+    c.fill_circle(wx, wy, wr * 0.86, shade(pal::MACHINE, 0.12));
+    c.fill_circle(wx, wy, wr * 0.66, pal::MACHINE_EDGE);
+    for k in 0..6 {
+        let b = a + k as f32 / 6.0 * TAU;
+        c.line(
+            &[(wx, wy), (wx + b.cos() * wr * 0.8, wy + b.sin() * wr * 0.8)],
+            shade(pal::MACHINE, 0.12),
+            (s * 0.03).max(1.0),
+        );
+    }
+    c.line(
+        &[(s * 0.44, s * 0.5), crank],
+        pal::DRILL_BIT,
+        (s * 0.035).max(1.0),
+    );
+    c.fill_circle(wx, wy, s * 0.05, pal::ACCENT);
+    c.fill_circle(crank.0, crank.1, s * 0.03, pal::ACCENT);
+    if fine {
+        for (bx, by) in [(0.1, 0.13), (0.9, 0.13), (0.1, 0.87), (0.9, 0.87)] {
+            bolt(c, bx * s, by * s, z * 0.04);
+        }
+        // Steam pipe into the cylinder from the top.
+        c.fill_rect(s * 0.24, s * 0.12, s * 0.08, s * 0.24, pal::MACHINE_EDGE);
+        c.fill_rect(s * 0.255, s * 0.12, s * 0.05, s * 0.24, pal::PIPE);
+    }
+}

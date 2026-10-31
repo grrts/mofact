@@ -121,6 +121,14 @@ pub enum BuildingRole {
         fluid: ItemId,
         per_second: f32,
     },
+    /// Burns `per_second` units of `fluid` from the segments beside it to
+    /// put up to `kw` into its pole's grid; short of fluid, it gives that
+    /// much less. A steam engine.
+    Engine {
+        kw: f32,
+        fluid: ItemId,
+        per_second: f32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

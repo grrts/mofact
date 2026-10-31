@@ -44,4 +44,12 @@
         cost: [(item: "motor", count: 1), (item: "iron-plate", count: 2)]),
     (id: "water-well", name: "Water well", size: (1, 1), role: Well(fluid: "water", per_second: 600.0), power: 90.0,
         cost: [(item: "iron-plate", count: 10), (item: "gear", count: 5), (item: "motor", count: 1)]),
+    // Steam power (T30): a boiler burns coal to boil water from the pipes
+    // behind and beside it into steam out of its front; a steam engine
+    // burns steam into power, and gives less when the steam runs short.
+    (id: "boiler",    name: "Boiler",    size: (1, 1), role: Crafter(categories: ["boiling"], speed: 1.0),
+        cost: [(item: "brick", count: 5), (item: "iron-plate", count: 5)]),
+    (id: "steam-engine", name: "Steam engine", size: (2, 2),
+        role: Engine(kw: 300.0, fluid: "steam", per_second: 30.0),
+        cost: [(item: "steel", count: 10), (item: "gear", count: 10), (item: "motor", count: 2)]),
 ]

@@ -247,10 +247,10 @@ impl Fluids {
         (self.open[slot] & bit(dir.opposite()) != 0).then_some(seg)
     }
 
-    /// The segments around `e`, each once, in side order.
-    pub fn around(&self, entities: &Entities, e: &Entity) -> Vec<u32> {
+    /// The segments around `e` on the sides `keep` picks, each once, in side order.
+    pub fn around(&self, entities: &Entities, e: &Entity, keep: impl Fn(Dir) -> bool) -> Vec<u32> {
         let mut segs = Vec::new();
-        for (d, tile) in edges(e) {
+        for (d, tile) in edges(e).filter(|&(d, _)| keep(d)) {
             let Some(seg) = self.toward(entities, tile.step(d.opposite()), d) else {
                 continue;
             };
@@ -261,10 +261,17 @@ impl Fluids {
         segs
     }
 
-    /// Take up to `want` of `fluid` from the segments around `e`.
-    pub fn pull(&mut self, entities: &Entities, e: &Entity, fluid: Item, want: u64) -> u64 {
+    /// Take up to `want` of `fluid` from the segments on the sides of `e` that `keep` picks.
+    pub fn pull(
+        &mut self,
+        entities: &Entities,
+        e: &Entity,
+        keep: impl Fn(Dir) -> bool,
+        fluid: Item,
+        want: u64,
+    ) -> u64 {
         let mut got = 0;
-        for s in self.around(entities, e) {
+        for s in self.around(entities, e, keep) {
             got += self.segs[s as usize].take(fluid, want - got);
             if got == want {
                 break;
@@ -273,10 +280,17 @@ impl Fluids {
         got
     }
 
-    /// Give up to `n` of `fluid` to the segments around `e`.
-    pub fn fill(&mut self, entities: &Entities, e: &Entity, fluid: Item, n: u64) -> u64 {
+    /// Give up to `n` of `fluid` to the segments on the sides of `e` that `keep` picks.
+    pub fn fill(
+        &mut self,
+        entities: &Entities,
+        e: &Entity,
+        keep: impl Fn(Dir) -> bool,
+        fluid: Item,
+        n: u64,
+    ) -> u64 {
         let mut given = 0;
-        for s in self.around(entities, e) {
+        for s in self.around(entities, e, keep) {
             given += self.segs[s as usize].give(fluid, n - given);
             if given == n {
                 break;
