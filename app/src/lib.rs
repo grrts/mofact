@@ -668,11 +668,12 @@ fn screenshots(
     ore.fill(&camera, size);
     scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
     let mut overlay = Overlay::new(&look);
-    for sheet in ["toolbar", "build", "research", "radial"] {
+    for sheet in ["toolbar", "build", "research", "radial", "recipes"] {
         let mut hud = Hud::new();
         match sheet {
             "build" => hud.toggle_build_sheet(),
             "research" => hud.toggle_research(),
+            "recipes" => hud.browse("iron-plate".into()),
             "radial" => {
                 hud.pointer(Pointer::Down {
                     id: 1,
