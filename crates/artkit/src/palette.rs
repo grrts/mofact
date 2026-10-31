@@ -48,6 +48,9 @@ pub const LAMP_OFF: Rgba = [0x6b, 0x5a, 0x2a, 0xff];
 /// A circuit board's gold pins and dark chip.
 pub const PIN: Rgba = [0xe6, 0xc1, 0x5a, 0xff];
 pub const CHIP: Rgba = [0x1f, 0x5a, 0x35, 0xff];
+/// Power poles' weathered wood, and wind turbine blades.
+pub const POLE: Rgba = [0x8a, 0x6a, 0x48, 0xff];
+pub const BLADE: Rgba = [0xd8, 0xde, 0xe4, 0xff];
 
 /// `c` with its alpha scaled by `a` (0 to 1).
 pub fn alpha(c: Rgba, a: f32) -> Rgba {

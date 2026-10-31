@@ -30,6 +30,8 @@ pub const BLOCKED: &str = "badge:blocked";
 enum Art {
     Belt,
     Hub,
+    Pole,
+    Turbine,
     Drill {
         ore: Rgba,
         pose: Pose,
@@ -58,6 +60,10 @@ enum Kind {
     Drill,
     Furnace,
     Assembler,
+    /// Drawn as an assembler showing a research pack until labs get their own art.
+    Lab,
+    Pole,
+    Generator,
 }
 
 #[derive(Clone, Debug)]
@@ -148,6 +154,9 @@ impl Look {
             let (kind, recipes) = match &b.role {
                 BuildingRole::Belt { .. } => (Kind::Belt, Vec::new()),
                 BuildingRole::Hub => (Kind::Hub, Vec::new()),
+                BuildingRole::Lab { .. } => (Kind::Lab, Vec::new()),
+                BuildingRole::Pole { .. } => (Kind::Pole, Vec::new()),
+                BuildingRole::Generator { .. } => (Kind::Generator, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -180,6 +189,8 @@ impl Look {
             match kind {
                 Kind::Belt => {}
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
+                Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
+                Kind::Generator => push(&mut look, id.to_owned(), b.size, Art::Turbine),
                 _ => {
                     let none = std::iter::once(None);
                     let choices: Vec<Option<&str>> = none
@@ -216,6 +227,13 @@ impl Look {
                                     Kind::Furnace => Art::Furnace {
                                         ring: product.map(|p| p.1),
                                         pose,
+                                    },
+                                    Kind::Lab => Art::Assembler {
+                                        product: Some((Shape::Pack, palette::item("pack-survey"))),
+                                        pose: Pose {
+                                            working: false,
+                                            ..pose
+                                        },
                                     },
                                     _ => Art::Assembler {
                                         product,
@@ -259,9 +277,12 @@ impl Look {
 
     /// Whether `building` shows a status badge when it stalls.
     pub fn has_badge(&self, building: &BuildingId) -> bool {
-        self.buildings
-            .get(building)
-            .is_some_and(|b| !matches!(b.kind, Kind::Belt | Kind::Hub))
+        self.buildings.get(building).is_some_and(|b| {
+            !matches!(
+                b.kind,
+                Kind::Belt | Kind::Hub | Kind::Pole | Kind::Generator
+            )
+        })
     }
 
     /// The sprite that draws `building` facing `dir`, set to `setting` (a
@@ -277,7 +298,7 @@ impl Look {
         let b = self.buildings.get(building)?;
         let at = match b.kind {
             Kind::Belt => return Some(BELT),
-            Kind::Hub => b.base,
+            Kind::Hub | Kind::Pole | Kind::Generator => b.base,
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -360,6 +381,8 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
     match *art {
         Art::Belt => draw::belt(&mut c, z, fine, 0.0, 2.0),
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
+        Art::Pole => draw::pole(&mut c, z, fine),
+        Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
         Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
         Art::Assembler { product, ref pose } => draw::assembler(&mut c, z, product, fine, pose),

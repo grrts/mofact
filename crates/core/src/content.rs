@@ -70,6 +70,20 @@ pub enum BuildingRole {
     },
     /// The player's hub: everything delivered to it joins the stock.
     Hub,
+    /// Takes research packs from belts and works on the current research.
+    Lab {
+        speed: f32,
+    },
+    /// Carries power: links to poles up to `wire` tiles away and powers
+    /// buildings that overlap the square `supply` tiles around it.
+    Pole {
+        wire: u8,
+        supply: u8,
+    },
+    /// Puts `kw` into the grid of the pole covering it.
+    Generator {
+        kw: f32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -79,6 +93,9 @@ pub struct BuildingDef {
     pub size: (u8, u8),
     pub role: BuildingRole,
     pub cost: Vec<Stack>,
+    /// What it draws from the grid while working, in kW. Zero needs no power.
+    #[serde(default)]
+    pub power: f32,
 }
 
 /// One research: labs consume `cost` once per `units`, `seconds` each, and

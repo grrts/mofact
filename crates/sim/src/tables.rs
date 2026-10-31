@@ -1,7 +1,7 @@
 //! Content interned into dense indices for the simulation (R1).
 
 use mofact_core::content::{BuildingRole, Content, Stack};
-use mofact_core::ids::{BuildingId, ItemId, RecipeId};
+use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use std::collections::HashMap;
 
@@ -26,6 +26,27 @@ pub enum Role {
         recipes: Vec<Recipe>,
         speed: f32,
     },
+    Lab {
+        speed: f32,
+    },
+    Pole {
+        wire: u8,
+        supply: u8,
+    },
+    Generator {
+        watts: u32,
+    },
+}
+
+/// One research, interned.
+#[derive(Clone, Debug)]
+pub struct ResearchDef {
+    pub id: ResearchId,
+    pub requires: Vec<u16>,
+    /// Packs per unit.
+    pub cost: Vec<(Item, u32)>,
+    pub units: u32,
+    pub seconds: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -34,6 +55,8 @@ pub struct Building {
     pub size: (u8, u8),
     pub role: Role,
     pub cost: Vec<(Item, u32)>,
+    /// Watts drawn while working; zero needs no power.
+    pub power: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -49,9 +72,20 @@ pub struct Tables {
     pub items: Vec<ItemId>,
     pub recipes: Vec<RecipeDef>,
     pub buildings: Vec<Building>,
+    pub research: Vec<ResearchDef>,
+    /// The research that unlocks each recipe and building, if any.
+    pub recipe_lock: Vec<Option<u16>>,
+    pub building_lock: Vec<Option<u16>>,
+    /// Items any research consumes: what labs take from belts.
+    pub packs: Vec<Item>,
+    research_index: HashMap<ResearchId, u16>,
     item_index: HashMap<ItemId, Item>,
     recipe_index: HashMap<RecipeId, Recipe>,
     building_index: HashMap<BuildingId, u16>,
+}
+
+fn watts(kw: f32) -> u32 {
+    (kw * 1000.0).round().max(0.0) as u32
 }
 
 pub fn ticks(seconds: f32) -> u32 {
@@ -101,16 +135,57 @@ impl Tables {
                         .collect(),
                     speed: *speed,
                 },
+                BuildingRole::Lab { speed } => Role::Lab { speed: *speed },
+                BuildingRole::Pole { wire, supply } => Role::Pole {
+                    wire: *wire,
+                    supply: *supply,
+                },
+                BuildingRole::Generator { kw } => Role::Generator { watts: watts(*kw) },
             };
             t.buildings.push(Building {
                 id: b.id.clone(),
                 size: b.size,
                 role,
                 cost: stacks(&t, &b.cost),
+                power: watts(b.power),
             });
             t.building_index.insert(b.id.clone(), i as u16);
         }
+        for (i, r) in content.research.iter().enumerate() {
+            t.research_index.insert(r.id.clone(), i as u16);
+        }
+        t.recipe_lock = vec![None; t.recipes.len()];
+        t.building_lock = vec![None; t.buildings.len()];
+        for (i, r) in content.research.iter().enumerate() {
+            let def = ResearchDef {
+                id: r.id.clone(),
+                requires: r.requires.iter().filter_map(|q| t.research(q)).collect(),
+                cost: stacks(&t, &r.cost),
+                units: r.units.max(1),
+                seconds: r.seconds,
+            };
+            for &(item, _) in &def.cost {
+                if !t.packs.contains(&item) {
+                    t.packs.push(item);
+                }
+            }
+            t.research.push(def);
+            for x in &r.recipes {
+                if let Some(k) = t.recipe(x) {
+                    t.recipe_lock[k as usize] = Some(i as u16);
+                }
+            }
+            for x in &r.buildings {
+                if let Some(k) = t.building(x) {
+                    t.building_lock[k as usize] = Some(i as u16);
+                }
+            }
+        }
         t
+    }
+
+    pub fn research(&self, id: &ResearchId) -> Option<u16> {
+        self.research_index.get(id).copied()
     }
 
     pub fn item(&self, id: &ItemId) -> Option<Item> {

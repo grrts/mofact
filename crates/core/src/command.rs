@@ -5,7 +5,7 @@
 //! applying a command yields the command that reverses it.
 
 use crate::geom::{Dir, TilePos};
-use crate::ids::{BuildingId, EntityId, RecipeId};
+use crate::ids::{BuildingId, EntityId, RecipeId, ResearchId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -26,6 +26,9 @@ pub enum Command {
         entity: EntityId,
         recipe: Option<RecipeId>,
     },
+    /// Choose what labs work on; `None` stops research. Locked until its
+    /// prerequisites are done; a finished research can't be chosen again.
+    SetResearch { research: Option<ResearchId> },
 }
 
 /// Why the simulation refused a command. Refused commands change nothing.

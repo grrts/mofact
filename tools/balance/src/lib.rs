@@ -293,8 +293,12 @@ fn research_order(content: &Content, report: &mut Report) {
     let mut done: HashSet<&str> = HashSet::new();
     loop {
         let have = makeable(content, &recipes, &buildings);
+        // Research happens in labs, so one must be open to build.
+        let lab = content.buildings.iter().any(|b| {
+            buildings.contains(b.id.as_str()) && matches!(b.role, BuildingRole::Lab { .. })
+        });
         let next = content.research.iter().find(|r| {
-            !done.contains(r.id.as_str())
+            lab && !done.contains(r.id.as_str())
                 && r.requires.iter().all(|q| done.contains(q.as_str()))
                 && r.cost.iter().all(|s| have.contains(&s.item))
         });
@@ -307,7 +311,7 @@ fn research_order(content: &Content, report: &mut Report) {
     for r in &content.research {
         if !done.contains(r.id.as_str()) {
             report.problems.push(format!(
-                "research `{}` can never be done: its prerequisites or packs stay out of reach",
+                "research `{}` can never be done: its prerequisites, packs or a lab stay out of reach",
                 r.id
             ));
         }
@@ -391,8 +395,8 @@ mod tests {
         assert!(report.problems.is_empty(), "{}", report.text());
         assert_eq!(report.depth[&ItemId::from("circuit")], 3);
         assert_eq!(report.depth[&ItemId::from("engineering-pack")], 4);
-        // Bricks go into labs once they exist (T28); research takes the packs.
-        assert_eq!(report.end_products, vec![ItemId::from("brick")]);
+        // Bricks go into labs; research takes the packs.
+        assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
         assert_eq!(order, ["steel-working", "motors", "fast-belts"]);
     }

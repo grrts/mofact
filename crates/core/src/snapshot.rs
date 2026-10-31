@@ -5,7 +5,7 @@
 //! latest snapshots using `tick`.
 
 use crate::geom::{Dir, TilePos};
-use crate::ids::{BuildingId, EntityId, ItemId, RecipeId};
+use crate::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
 use crate::Tick;
 use serde::{Deserialize, Serialize};
 
@@ -33,6 +33,9 @@ pub struct EntityView {
     /// For a miner, the ore under it.
     #[serde(default)]
     pub ore: Option<ItemId>,
+    /// The power grid it is on, as an index into [`Snapshot::grids`].
+    #[serde(default)]
+    pub grid: Option<u16>,
     pub state: MachineState,
     /// Craft progress, 0.0 to 1.0.
     pub progress: f32,
@@ -54,4 +57,30 @@ pub struct Snapshot {
     pub belt_items: Vec<BeltItemView>,
     /// The player's stock, sorted by item id.
     pub stock: Vec<(ItemId, u32)>,
+    pub research: ResearchView,
+    /// Each power grid: poles linked by wire and what they cover.
+    #[serde(default)]
+    pub grids: Vec<GridView>,
+}
+
+/// One power grid this tick.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct GridView {
+    /// What its generators can give, in kW.
+    pub supply_kw: f32,
+    /// What its working machines ask for, in kW.
+    pub demand_kw: f32,
+    /// The share of demand met, 0.0 to 1.0: machines run this much slower.
+    pub satisfaction: f32,
+}
+
+/// Where research stands, for the research screen and the toolbar's locks.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ResearchView {
+    /// What labs are working on.
+    pub current: Option<ResearchId>,
+    /// Units done and needed for the current research.
+    pub progress: (u32, u32),
+    /// Finished research, in content order.
+    pub done: Vec<ResearchId>,
 }

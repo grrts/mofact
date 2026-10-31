@@ -1,4 +1,5 @@
-//! Save format v1 (T11, R54): a versioned binary file.
+//! Save format v2 (T11, R54): a versioned binary file. v2 adds research
+//! progress and labs (T28).
 //!
 //! A save is the magic bytes `MOFACT`, a little-endian `u16` format version,
 //! then the world encoded with postcard. Content is stored by id, never by
@@ -11,17 +12,17 @@
 
 use crate::entities::Entity;
 use crate::tables::Role;
-use crate::{Crafter, Sim, State};
+use crate::{Crafter, Lab, Sim, State};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
-use mofact_core::ids::{BuildingId, ItemId, RecipeId};
+use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use mofact_core::Tick;
 use serde::{Deserialize, Serialize};
 use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 3;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -52,6 +53,19 @@ struct World {
     delivered: Vec<(ItemId, u64)>,
     ore: Vec<(TilePos, ItemId)>,
     /// Entities by slot, so ids stay the same across a save and load.
+    entities: Vec<(u32, Saved)>,
+    /// Units done per research, and whether it is finished.
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+}
+
+/// Version 1: the same, before research.
+#[derive(Deserialize)]
+struct WorldV1 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
     entities: Vec<(u32, Saved)>,
 }
 
@@ -86,13 +100,35 @@ enum SavedState {
         idle: u32,
         blocked: u32,
     },
+    // New variants go at the end, so older saves still decode.
+    Lab {
+        packs: Vec<(ItemId, u32)>,
+        unit: Option<(ResearchId, u32)>,
+        idle: u32,
+    },
+    Pole,
+    Generator,
 }
 
-/// Bring an older payload up to [`VERSION`]. Version 1 is the first, so
-/// there is nothing to do yet; v2 will decode a v1 `World` and convert it here.
+/// Bring an older payload up to [`VERSION`].
 fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
+    let corrupt = |e: postcard::Error| LoadError::Corrupt(e.to_string());
     match version {
-        1 => postcard::from_bytes(payload).map_err(|e| LoadError::Corrupt(e.to_string())),
+        1 => {
+            let v1: WorldV1 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v1.tick,
+                stock: v1.stock,
+                delivered: v1.delivered,
+                ore: v1.ore,
+                entities: v1.entities,
+                research: Vec::new(),
+                current: None,
+            })
+        }
+        // Version 3 added poles and generators: new variants only, so a
+        // version 2 payload reads as it is.
+        2 | 3 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -128,6 +164,15 @@ impl Sim {
                         idle: c.idle,
                         blocked: c.blocked,
                     },
+                    State::Lab(lab) => SavedState::Lab {
+                        packs: lab.packs.iter().map(|&(i, n)| (item(i), n)).collect(),
+                        unit: lab
+                            .unit
+                            .map(|(r, p)| (t.research[r as usize].id.clone(), p)),
+                        idle: lab.idle,
+                    },
+                    State::Pole => SavedState::Pole,
+                    State::Generator => SavedState::Generator,
                 };
                 let saved = Saved {
                     building: t.buildings[e.kind as usize].id.clone(),
@@ -156,6 +201,22 @@ impl Sim {
                 .collect(),
             ore,
             entities,
+            research: t
+                .research
+                .iter()
+                .enumerate()
+                .map(|(r, def)| {
+                    (
+                        def.id.clone(),
+                        self.research.units[r],
+                        self.research.done[r],
+                    )
+                })
+                .collect(),
+            current: self
+                .research
+                .current
+                .map(|r| t.research[r as usize].id.clone()),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -196,6 +257,24 @@ impl Sim {
                 sim.ore.insert(*pos, i);
             }
         }
+        let research = |id: &ResearchId, w: &mut Vec<String>| {
+            let r = t.research(id);
+            if r.is_none() {
+                w.push(format!("research `{id}` no longer exists"));
+            }
+            r
+        };
+        for (id, units, done) in &world.research {
+            if let Some(r) = research(id, &mut warnings) {
+                sim.research.units[r as usize] = *units;
+                sim.research.done[r as usize] = *done;
+            }
+        }
+        sim.research.current = world
+            .current
+            .as_ref()
+            .and_then(|id| research(id, &mut warnings))
+            .filter(|&r| !sim.research.done[r as usize]);
         for (slot, s) in world.entities {
             let Some(kind) = t.building(&s.building) else {
                 warnings.push(format!("building `{}` no longer exists", s.building));
@@ -258,6 +337,16 @@ impl Sim {
                         blocked,
                     })
                 }
+                (SavedState::Lab { packs, unit, idle }, Role::Lab { .. }) => State::Lab(Lab {
+                    packs: packs
+                        .iter()
+                        .filter_map(|(i, n)| Some((item(i, &mut warnings)?, *n)))
+                        .collect(),
+                    unit: unit.and_then(|(r, p)| Some((research(&r, &mut warnings)?, p))),
+                    idle,
+                }),
+                (SavedState::Pole, Role::Pole { .. }) => State::Pole,
+                (SavedState::Generator, Role::Generator { .. }) => State::Generator,
                 _ => {
                     warnings.push(format!(
                         "building `{}` changed role; rebuilt empty",
@@ -286,6 +375,7 @@ impl Sim {
                 .resize(sim.states.len().max(slot as usize + 1), None);
             sim.states[slot as usize] = Some(state);
         }
+        sim.rebuild_grids();
         Ok((sim, warnings))
     }
 }
