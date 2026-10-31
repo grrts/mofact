@@ -33,6 +33,9 @@ pub struct EntityView {
     /// For a miner, the ore under it.
     #[serde(default)]
     pub ore: Option<ItemId>,
+    /// The power grid it is on, as an index into [`Snapshot::grids`].
+    #[serde(default)]
+    pub grid: Option<u16>,
     pub state: MachineState,
     /// Craft progress, 0.0 to 1.0.
     pub progress: f32,
@@ -55,6 +58,20 @@ pub struct Snapshot {
     /// The player's stock, sorted by item id.
     pub stock: Vec<(ItemId, u32)>,
     pub research: ResearchView,
+    /// Each power grid: poles linked by wire and what they cover.
+    #[serde(default)]
+    pub grids: Vec<GridView>,
+}
+
+/// One power grid this tick.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct GridView {
+    /// What its generators can give, in kW.
+    pub supply_kw: f32,
+    /// What its working machines ask for, in kW.
+    pub demand_kw: f32,
+    /// The share of demand met, 0.0 to 1.0: machines run this much slower.
+    pub satisfaction: f32,
 }
 
 /// Where research stands, for the research screen and the toolbar's locks.

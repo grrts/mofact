@@ -16,6 +16,7 @@ pub use mofact_core as core;
 mod clock;
 pub mod entities;
 mod history;
+mod power;
 pub mod save;
 mod tables;
 mod thread;
@@ -30,8 +31,11 @@ use mofact_core::command::{Command, CommandError, CommandResult};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
-use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, ResearchView, Snapshot};
+use mofact_core::snapshot::{
+    BeltItemView, EntityView, GridView, MachineState, ResearchView, Snapshot,
+};
 use mofact_core::Tick;
+use power::Grids;
 use std::collections::HashMap;
 use tables::{ticks, Item, Recipe, Role, Tables};
 
@@ -66,6 +70,9 @@ enum State {
     },
     Crafter(Crafter),
     Lab(Lab),
+    /// Poles and generators hold nothing: their grids follow from where they stand.
+    Pole,
+    Generator,
 }
 
 /// A lab: packs waiting, and the unit it is working on, if any.
@@ -104,6 +111,7 @@ pub struct Sim {
     stock: Vec<u32>,
     delivered: Vec<u64>,
     research: Research,
+    grids: Grids,
 }
 
 /// Research progress, kept per research so switching loses nothing.
@@ -296,6 +304,7 @@ impl Sim {
                 let id = self.entities.insert(entity).expect("footprint checked");
                 self.states.resize(id.0 as usize + 1, None);
                 self.states[id.0 as usize] = Some(state);
+                self.regrid(kind);
                 Ok((vec![Command::Remove { entity: id }], Some(id)))
             }
             Command::Remove { entity } => {
@@ -322,6 +331,7 @@ impl Sim {
                 };
                 self.entities.remove(*entity);
                 self.states[entity.0 as usize] = None;
+                self.regrid(e.kind);
                 Ok((vec![undo], None))
             }
             Command::Rotate { entity, dir } => {
@@ -434,12 +444,62 @@ impl Sim {
                 ..Crafter::default()
             }),
             Role::Lab { .. } => State::Lab(Lab::default()),
+            Role::Pole { .. } => State::Pole,
+            Role::Generator { .. } => State::Generator,
+        }
+    }
+
+    /// Rebuild the power grids if a building of `kind` changes them.
+    fn regrid(&mut self, kind: u16) {
+        let b = &self.tables.buildings[kind as usize];
+        if b.power > 0 || matches!(b.role, Role::Pole { .. } | Role::Generator { .. }) {
+            self.rebuild_grids();
+        }
+    }
+
+    fn rebuild_grids(&mut self) {
+        self.grids = Grids::build(&self.tables, &self.entities);
+        self.settle_grids();
+    }
+
+    /// Whether a machine in `state` would draw power this tick.
+    fn wants_power(state: &State) -> bool {
+        match state {
+            State::Miner { out, .. } => out.is_none(),
+            State::Crafter(c) => c.working,
+            State::Lab(lab) => lab.unit.is_some(),
+            _ => false,
+        }
+    }
+
+    /// Add up what each grid is asked for and settle its satisfaction.
+    fn settle_grids(&mut self) {
+        if self.grids.grids.is_empty() {
+            return;
+        }
+        for g in &mut self.grids.grids {
+            g.demand = 0;
+        }
+        for (id, e) in self.entities.iter() {
+            let watts = self.tables.buildings[e.kind as usize].power;
+            let slot = id.0 as usize;
+            if let (true, Some(g), Some(state)) =
+                (watts > 0, self.grids.grid(slot), self.states[slot].as_ref())
+            {
+                if Self::wants_power(state) {
+                    self.grids.grids[g as usize].demand += u64::from(watts);
+                }
+            }
+        }
+        for g in &mut self.grids.grids {
+            g.settle();
         }
     }
 
     /// Advance the world by one tick. Entities step in id order, so the result is deterministic.
     pub fn step(&mut self) {
         self.tick += 1;
+        self.settle_grids();
         for i in 0..self.states.len() {
             let Some(mut state) = self.states[i].take() else {
                 continue;
@@ -448,15 +508,18 @@ impl Sim {
                 .entities
                 .get(EntityId(i as u32))
                 .expect("state implies entity");
-            self.step_one(&e, &mut state);
+            let go = self.tables.buildings[e.kind as usize].power == 0
+                || power::runs(self.tick, self.grids.sat(i));
+            self.step_one(&e, &mut state, go);
             self.states[i] = Some(state);
         }
     }
 
-    fn step_one(&mut self, e: &Entity, state: &mut State) {
+    /// Step one entity; `go` is false when its grid can't power it this tick.
+    fn step_one(&mut self, e: &Entity, state: &mut State, go: bool) {
         let front = e.pos.step(e.dir);
         match state {
-            State::Hub => {}
+            State::Hub | State::Pole | State::Generator => {}
             State::Belt {
                 items, per_tick, ..
             } => {
@@ -477,7 +540,7 @@ impl Sim {
                 };
                 if out.is_none() {
                     *waiting = 0;
-                    *prog += 1;
+                    *prog += u32::from(go);
                     if *prog >= ticks {
                         *prog = 0;
                         *out = self.ore.get(&e.pos).copied();
@@ -514,7 +577,7 @@ impl Sim {
                         c.prog = 0;
                     }
                     if c.working {
-                        c.prog += 1;
+                        c.prog += u32::from(go);
                         c.idle = 0;
                         if c.prog >= ticks(def.seconds / speed) {
                             c.working = false;
@@ -561,7 +624,7 @@ impl Sim {
                 match &mut lab.unit {
                     Some((r, prog)) => {
                         lab.idle = 0;
-                        *prog += 1;
+                        *prog += u32::from(go);
                         let def = &self.tables.research[*r as usize];
                         if *prog >= ticks(def.seconds / speed) {
                             let r = *r as usize;
@@ -619,7 +682,7 @@ impl Sim {
                 *last = Some(item);
                 true
             }
-            State::Miner { .. } => false,
+            State::Miner { .. } | State::Pole | State::Generator => false,
             State::Lab(lab) => {
                 if !self.tables.packs.contains(&item) {
                     return false;
@@ -686,6 +749,7 @@ impl Sim {
         };
         for (id, e) in self.entities.iter() {
             let b = &self.tables.buildings[e.kind as usize];
+            let slot = id.0 as usize;
             let (state, progress, recipe) = match self.states[id.0 as usize].as_ref() {
                 Some(State::Belt { items, .. }) => {
                     for &(item, p) in items {
@@ -750,6 +814,17 @@ impl Sim {
                 }
                 _ => (MachineState::Working, 0.0, None),
             };
+            // Powered machines off the grid, or on one with nothing to give, say so.
+            let state = match self.states[slot].as_ref() {
+                Some(s)
+                    if b.power > 0
+                        && (self.grids.grid(slot).is_none()
+                            || (self.grids.sat(slot) == 0 && Self::wants_power(s))) =>
+                {
+                    MachineState::NoPower
+                }
+                _ => state,
+            };
             snap.entities.push(EntityView {
                 id,
                 building: b.id.clone(),
@@ -760,6 +835,7 @@ impl Sim {
                     .then(|| self.ore.get(&e.pos))
                     .flatten()
                     .map(|&i| self.tables.items[i as usize].clone()),
+                grid: self.grids.grid(slot),
                 state,
                 progress,
             });
@@ -773,6 +849,16 @@ impl Sim {
             .collect();
         stock.sort();
         snap.stock = stock;
+        snap.grids = self
+            .grids
+            .grids
+            .iter()
+            .map(|g| GridView {
+                supply_kw: g.supply as f32 / 1000.0,
+                demand_kw: g.demand as f32 / 1000.0,
+                satisfaction: g.sat as f32 / power::FULL as f32,
+            })
+            .collect();
         let t = &self.tables;
         snap.research = ResearchView {
             current: self

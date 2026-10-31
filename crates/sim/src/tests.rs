@@ -551,7 +551,8 @@ fn locked_buildings_and_recipes_are_refused_until_researched() {
     assert!(matches!(sim.apply(&fast), CommandResult::Applied { .. }));
 }
 
-/// A lab fed survey packs by a belt from an assembler, researching steel working.
+/// A lab fed survey packs by a belt from an assembler, powered by a wind
+/// turbine through a pole.
 fn lab_line() -> Sim {
     let mut sim = Sim::with_content(&content());
     sim.add_stock(&item("iron-plate"), 200);
@@ -566,6 +567,9 @@ fn lab_line() -> Sim {
     let _ = asm;
     belts(&mut sim, 1..=3, 0, Dir::East);
     place(&mut sim, "lab", 4, 0, Dir::East, None);
+    sim.add_stock(&item("wire"), 20);
+    place(&mut sim, "pole", 4, 1, Dir::East, None);
+    place(&mut sim, "wind-turbine", 5, 1, Dir::East, None);
     sim
 }
 
@@ -619,4 +623,133 @@ fn research_survives_a_save_and_old_saves_still_load() {
     assert!(warnings.is_empty(), "{warnings:?}");
     assert!(!old.snapshot().entities.is_empty());
     assert!(old.snapshot().research.done.is_empty());
+}
+
+/// Ticks until `labs` labs, each fed two survey packs, finish their first
+/// units of steel working on one wind turbine's grid.
+fn first_units(labs: i32) -> (u64, u32) {
+    let mut sim = Sim::with_content(&content());
+    for (i, n) in [
+        ("iron-plate", 100),
+        ("gear", 100),
+        ("wire", 100),
+        ("brick", 100),
+        ("circuit", 100),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    place(&mut sim, "pole", 0, 0, Dir::East, None);
+    place(&mut sim, "wind-turbine", 1, 0, Dir::East, None);
+    let ids: Vec<_> = (0..labs)
+        .map(|x| place(&mut sim, "lab", x, 1, Dir::East, None))
+        .collect();
+    for &lab in &ids {
+        assert!(sim.feed(lab, &item("survey-pack")));
+    }
+    let pick = Command::SetResearch {
+        research: Some("steel-working".into()),
+    };
+    assert!(matches!(sim.apply(&pick), CommandResult::Applied { .. }));
+    let start = sim.snapshot().tick;
+    while sim.snapshot().research.progress.0 == 0 {
+        assert!(sim.snapshot().tick - start < 10_000, "labs never finish");
+        sim.step();
+    }
+    (
+        sim.snapshot().tick - start,
+        sim.snapshot().research.progress.0,
+    )
+}
+
+#[test]
+fn a_short_grid_slows_machines() {
+    // One turbine gives 60 kW: enough for one lab, half enough for two.
+    let (one, units) = first_units(1);
+    assert_eq!(units, 1);
+    assert!(one.abs_diff(600) <= 2, "one lab at full power: {one} ticks");
+    let (two, units) = first_units(2);
+    assert_eq!(units, 2, "both labs finish together");
+    assert!(
+        two.abs_diff(1200) <= 4,
+        "two labs at half power: {two} ticks"
+    );
+    let snap = {
+        let mut sim = Sim::with_content(&content());
+        sim.add_stock(&item("iron-plate"), 100);
+        sim.add_stock(&item("gear"), 100);
+        sim.add_stock(&item("wire"), 100);
+        place(&mut sim, "pole", 0, 0, Dir::East, None);
+        place(&mut sim, "wind-turbine", 1, 0, Dir::East, None);
+        sim.step();
+        sim.snapshot()
+    };
+    assert_eq!(snap.grids.len(), 1);
+    assert_eq!(snap.grids[0].supply_kw, 60.0);
+    assert_eq!(
+        snap.grids[0].satisfaction, 1.0,
+        "nothing asks, so all is met"
+    );
+}
+
+#[test]
+fn machines_off_the_grid_have_no_power() {
+    let mut sim = Sim::with_content(&content());
+    for (i, n) in [
+        ("iron-plate", 100),
+        ("gear", 100),
+        ("wire", 100),
+        ("brick", 100),
+        ("circuit", 100),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    let lab = place(&mut sim, "lab", 0, 0, Dir::East, None);
+    sim.feed(lab, &item("survey-pack"));
+    sim.apply(&Command::SetResearch {
+        research: Some("steel-working".into()),
+    });
+    run(&mut sim, 20);
+    let view = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == lab)
+            .unwrap()
+    };
+    assert_eq!(view(&sim).state, MachineState::NoPower);
+    assert_eq!(view(&sim).grid, None);
+    assert_eq!(view(&sim).progress, 0.0);
+
+    // A pole with no generator links it, but gives nothing.
+    place(&mut sim, "pole", 2, 0, Dir::East, None);
+    run(&mut sim, 1);
+    assert_eq!(view(&sim).grid, Some(0));
+    assert_eq!(view(&sim).state, MachineState::NoPower);
+
+    // A turbine far away on its own pole is another grid until a pole links them.
+    place(&mut sim, "wind-turbine", 12, 0, Dir::East, None);
+    place(&mut sim, "pole", 12, 1, Dir::East, None);
+    run(&mut sim, 1);
+    assert_eq!(sim.snapshot().grids.len(), 2);
+    assert_eq!(view(&sim).state, MachineState::NoPower);
+    place(&mut sim, "pole", 8, 0, Dir::East, None);
+    run(&mut sim, 5);
+    assert_eq!(sim.snapshot().grids.len(), 1);
+    assert_eq!(view(&sim).state, MachineState::Working);
+    assert!(view(&sim).progress > 0.0);
+
+    // Power survives a save: the grids come back from where things stand.
+    let bytes = sim.save();
+    let (loaded, warnings) = Sim::load(&content(), &bytes).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.snapshot(), sim.snapshot());
+
+    // Taking the turbine away stops the lab where it is.
+    let turbine = sim.entity_at(TilePos::new(12, 0)).unwrap();
+    sim.apply(&Command::Remove { entity: turbine });
+    run(&mut sim, 1);
+    let p = view(&sim).progress;
+    run(&mut sim, 5);
+    assert_eq!(view(&sim).progress, p);
+    assert_eq!(view(&sim).state, MachineState::NoPower);
 }

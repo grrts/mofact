@@ -13,6 +13,12 @@
     (id: "fast-belt", name: "Fast belt", size: (1, 1), role: Belt(tiles_per_second: 4.0),
         cost: [(item: "gear", count: 1), (item: "iron-plate", count: 1)]),
     // Labs eat research packs from belts, one unit of the current research at a time.
-    (id: "lab",       name: "Lab",       size: (1, 1), role: Lab(speed: 1.0),
+    (id: "lab",       name: "Lab",       size: (1, 1), role: Lab(speed: 1.0), power: 60.0,
         cost: [(item: "brick", count: 10), (item: "gear", count: 10), (item: "circuit", count: 5)]),
+    // Power (T29): poles link within `wire` tiles and power what overlaps
+    // the square `supply` tiles around them. `power` is kW drawn while working.
+    (id: "pole",      name: "Pole",      size: (1, 1), role: Pole(wire: 7, supply: 2),
+        cost: [(item: "iron-plate", count: 1), (item: "wire", count: 2)]),
+    (id: "wind-turbine", name: "Wind turbine", size: (1, 1), role: Generator(kw: 60.0),
+        cost: [(item: "iron-plate", count: 10), (item: "gear", count: 5), (item: "wire", count: 5)]),
 ]

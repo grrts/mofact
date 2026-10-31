@@ -159,6 +159,18 @@ pub fn check(content: &Content) -> Vec<String> {
             problems.push(format!("{owner} has a zero size"));
         }
         stacks(&owner, &b.cost, &mut problems);
+        if b.power < 0.0 || b.power.is_nan() {
+            problems.push(format!("{owner} draws negative power"));
+        }
+        match b.role {
+            BuildingRole::Pole { wire: 0, .. } => {
+                problems.push(format!("{owner} is a pole whose wire reaches nothing"));
+            }
+            BuildingRole::Generator { kw } if kw <= 0.0 || kw.is_nan() => {
+                problems.push(format!("{owner} is a generator that gives nothing"));
+            }
+            _ => {}
+        }
     }
 
     let mut research = HashSet::new();
@@ -306,7 +318,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len()
             ),
-            (14, 10, 7, 3)
+            (14, 10, 9, 3)
         );
         let circuit = c
             .recipes

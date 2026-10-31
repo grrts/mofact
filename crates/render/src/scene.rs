@@ -301,6 +301,7 @@ mod tests {
             dir: Dir::East,
             recipe: None,
             ore: None,
+            grid: None,
             state: MachineState::Idle,
             progress: 0.0,
         }
@@ -394,6 +395,7 @@ mod tests {
             dir: Dir::South,
             recipe: Some("copper-plate".into()),
             ore: None,
+            grid: None,
             state,
             progress: 0.0,
         };

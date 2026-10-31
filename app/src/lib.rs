@@ -195,8 +195,9 @@ impl App {
         )
     }
 
-    /// Keys, as in the prototype: 1 to 6 pick hand, belt, drill, furnace,
-    /// assembler and remove; R rotates; Escape goes back to the hand.
+    /// Keys follow the toolbar: 1 to 5 pick hand, belt, drill, furnace and
+    /// assembler, 6 opens the build sheet and 7 (or X) removes; T opens
+    /// research; R rotates; Escape goes back to the hand.
     fn key(&mut self, key: Keycode) {
         let tool = match key {
             Keycode::_1 | Keycode::Escape => Tool::Hand,
@@ -204,7 +205,9 @@ impl App {
             Keycode::_3 => Tool::Place("drill".into()),
             Keycode::_4 => Tool::Place("furnace".into()),
             Keycode::_5 => Tool::Place("assembler".into()),
-            Keycode::_6 | Keycode::X => Tool::Remove,
+            Keycode::_6 => return self.hud.toggle_build_sheet(),
+            Keycode::T => return self.hud.toggle_research(),
+            Keycode::_7 | Keycode::X => Tool::Remove,
             Keycode::R => return self.controls.builder.rotate(),
             _ => return,
         };
@@ -621,6 +624,48 @@ fn screenshots(
             scene.ore.len() + scene.instances.len(),
             scene.band
         );
+    }
+    // The HUD on a phone held upright, with each sheet open.
+    let size = (1080, 2340);
+    let camera = Camera {
+        pixels_per_tile: 96.0,
+        ..camera
+    };
+    scene.build(
+        &look,
+        renderer.atlases(),
+        &camera,
+        size,
+        &prev,
+        &latest,
+        0.5,
+    );
+    ore.fill(&camera, size);
+    scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+    let mut overlay = Overlay::new(&look);
+    for sheet in ["toolbar", "build", "research"] {
+        let mut hud = Hud::new();
+        match sheet {
+            "build" => hud.toggle_build_sheet(),
+            "research" => hud.toggle_research(),
+            _ => {}
+        }
+        overlay.clear();
+        let view = View {
+            size,
+            scale: 3.0,
+            content,
+            look: &look,
+            snapshot: &latest,
+            tool: &Tool::Hand,
+            dir: mofact_core::geom::Dir::East,
+            recipe: None,
+        };
+        hud.draw(&view, &mut overlay);
+        let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
+        let path = dir.join(format!("hud-{sheet}.png"));
+        write_png(&path, size, &pixels)?;
+        println!("{}", path.display());
     }
     Ok(())
 }

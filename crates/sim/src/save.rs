@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 3;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -106,6 +106,8 @@ enum SavedState {
         unit: Option<(ResearchId, u32)>,
         idle: u32,
     },
+    Pole,
+    Generator,
 }
 
 /// Bring an older payload up to [`VERSION`].
@@ -124,7 +126,9 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: None,
             })
         }
-        2 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 3 added poles and generators: new variants only, so a
+        // version 2 payload reads as it is.
+        2 | 3 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -167,6 +171,8 @@ impl Sim {
                             .map(|(r, p)| (t.research[r as usize].id.clone(), p)),
                         idle: lab.idle,
                     },
+                    State::Pole => SavedState::Pole,
+                    State::Generator => SavedState::Generator,
                 };
                 let saved = Saved {
                     building: t.buildings[e.kind as usize].id.clone(),
@@ -339,6 +345,8 @@ impl Sim {
                     unit: unit.and_then(|(r, p)| Some((research(&r, &mut warnings)?, p))),
                     idle,
                 }),
+                (SavedState::Pole, Role::Pole { .. }) => State::Pole,
+                (SavedState::Generator, Role::Generator { .. }) => State::Generator,
                 _ => {
                     warnings.push(format!(
                         "building `{}` changed role; rebuilt empty",
@@ -367,6 +375,7 @@ impl Sim {
                 .resize(sim.states.len().max(slot as usize + 1), None);
             sim.states[slot as usize] = Some(state);
         }
+        sim.rebuild_grids();
         Ok((sim, warnings))
     }
 }

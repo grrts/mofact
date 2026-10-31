@@ -593,3 +593,63 @@ pub fn badge(c: &mut Canvas, r: f32, starved: bool) {
         c.fill_rect(cx - r * 0.5, cy + r * 0.08, r, r * 0.22, pal::GROUND);
     }
 }
+
+/// A power pole seen from above: a post with a cross arm and insulators,
+/// small in its tile so the ground and belts around it stay readable.
+pub fn pole(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z;
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    c.fill_circle(cx + z * 0.05, cy + z * 0.07, s * 0.16, pal::SHADOW);
+    let arm = (s * 0.07).max(1.5);
+    c.line(
+        &[(s * 0.2, cy), (s * 0.8, cy)],
+        pal::MACHINE_EDGE,
+        arm * 1.6,
+    );
+    c.line(&[(s * 0.22, cy), (s * 0.78, cy)], pal::POLE, arm);
+    c.fill_circle(cx, cy, s * 0.13, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.1, pal::POLE);
+    if fine {
+        for x in [0.22, 0.78] {
+            c.fill_circle(x * s, cy, s * 0.06, pal::MACHINE_EDGE);
+            c.fill_circle(x * s, cy, s * 0.04, pal::ACCENT);
+        }
+        c.fill_circle(
+            cx - s * 0.03,
+            cy - s * 0.03,
+            s * 0.035,
+            shade(pal::POLE, 0.25),
+        );
+    }
+}
+
+/// A wind turbine seen from above: a round base and three blades, turned
+/// a little by `t` (seconds) so a row of them doesn't look stamped.
+pub fn turbine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
+    let s = z;
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let sh = z * 0.07;
+    shadow(c, ellipse(cx + sh, cy + sh * 1.3, s * 0.4, s * 0.4));
+    c.fill_circle(cx, cy, s * 0.4, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.36, pal::MACHINE);
+    if fine {
+        c.stroke_circle(
+            cx,
+            cy,
+            s * 0.3,
+            shade(pal::MACHINE, 0.12),
+            (z * 0.03).max(1.0),
+        );
+    }
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(t * 2.0);
+    for _ in 0..3 {
+        c.rotate(TAU / 3.0);
+        let blade = [(-0.035, 0.0), (0.035, 0.0), (0.05, -0.42), (-0.02, -0.44)];
+        fill(c, poly(&blade, 0.0, 0.0, s), pal::BLADE);
+    }
+    c.fill_circle(0.0, 0.0, s * 0.08, pal::MACHINE_EDGE);
+    c.fill_circle(0.0, 0.0, s * 0.05, pal::ACCENT);
+    c.restore();
+}

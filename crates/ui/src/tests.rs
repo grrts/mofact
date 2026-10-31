@@ -15,6 +15,7 @@ fn snapshot() -> Snapshot {
         dir: Dir::East,
         recipe: None,
         ore: None,
+        grid: None,
         state: MachineState::Starved,
         progress: 0.4,
     };
@@ -28,6 +29,7 @@ fn snapshot() -> Snapshot {
         belt_items: Vec::new(),
         stock: vec![("copper-plate".into(), 2), ("iron-plate".into(), 30)],
         research: Default::default(),
+        grids: Vec::new(),
     }
 }
 
@@ -262,15 +264,17 @@ fn everything_stays_on_screen() {
     ];
     for (size, scale) in sizes {
         for tool in &tools {
-            for (selected, research) in [
-                (None, false),
-                (Some(EntityId(1)), false),
-                (Some(EntityId(2)), false),
-                (None, true),
+            for (selected, research, more) in [
+                (None, false, false),
+                (Some(EntityId(1)), false, false),
+                (Some(EntityId(2)), false, false),
+                (None, true, false),
+                (None, false, true),
             ] {
                 let mut f = Fixture::new();
                 f.hud.select(selected);
                 f.hud.research = research;
+                f.hud.more = more;
                 f.draw(size, scale, tool);
                 let (w, h) = (size.0 as f32, size.1 as f32);
                 for (r, hit) in &f.hud.hits {
@@ -355,4 +359,52 @@ fn locked_recipes_stay_off_the_pills_until_researched() {
     f.snapshot.research.done = vec!["steel-working".into(), "motors".into()];
     f.draw((1280, 720), 1.0, &Tool::Place("assembler".into()));
     f.find(&motor);
+}
+
+#[test]
+fn the_more_slot_opens_every_other_building() {
+    let mut f = Fixture::new();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let more = f.find(&Hit::Tool(MORE));
+    assert_eq!(f.tap(centre(more)), (true, vec![]));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    for b in ["lab", "pole", "wind-turbine"] {
+        f.find(&Hit::Build(b.into()));
+    }
+    // What the toolbar already has, and belts, stay off the sheet.
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h,
+        Hit::Build(b) if ["drill", "belt", "fast-belt", "hub"].contains(&b.as_str()))));
+    let pole = f.find(&Hit::Build("pole".into()));
+    assert_eq!(
+        f.tap(centre(pole)),
+        (true, vec![Action::Tool(Tool::Place("pole".into()))])
+    );
+    // The sheet closes, and the More slot now stands for the pole.
+    f.draw((1080, 2340), 3.0, &Tool::Place("pole".into()));
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Build(_))));
+    assert_eq!(tool_index(&Tool::Place("pole".into())), Some(MORE));
+}
+
+#[test]
+fn a_pole_sheet_shows_its_grid() {
+    let mut f = Fixture::new();
+    f.snapshot.entities.push(EntityView {
+        id: EntityId(9),
+        building: "pole".into(),
+        pos: TilePos::new(9, 0),
+        dir: Dir::East,
+        recipe: None,
+        ore: None,
+        grid: Some(0),
+        state: MachineState::Working,
+        progress: 0.0,
+    });
+    f.snapshot.grids = vec![mofact_core::snapshot::GridView {
+        supply_kw: 60.0,
+        demand_kw: 120.0,
+        satisfaction: 0.5,
+    }];
+    f.hud.select(Some(EntityId(9)));
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    f.find(&Hit::Remove(EntityId(9)));
 }

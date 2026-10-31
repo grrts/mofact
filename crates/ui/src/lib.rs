@@ -42,9 +42,12 @@ const TOOLS: [(&str, Option<&str>); 7] = [
     ("Drill", Some("drill")),
     ("Furnace", Some("furnace")),
     ("Assembler", Some("assembler")),
-    ("Lab", Some("lab")),
+    ("More", None),
     ("Remove", None),
 ];
+/// The slot that opens the build sheet with every other building, and
+/// shows the one in hand when it is one of those.
+const MORE: usize = 5;
 /// The last tool, Remove.
 const REMOVE: usize = TOOLS.len() - 1;
 
@@ -62,7 +65,10 @@ fn tool_index(tool: &Tool) -> Option<usize> {
         Tool::Hand => Some(0),
         Tool::Belt => Some(1),
         Tool::Remove => Some(REMOVE),
-        Tool::Place(b) => TOOLS.iter().position(|(_, id)| *id == Some(b.as_str())),
+        Tool::Place(b) => TOOLS
+            .iter()
+            .position(|(_, id)| *id == Some(b.as_str()))
+            .or(Some(MORE)),
     }
 }
 
@@ -170,6 +176,8 @@ enum Hit {
     Research,
     /// Set what labs work on.
     Study(Option<ResearchId>),
+    /// Pick a building from the build sheet.
+    Build(BuildingId),
     Close,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
@@ -203,6 +211,8 @@ pub struct Hud {
     selected: Option<EntityId>,
     /// Whether the research sheet is open.
     research: bool,
+    /// Whether the build sheet is open.
+    more: bool,
     /// Where each control went in the last frame, topmost last.
     hits: Vec<(Rect, Hit)>,
     press: Option<Press>,
@@ -227,12 +237,23 @@ impl Hud {
         self.selected = entity;
         if entity.is_some() {
             self.research = false;
+            self.more = false;
         }
     }
 
     /// Whether the research sheet is open.
     pub fn researching(&self) -> bool {
         self.research
+    }
+
+    /// Open or close the research sheet, as its button does.
+    pub fn toggle_research(&mut self) {
+        self.tapped(Hit::Research);
+    }
+
+    /// Open or close the build sheet, as the More slot does.
+    pub fn toggle_build_sheet(&mut self) {
+        self.tapped(Hit::Tool(MORE));
     }
 
     /// Show a short message, such as why a build was refused.
@@ -313,11 +334,23 @@ impl Hud {
 
     fn tapped(&mut self, hit: Hit) -> Vec<Action> {
         match hit {
+            Hit::Tool(MORE) => {
+                self.more = !self.more;
+                self.research = false;
+                self.selected = None;
+                Vec::new()
+            }
             Hit::Tool(i) => {
                 if i != 0 {
                     self.selected = None;
                 }
+                self.more = false;
                 vec![Action::Tool(tool_at(i))]
+            }
+            Hit::Build(b) => {
+                self.more = false;
+                self.selected = None;
+                vec![Action::Tool(Tool::Place(b))]
             }
             Hit::Rotate => vec![Action::Rotate],
             Hit::Recipe(r) => vec![Action::Recipe(r)],
@@ -334,6 +367,7 @@ impl Hud {
             }
             Hit::Research => {
                 self.research = !self.research;
+                self.more = false;
                 self.selected = None;
                 Vec::new()
             }
@@ -341,6 +375,7 @@ impl Hud {
             Hit::Close => {
                 self.selected = None;
                 self.research = false;
+                self.more = false;
                 Vec::new()
             }
             Hit::Block => Vec::new(),
@@ -394,7 +429,7 @@ impl Hud {
                 self.toast = None;
             }
         }
-        if selected.is_none() && !self.research {
+        if selected.is_none() && !self.research && !self.more {
             chip(o, tip(view.tool), [m, tip_y], corner[0] - m, u, TEXT);
         }
         let width = if portrait {
@@ -403,6 +438,11 @@ impl Hud {
             (360.0 * u).min(corner[0] - m)
         };
 
+        if self.more {
+            let room = corner[1] - tip_y;
+            self.build_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
+        }
         if self.research {
             let room = corner[1] - tip_y;
             self.research_sheet(view, o, [corner[0] - width, corner[1]], width, room);
@@ -472,11 +512,18 @@ impl Hud {
                     bh,
                 ]
             };
-            let def = building.and_then(|b| view.building(&b.into()));
+            // The More slot stands for the building in hand, if it is one of its own.
+            let (label, def) = match view.tool {
+                Tool::Place(b) if i == MORE && current == Some(MORE) => {
+                    let def = view.building(b);
+                    (def.map_or(*label, |d| d.name.as_str()), def)
+                }
+                _ => (*label, building.and_then(|b| view.building(&b.into()))),
+            };
             let cost = def.map(|d| d.cost.as_slice()).unwrap_or_default();
             let open = def.is_none_or(|d| view.building_open(&d.id));
             let afford = open && view.affordable(cost);
-            if current == Some(i) {
+            if current == Some(i) || (i == MORE && self.more) {
                 o.panel([r[0], r[1]], [r[2], r[3]], 10.0 * u, PRESSED);
                 o.panel(
                     [r[0] + r[2] * 0.3, r[1] + r[3] - 3.0 * u],
@@ -506,6 +553,15 @@ impl Hud {
                         t / 2.0,
                         TEXT,
                     );
+                }
+                (MORE, None) => {
+                    // More: three dots, so it doesn't read as Move's cross.
+                    let d = icon * 0.2;
+                    let cy = iy + (icon - d) / 2.0;
+                    for k in 0..3 {
+                        let x = ix + icon * 0.1 + k as f32 * icon * 0.3;
+                        o.panel([x, cy], [d, d], d / 2.0, TEXT);
+                    }
                 }
                 (REMOVE, _) => {
                     let px = icon * 1.3;
@@ -621,6 +677,114 @@ impl Hud {
         at[1] + h
     }
 
+    /// The build sheet, bottom-left at `at`, at most `room` tall: a grid of
+    /// every building the toolbar has no slot for. Locked ones show but
+    /// can't be picked.
+    fn build_sheet(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32, room: f32) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let gap = 8.0 * u;
+        let title = 30.0 * u;
+        let on_bar = |id: &BuildingId| TOOLS.iter().any(|(_, b)| *b == Some(id.as_str()));
+        let list: Vec<&BuildingDef> = view
+            .content
+            .buildings
+            .iter()
+            .filter(|b| {
+                !matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. }) && !on_bar(&b.id)
+            })
+            .collect();
+        let inner = width - 2.0 * pad;
+        let cols = ((inner + gap) / (96.0 * u + gap)).floor().max(1.0) as usize;
+        let cw = (inner - gap * (cols - 1) as f32) / cols as f32;
+        let ch = 92.0 * u;
+        let fits = ((room - 2.0 * pad - title + gap) / (ch + gap))
+            .floor()
+            .max(1.0) as usize;
+        let rows = list.len().div_ceil(cols).clamp(1, fits);
+        let shown = &list[..list.len().min(rows * cols)];
+        let height = pad + title + rows as f32 * (ch + gap) - gap + pad;
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let top = r[1] + pad;
+        let px = 20.0 * u;
+        o.text("Build", [left, top + o.cap_height(px) + 4.0 * u], px, TEXT);
+        let close = 32.0 * u;
+        let c = [r[0] + r[2] - pad - close, top - 2.0 * u, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+
+        let holding = match view.tool {
+            Tool::Place(b) => Some(b),
+            _ => None,
+        };
+        for (k, d) in shown.iter().enumerate() {
+            let (col, row) = (k % cols, k / cols);
+            let b = [
+                left + col as f32 * (cw + gap),
+                top + title + row as f32 * (ch + gap),
+                cw,
+                ch,
+            ];
+            let open = view.building_open(&d.id);
+            let afford = open && view.affordable(&d.cost);
+            let fill = if holding == Some(&d.id) {
+                PRESSED
+            } else {
+                RAISED
+            };
+            o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, fill);
+            let tint = |t: Rgba| if afford { t } else { [t[0], t[1], t[2], 0x70] };
+            let icon = 32.0 * u;
+            let iy = b[1] + 8.0 * u;
+            if let Some((sprite, t)) = view.look.building(&d.id) {
+                o.icon(sprite, [b[0] + (cw - icon) / 2.0, iy], icon, tint(t));
+            }
+            let npx = fit(o, &d.name, 13.0 * u, cw - 8.0 * u);
+            let nw = o.measure(&d.name, npx);
+            let base = iy + icon + 6.0 * u + o.cap_height(npx);
+            o.text(&d.name, [b[0] + (cw - nw) / 2.0, base], npx, tint(TEXT));
+            let y = base + 6.0 * u;
+            if !open {
+                let lpx = 11.0 * u;
+                let lw = o.measure("Locked", lpx);
+                o.text(
+                    "Locked",
+                    [b[0] + (cw - lw) / 2.0, y + lpx * 0.85],
+                    lpx,
+                    MUTED,
+                );
+            } else {
+                let spx = 10.0 * u;
+                let s = 10.0 * u;
+                let parts: Vec<String> = d.cost.iter().map(|c| c.count.to_string()).collect();
+                let total: f32 = parts
+                    .iter()
+                    .map(|p| s + 2.0 * u + o.measure(p, spx) + 4.0 * u)
+                    .sum();
+                let mut x = b[0] + (cw - total + 4.0 * u) / 2.0;
+                let color = if afford { MUTED } else { palette::STARVE };
+                for (st, text) in d.cost.iter().zip(&parts) {
+                    if let Some((sprite, t)) = view.look.item(&st.item) {
+                        o.icon(sprite, [x, y], s, t);
+                    }
+                    x += s + 2.0 * u;
+                    x += o.text(text, [x, y + s * 0.85], spx, color) + 4.0 * u;
+                }
+                self.hits.push((b, Hit::Build(d.id.clone())));
+            }
+        }
+    }
+
     /// The research sheet, bottom-left at `at`, at most `room` tall: one row
     /// per research with its cost and state. Tapping one that is ready
     /// sets the labs on it; tapping the current one stops them.
@@ -638,7 +802,7 @@ impl Hud {
         let title = 30.0 * u;
         let fits = ((room - 2.0 * pad - title) / row).floor().max(1.0) as usize;
         let shown = &view.content.research[..view.content.research.len().min(fits)];
-        let height = pad + title + shown.len() as f32 * row + pad;
+        let height = pad + title + shown.len() as f32 * row - 6.0 * u + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
@@ -789,6 +953,14 @@ impl Hud {
         let def = view.building(&e.building);
         let hub = def.is_some_and(|d| d.role == BuildingRole::Hub);
         let belt = def.is_some_and(|d| matches!(d.role, BuildingRole::Belt { .. }));
+        let pole = def.is_some_and(|d| matches!(d.role, BuildingRole::Pole { .. }));
+        let generator = def.and_then(|d| match d.role {
+            BuildingRole::Generator { kw } => Some(kw),
+            _ => None,
+        });
+        // Poles and generators have no state of their own to show.
+        let wired = pole || generator.is_some();
+        let grid = e.grid.and_then(|g| view.snapshot.grids.get(g as usize));
         let recipes = view.recipes_for(&e.building);
         let recipe = e.recipe.as_ref().and_then(|r| view.recipe_def(r));
 
@@ -834,7 +1006,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
-        if !belt && !hub {
+        if !belt && !hub && !wired {
             let (label, color) = state(e.state);
             let spx = 12.0 * u;
             let sw = o.measure(label, spx) + 16.0 * u;
@@ -870,6 +1042,19 @@ impl Hud {
                     px,
                     MUTED,
                 );
+            } else if wired {
+                let text = match (grid, generator) {
+                    (Some(g), _) => format!(
+                        "Grid: {:.0} of {:.0} kW asked for · {:.0}% met",
+                        g.demand_kw,
+                        g.supply_kw,
+                        g.satisfaction * 100.0
+                    ),
+                    (None, Some(kw)) => format!("Gives {kw:.0} kW once a pole covers it"),
+                    (None, None) => "Not linked to anything".to_string(),
+                };
+                let px = fit(o, &text, px, r[2] - 2.0 * pad);
+                o.text(&text, [x, base], px, MUTED);
             } else if let Some(rd) = recipe {
                 let stacks = |o: &mut Overlay, x: &mut f32, list: &[Stack]| {
                     for st in list {
@@ -897,7 +1082,7 @@ impl Hud {
             y += row + 4.0 * u;
             let bw = r[2] - 2.0 * pad;
             o.panel([left, y], [bw, 6.0 * u], 3.0 * u, RAISED);
-            if !hub && e.progress > 0.0 {
+            if !hub && !wired && e.progress > 0.0 {
                 let fill = state(e.state).1;
                 o.panel(
                     [left, y],
@@ -972,7 +1157,13 @@ fn tip(tool: &Tool) -> &'static str {
             "Tap to place. Ore goes in any side, plates come out of the arrow."
         }
         Tool::Place(b) if b.as_str() == "lab" => {
-            "Tap to place. Belt research packs into it, then pick what to study."
+            "Tap to place. Belt research packs into it, and give it power."
+        }
+        Tool::Place(b) if b.as_str() == "pole" => {
+            "Tap to place. Poles link up to 7 tiles apart and power what's next to them."
+        }
+        Tool::Place(b) if b.as_str() == "wind-turbine" => {
+            "Tap to place next to a pole. Each turbine powers one lab."
         }
         Tool::Place(_) => "Tap to place. Pick a recipe, or let it pick from what arrives.",
         Tool::Remove => "Tap or drag over things to remove them. You get the plates back.",
