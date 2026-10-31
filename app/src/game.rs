@@ -141,6 +141,26 @@ impl Game {
             ghosts.iter().map(|g| (&g.building, g.tile, g.dir, recipe)),
         );
         self.overlay.clear();
+        self.controls.slop = 12.0 * scale.max(0.5);
+        // What a remove drag has marked, in red, before it goes.
+        for id in self.controls.builder.marked() {
+            let Some(e) = latest.entities.iter().find(|e| e.id == *id) else {
+                continue;
+            };
+            let size = self
+                .content
+                .buildings
+                .iter()
+                .find(|b| b.id == e.building)
+                .map_or((1, 1), |b| b.size);
+            let ppt = camera.pixels_per_tile;
+            let (sw, sh) = target.size();
+            let x = (e.pos.x as f32 - camera.center[0]) * ppt + sw as f32 / 2.0;
+            let y = (e.pos.y as f32 - camera.center[1]) * ppt + sh as f32 / 2.0;
+            let (w, h) = (f32::from(size.0) * ppt, f32::from(size.1) * ppt);
+            self.overlay
+                .panel([x, y], [w, h], ppt * 0.12, [0xff, 0x5d, 0x5d, 0x80]);
+        }
         let builder = &self.controls.builder;
         let view = View {
             size: target.size(),
@@ -152,6 +172,7 @@ impl Game {
             dir: builder.dir,
             recipe: builder.recipe.as_ref(),
             belt: &builder.belt,
+            history: self.sim.history(),
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -167,7 +188,8 @@ impl Game {
     ///
     /// Keys follow the toolbar: 1 to 5 pick hand, belt, drill, furnace and
     /// assembler, 6 opens the build sheet and 7 (or X) removes; T opens
-    /// research; R rotates; Escape goes back to the hand. Every other
+    /// research; R rotates; Escape goes back to the hand. The shells send
+    /// "undo" and "redo" for Ctrl+Z and Ctrl+Shift+Z (or Ctrl+Y). Every other
     /// building has a letter of its own (see [`mofact_ui::hotkeys`]).
     pub fn key(&mut self, name: &str) {
         let tool = match name {
@@ -180,6 +202,8 @@ impl Game {
             "t" => return self.hud.toggle_research(),
             "7" | "x" => Tool::Remove,
             "r" => return self.controls.builder.rotate(),
+            "undo" => return self.sim.undo(),
+            "redo" => return self.sim.redo(),
             other => {
                 let mut letters = other.chars();
                 let (Some(c), None) = (letters.next(), letters.next()) else {
@@ -205,13 +229,25 @@ impl Game {
             Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
             Action::Belt(belt) => self.controls.builder.belt = belt,
             Action::Send(command) => self.sim.send(command),
-            Action::Inspect(at) if self.controls.builder.tool == Tool::Hand => {
+            Action::Undo => self.sim.undo(),
+            Action::Redo => self.sim.redo(),
+            // With the hand, a tap inspects what's there or closes the sheet.
+            // With a building in hand, a tap on something already built
+            // inspects it instead of trying to build on top of it.
+            Action::Inspect(at) => {
+                let hand = self.controls.builder.tool == Tool::Hand;
+                let placing = matches!(self.controls.builder.tool, Tool::Place(_));
+                if !hand && !placing {
+                    return;
+                }
                 let [x, y] = self.controls.camera.world_at(at);
                 let tile = mofact_core::geom::TilePos::new(x.floor() as i32, y.floor() as i32);
                 self.built.update(&self.sim.latest());
-                self.hud.select(self.built.at(tile).map(|o| o.id));
+                let found = self.built.at(tile).map(|o| o.id);
+                if hand || found.is_some() {
+                    self.hud.select(found);
+                }
             }
-            Action::Inspect(_) => {}
             Action::Cancel => self.controls.builder.cancel(),
         }
     }
@@ -224,9 +260,8 @@ impl Game {
         }
         if !taken {
             self.built.update(&self.sim.latest());
-            for command in self.controls.handle(p, &self.built) {
-                self.sim.send(command);
-            }
+            // Everything one gesture builds is one undo step.
+            self.sim.send_all(self.controls.handle(p, &self.built));
         }
     }
 }

@@ -160,15 +160,20 @@ impl CameraControl {
     }
 }
 
-/// Routes pointers to the camera or the build tools, as the prototype does:
-/// with a tool chosen, one finger (or the left button) builds and two fingers
-/// still pan and zoom; with the hand, everything moves the camera.
+/// Routes pointers to the camera or the build tools. With the hand,
+/// everything moves the camera. With the belt or remove tool, one finger (or
+/// the left button) draws and two fingers pan and zoom. With a building in
+/// hand, a tap places it and a drag pans, so looking around never builds by
+/// accident. A second finger always drops what the first one started.
 #[derive(Debug)]
 pub struct Controls {
     pub camera: CameraControl,
     pub builder: Builder,
-    /// The pointer building right now, and where it last was.
-    building: Option<(u64, [f32; 2])>,
+    /// How far, in pixels, a finger may wander and still be tapping. The game
+    /// sets it from the display scale.
+    pub slop: f32,
+    /// The pointer building right now, where it went down, and where it last was.
+    building: Option<(u64, [f32; 2], [f32; 2])>,
 }
 
 impl Controls {
@@ -176,6 +181,7 @@ impl Controls {
         Self {
             camera,
             builder: Builder::default(),
+            slop: 12.0,
             building: None,
         }
     }
@@ -191,11 +197,11 @@ impl Controls {
             (Pointer::Down { id, x, y }, None)
                 if !self.camera.busy() && id != MOUSE_PAN && self.builder.tool != Tool::Hand =>
             {
-                self.building = Some((id, [x, y]));
+                self.building = Some((id, [x, y], [x, y]));
                 let tile = self.tile(x, y);
                 return self.builder.start(tile, ground);
             }
-            (Pointer::Down { .. }, Some((first, [fx, fy]))) => {
+            (Pointer::Down { .. }, Some((first, _, [fx, fy]))) => {
                 // A second finger: stop building and hand both to the camera.
                 self.builder.cancel();
                 self.building = None;
@@ -206,12 +212,28 @@ impl Controls {
                 });
                 self.camera.handle(event);
             }
-            (Pointer::Move { id, x, y }, Some((b, _))) if id == b => {
-                self.building = Some((id, [x, y]));
+            (Pointer::Move { id, x, y }, Some((b, start, _))) if id == b => {
+                let taps = matches!(self.builder.tool, Tool::Place(_));
+                if taps && dist(start, [x, y]) > self.slop {
+                    // The finger is travelling: a pan, not a placement.
+                    self.builder.cancel();
+                    self.building = None;
+                    self.camera.handle(Pointer::Down {
+                        id,
+                        x: start[0],
+                        y: start[1],
+                    });
+                    self.camera.handle(event);
+                    return Vec::new();
+                }
+                self.building = Some((id, start, [x, y]));
+                if taps {
+                    return Vec::new(); // the ghost stays where the tap began
+                }
                 let tile = self.tile(x, y);
                 return self.builder.drag(tile, ground);
             }
-            (Pointer::Up { id }, Some((b, _))) if id == b => {
+            (Pointer::Up { id }, Some((b, _, _))) if id == b => {
                 self.building = None;
                 return self.builder.end(ground);
             }
@@ -453,6 +475,68 @@ mod tests {
             c.camera.center[0] > before[0],
             "right drag pans even with a tool"
         );
+    }
+
+    #[test]
+    fn with_a_building_in_hand_a_tap_places_and_a_drag_pans() {
+        struct Empty;
+        impl Ground for Empty {
+            fn at(&self, _: TilePos) -> Option<build::Occupant> {
+                None
+            }
+        }
+        let mut c = Controls::new(camera());
+        c.builder.set_tool(Tool::Place("furnace".into()));
+        // A tap with a little wobble places at the tile where it began.
+        c.handle(
+            Down {
+                id: 1,
+                x: 400.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Move {
+                id: 1,
+                x: 405.0,
+                y: 304.0,
+            },
+            &Empty,
+        );
+        let placed = c.handle(Up { id: 1 }, &Empty);
+        assert!(
+            matches!(&placed[..], [Command::Place { pos, .. }] if *pos == TilePos::new(0, 0)),
+            "{placed:?}"
+        );
+        // A drag moves the camera and builds nothing.
+        c.handle(
+            Down {
+                id: 1,
+                x: 400.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Move {
+                id: 1,
+                x: 340.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        c.handle(
+            Move {
+                id: 1,
+                x: 272.0,
+                y: 300.0,
+            },
+            &Empty,
+        );
+        assert!(c.builder.ghosts().is_empty(), "the ghost goes once it pans");
+        assert!(c.handle(Up { id: 1 }, &Empty).is_empty());
+        assert!(near(c.camera.center, [4.0, 0.0]), "{:?}", c.camera.center);
     }
 
     #[test]

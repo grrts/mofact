@@ -16,6 +16,7 @@ pub use mofact_core as core;
 mod clock;
 pub mod entities;
 mod history;
+mod jobs;
 mod local;
 mod power;
 pub mod save;

@@ -8,7 +8,8 @@
 //! [`Stepper::MAX_CATCH_UP`].
 
 use crate::clock::Stepper;
-use crate::Sim;
+use crate::jobs::{pack, unpack, work, Job};
+use crate::{History, Sim};
 use mofact_core::command::{Command, CommandResult};
 use mofact_core::snapshot::Snapshot;
 use std::cell::RefCell;
@@ -25,7 +26,8 @@ struct Inner {
     stepper: Stepper,
     last: Instant,
     paused: bool,
-    queued: Vec<Command>,
+    history: History,
+    queued: Vec<Job>,
     results: Vec<CommandResult>,
     previous: Arc<Snapshot>,
     latest: Arc<Snapshot>,
@@ -41,6 +43,7 @@ impl LocalSim {
                 stepper: Stepper::new(),
                 last: Instant::now(),
                 paused: false,
+                history: History::new(),
                 queued: Vec::new(),
                 results: Vec::new(),
                 previous: first.clone(),
@@ -49,9 +52,32 @@ impl LocalSim {
         }
     }
 
-    /// Queue a command; it is applied at the start of the next tick.
+    /// Queue a command; it is applied at the start of the next tick, as
+    /// one player action that undo can reverse.
     pub fn send(&self, command: Command) {
-        self.inner.borrow_mut().queued.push(command);
+        self.send_all(vec![command]);
+    }
+
+    /// Queue several commands as one player action: one undo reverses them all.
+    pub fn send_all(&self, commands: Vec<Command>) {
+        if !commands.is_empty() {
+            self.inner.borrow_mut().queued.push(Job::Action(commands));
+        }
+    }
+
+    /// Undo the latest player action, at the start of the next tick.
+    pub fn undo(&self) {
+        self.inner.borrow_mut().queued.push(Job::Undo);
+    }
+
+    /// Redo the latest undone action, at the start of the next tick.
+    pub fn redo(&self) {
+        self.inner.borrow_mut().queued.push(Job::Redo);
+    }
+
+    /// Whether there is an action to undo, and one to redo.
+    pub fn history(&self) -> (bool, bool) {
+        unpack(pack(&self.inner.borrow().history))
     }
 
     /// Results of applied commands, in the order they were sent.
@@ -100,8 +126,8 @@ impl LocalSim {
             return;
         }
         for _ in 0..s.stepper.advance(elapsed) {
-            for c in s.queued.drain(..) {
-                s.results.push(s.sim.apply(&c));
+            for job in std::mem::take(&mut s.queued) {
+                work(&mut s.sim, &mut s.history, job, |r| s.results.push(r));
             }
             s.sim.step();
             let snap = Arc::new(s.sim.snapshot());

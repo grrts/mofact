@@ -27,9 +27,9 @@ pub enum Tool {
     Hand,
     /// Draw belts along the drag path.
     Belt,
-    /// Place one building where the finger lifts.
+    /// Tap to place one building; a drag pans instead (see [`Controls`](crate::Controls)).
     Place(BuildingId),
-    /// Remove whatever the drag passes over.
+    /// Mark whatever the drag passes over, and remove it all when the finger lifts.
     Remove,
 }
 
@@ -49,7 +49,8 @@ enum Gesture {
         start: Option<Occupant>,
     },
     Place(TilePos),
-    Remove(TilePos),
+    /// What the finger has passed over so far, in the order it got there.
+    Remove(Vec<EntityId>),
 }
 
 #[derive(Debug)]
@@ -99,8 +100,9 @@ impl Builder {
             }
             Tool::Place(_) => Some(Gesture::Place(tile)),
             Tool::Remove => {
-                self.gesture = Some(Gesture::Remove(tile));
-                return remove(tile, ground);
+                let mut marks = Vec::new();
+                mark(&mut marks, tile, ground);
+                Some(Gesture::Remove(marks))
             }
         };
         Vec::new()
@@ -111,11 +113,8 @@ impl Builder {
         match &mut self.gesture {
             Some(Gesture::Belt { path, .. }) => extend(path, tile),
             Some(Gesture::Place(t)) => *t = tile,
-            Some(Gesture::Remove(t)) if *t != tile => {
-                *t = tile;
-                return remove(tile, ground);
-            }
-            _ => {}
+            Some(Gesture::Remove(marks)) => mark(marks, tile, ground),
+            None => {}
         }
         Vec::new()
     }
@@ -150,10 +149,11 @@ impl Builder {
                         }),
                     }
                 }
-                if path.len() > 1 {
-                    self.dir = path[last].1;
-                }
+                // `self.dir` stays as it was: drawing a belt must not change
+                // which way the next machine faces behind the player's back.
             }
+            // A tap on something already built inspects it instead (the game does that).
+            Some(Gesture::Place(tile)) if ground.at(tile).is_some() => {}
             Some(Gesture::Place(tile)) => {
                 if let Tool::Place(building) = &self.tool {
                     out.push(Command::Place {
@@ -164,9 +164,20 @@ impl Builder {
                     });
                 }
             }
-            Some(Gesture::Remove(_)) | None => {}
+            Some(Gesture::Remove(marks)) => {
+                out.extend(marks.into_iter().map(|entity| Command::Remove { entity }));
+            }
+            None => {}
         }
         out
+    }
+
+    /// What a remove drag has marked so far, to draw before it goes.
+    pub fn marked(&self) -> &[EntityId] {
+        match &self.gesture {
+            Some(Gesture::Remove(marks)) => marks,
+            _ => &[],
+        }
     }
 
     /// A second finger came down, or the gesture was cancelled: drop it.
@@ -195,10 +206,12 @@ impl Builder {
     }
 }
 
-fn remove(tile: TilePos, ground: &dyn Ground) -> Vec<Command> {
-    match ground.at(tile) {
-        Some(o) if o.removable => vec![Command::Remove { entity: o.id }],
-        _ => Vec::new(),
+/// Mark what stands on `tile` for removal, once; the hub can't be marked.
+fn mark(marks: &mut Vec<EntityId>, tile: TilePos, ground: &dyn Ground) {
+    if let Some(o) = ground.at(tile).filter(|o| o.removable) {
+        if !marks.contains(&o.id) {
+            marks.push(o.id);
+        }
     }
 }
 
@@ -299,7 +312,10 @@ mod tests {
                 (3, 2, South)
             ]
         );
-        assert_eq!(b.dir, South, "the next belt carries on the same way");
+        assert_eq!(
+            b.dir, East,
+            "drawing a belt leaves the machine facing alone"
+        );
     }
 
     #[test]
@@ -345,6 +361,21 @@ mod tests {
     }
 
     #[test]
+    fn tapping_something_built_places_nothing_and_a_cancelled_sweep_removes_nothing() {
+        let (mut b, mut map) = (Builder::default(), Map::default());
+        map.0.insert(t(4, 4), belt(9, Dir::East));
+        b.set_tool(Tool::Place("drill".into()));
+        b.start(t(4, 4), &map);
+        assert!(b.end(&map).is_empty(), "the game inspects it instead");
+        b.set_tool(Tool::Remove);
+        b.start(t(4, 4), &map);
+        assert_eq!(b.marked(), [EntityId(9)]);
+        b.cancel(); // a second finger, or the radial menu opening
+        assert!(b.marked().is_empty());
+        assert!(b.end(&map).is_empty());
+    }
+
+    #[test]
     fn place_follows_the_finger_and_remove_sweeps() {
         let (mut b, mut map) = (Builder::default(), Map::default());
         b.set_tool(Tool::Place("furnace".into()));
@@ -369,10 +400,12 @@ mod tests {
         b.set_tool(Tool::Remove);
         let mut cmds = b.start(t(0, 0), &map);
         cmds.extend(b.drag(t(1, 0), &map));
-        cmds.extend(b.drag(t(1, 0), &map)); // same tile again: nothing
-        cmds.extend(b.drag(t(2, 0), &map)); // the hub: nothing
+        cmds.extend(b.drag(t(0, 0), &map)); // back over the first: marked once
+        cmds.extend(b.drag(t(2, 0), &map)); // the hub: never marked
+        assert!(cmds.is_empty(), "nothing goes until the finger lifts");
+        assert_eq!(b.marked(), [EntityId(1), EntityId(2)]);
         assert_eq!(
-            cmds,
+            b.end(&map),
             vec![
                 Command::Remove {
                     entity: EntityId(1)

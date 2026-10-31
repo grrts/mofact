@@ -90,6 +90,8 @@ pub struct View<'a> {
     pub recipe: Option<&'a RecipeId>,
     /// The belt tier the belt tool lays.
     pub belt: &'a BuildingId,
+    /// Whether there is an action to undo, and one to redo.
+    pub history: (bool, bool),
 }
 
 impl View<'_> {
@@ -169,6 +171,9 @@ pub enum Action {
     Inspect([f32; 2]),
     /// A long press opened the radial menu: drop the gesture its finger started.
     Cancel,
+    /// Take back the latest action, or put it back.
+    Undo,
+    Redo,
 }
 
 /// A control on screen, and what tapping it does.
@@ -190,6 +195,11 @@ enum Hit {
     /// An item's icon: opens the recipe browser on it.
     Item(ItemId),
     Close,
+    /// Undo and redo buttons.
+    Undo,
+    Redo,
+    /// Put the tool away and go back to Move.
+    Done,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -236,6 +246,8 @@ pub struct Hud {
     toast: Option<(String, Instant)>,
     /// Pixels per point in the last frame.
     unit: f32,
+    /// The toolbar slot of the tool in hand in the last frame.
+    current: Option<usize>,
 }
 
 impl Hud {
@@ -387,6 +399,11 @@ impl Hud {
                 self.selected = None;
                 Vec::new()
             }
+            // Tapping the tool in hand again puts it away.
+            Hit::Tool(i) if i != 0 && self.current == Some(i) => {
+                self.more = false;
+                vec![Action::Tool(Tool::Hand)]
+            }
             Hit::Tool(i) => {
                 if i != 0 {
                     self.selected = None;
@@ -394,6 +411,9 @@ impl Hud {
                 self.more = false;
                 vec![Action::Tool(tool_at(i))]
             }
+            Hit::Done => vec![Action::Tool(Tool::Hand)],
+            Hit::Undo => vec![Action::Undo],
+            Hit::Redo => vec![Action::Redo],
             Hit::Build(b) => {
                 self.more = false;
                 self.radial = None;
@@ -468,6 +488,7 @@ impl Hud {
             let bh = (h - 2.0 * m).min(n * 80.0 * u);
             [w - m - bw, h - m - bh, bw, bh]
         };
+        self.current = tool_index(view.tool);
         self.toolbar(view, o, bar, portrait);
         // The bottom-right corner of the free area, where the thumb is.
         let corner = if portrait {
@@ -488,7 +509,7 @@ impl Hud {
             }
         }
         if selected.is_none() && !self.research && !self.more && self.browse.is_none() {
-            chip(o, tip(view.tool), [m, tip_y], corner[0] - m, u, TEXT);
+            self.tip(view, o, [m, tip_y], corner[0] - m);
         }
         let width = if portrait {
             w - 2.0 * m
@@ -527,6 +548,7 @@ impl Hud {
             _ => None,
         };
         let mut right = corner[0];
+        let left = self.undo_buttons(view, o, [m, corner[1]]);
         if placing.is_some() || *view.tool == Tool::Belt {
             let d = 60.0 * u;
             let r = [right - d, corner[1] - d, d, d];
@@ -551,7 +573,7 @@ impl Hud {
                     recipe_pill(view, r, chosen, Hit::Recipe(r.map(|r| r.id.clone())))
                 })
                 .collect();
-            self.pills(o, choices, [m, corner[1]], right - m, true);
+            self.pills(o, choices, [left, corner[1]], right - left, true);
         }
         // Belt tiers, once there is more than one to lay.
         if *view.tool == Tool::Belt {
@@ -569,9 +591,79 @@ impl Hud {
                 })
                 .collect();
             if tiers.len() > 1 {
-                self.pills(o, tiers, [m, corner[1]], right - m, true);
+                self.pills(o, tiers, [left, corner[1]], right - left, true);
             }
         }
+    }
+
+    /// The tip for the tool in hand. With a tool other than Move it names
+    /// the tool and carries a Done button, so it is always clear what a tap
+    /// will do and how to stop.
+    fn tip(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) {
+        let u = self.unit;
+        let Some(slot) = self.current.filter(|_| *view.tool != Tool::Hand) else {
+            chip(o, tip(view.tool), at, width, u, TEXT);
+            return;
+        };
+        let name = match view.tool {
+            Tool::Place(b) => view.building(b).map_or("Build", |d| d.name.as_str()),
+            _ => TOOLS[slot].0,
+        };
+        let text = format!("{name}: {}", tip(view.tool));
+        let ink = if *view.tool == Tool::Remove {
+            palette::STARVE
+        } else {
+            TEXT
+        };
+        let px = 15.0 * u;
+        let bw = o.measure("Done", px) + 28.0 * u;
+        let gap = 8.0 * u;
+        let bottom = chip(o, &text, at, width - bw - gap, u, ink);
+        let h = (bottom - at[1]).max(40.0 * u).min(52.0 * u);
+        let r = [at[0] + width - bw, at[1], bw, h];
+        o.panel([r[0], r[1]], [r[2], r[3]], 8.0 * u, RAISED);
+        o.text(
+            "Done",
+            [r[0] + 14.0 * u, r[1] + (h + o.cap_height(px)) / 2.0],
+            px,
+            TEXT,
+        );
+        self.hits.push((r, Hit::Done));
+    }
+
+    /// Undo and redo buttons in the bottom-left corner of the free area, when
+    /// there is something to take back. Returns where the next control may start.
+    fn undo_buttons(&mut self, view: &View, o: &mut Overlay, at: [f32; 2]) -> f32 {
+        let (undo, redo) = view.history;
+        let u = self.unit;
+        let h = 48.0 * u;
+        let px = 15.0 * u;
+        let mut x = at[0];
+        for (show, live, hit, label) in [
+            (undo || redo, undo, Hit::Undo, "← Undo"),
+            (redo, redo, Hit::Redo, "Redo →"),
+        ] {
+            if !show {
+                continue;
+            }
+            let w = o.measure(label, px) + 28.0 * u;
+            let r = [x, at[1] - h, w, h];
+            o.panel([r[0], r[1]], [w, h], h / 2.0, PANEL);
+            let ink = if live {
+                TEXT
+            } else {
+                [TEXT[0], TEXT[1], TEXT[2], 0x50]
+            };
+            o.text(
+                label,
+                [r[0] + 14.0 * u, r[1] + (h + o.cap_height(px)) / 2.0],
+                px,
+                ink,
+            );
+            self.hits.push((r, if live { hit } else { Hit::Block }));
+            x += w + 8.0 * u;
+        }
+        x
     }
 
     fn toolbar(&mut self, view: &View, o: &mut Overlay, bar: Rect, portrait: bool) {
@@ -1533,7 +1625,7 @@ fn tip(tool: &Tool) -> &'static str {
             "Tap to place next to a pole. Each turbine powers one lab."
         }
         Tool::Place(_) => "Tap to place. Pick a recipe, or let it pick from what arrives.",
-        Tool::Remove => "Tap or drag over things to remove them. You get the plates back.",
+        Tool::Remove => "Tap or drag to mark, lift to remove. Undo brings things back.",
     }
 }
 

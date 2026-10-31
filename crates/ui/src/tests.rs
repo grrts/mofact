@@ -68,6 +68,7 @@ impl Fixture {
             dir: Dir::East,
             recipe: None,
             belt: &self.belt,
+            history: (true, false),
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
