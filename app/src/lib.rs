@@ -44,3 +44,19 @@ pub use bundled::content;
 pub use game::Game;
 #[cfg(not(target_arch = "wasm32"))]
 pub use native::{main, run, run_with, MakeShop, Platform};
+
+#[cfg(test)]
+mod version {
+    /// Every platform ships one version: the workspace's.
+    #[test]
+    fn the_ios_bundle_carries_the_workspace_version() {
+        let plist = include_str!("../../platform/ios/Info.plist");
+        let at = plist
+            .find("<key>CFBundleShortVersionString</key>")
+            .expect("Info.plist names a version");
+        let rest = &plist[at..];
+        let start = rest.find("<string>").expect("a value") + "<string>".len();
+        let end = rest.find("</string>").expect("a value");
+        assert_eq!(&rest[start..end], env!("CARGO_PKG_VERSION"));
+    }
+}

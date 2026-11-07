@@ -1010,6 +1010,7 @@ fn store_shots(
                 slots: &[],
                 // The full game, as the stores sell it.
                 store: &mofact_ui::StoreView::default(),
+                crash: false,
             };
             hud.draw(&view, overlay);
         });
