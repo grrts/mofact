@@ -72,6 +72,7 @@ struct Fixture {
     belt: BuildingId,
     slots: Vec<SlotView>,
     store: StoreView,
+    crash: bool,
 }
 
 impl Fixture {
@@ -101,6 +102,7 @@ impl Fixture {
                 SlotView::default(),
             ],
             store: StoreView::default(),
+            crash: false,
         }
     }
 
@@ -120,6 +122,7 @@ impl Fixture {
             nudge: None,
             slots: &self.slots,
             store: &self.store,
+            crash: self.crash,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -1223,5 +1226,22 @@ fn late_and_repeatable_research_shows_on_a_phone_and_can_be_studied_again() {
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     for id in ["deep-survey", "lean-assembly", "lab-automation"] {
         f.find(&Hit::Study(Some(id.into())));
+    }
+}
+
+#[test]
+fn a_waiting_crash_report_can_be_copied_from_the_game_menu() {
+    let mut f = Fixture::new();
+    for (size, scale) in [((1280, 720), 1.0), ((1080, 2340), 3.0)] {
+        f.hud = Hud::new();
+        f.crash = false;
+        f.hud.open_menu(None);
+        f.draw(size, scale, &Tool::Hand);
+        assert!(!f.hud.hits.iter().any(|(_, h)| h == &Hit::CopyCrash));
+        f.crash = true;
+        f.draw(size, scale, &Tool::Hand);
+        let b = f.find(&Hit::CopyCrash);
+        assert!(b[1] + b[3] <= size.1 as f32, "it fits on screen");
+        assert_eq!(f.tap(centre(b)).1, vec![Action::CopyCrash]);
     }
 }

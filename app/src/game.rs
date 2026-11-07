@@ -75,6 +75,10 @@ pub struct Game {
     /// What the phone should feel this frame, for the platform to play.
     haptics: crate::haptics::Haptics,
     pub haptic: Option<crate::haptics::Haptic>,
+    /// Last time's crash report, until the player copies it.
+    crash: Option<String>,
+    /// Text for the platform to put on the clipboard.
+    pub clipboard: Option<String>,
 }
 
 impl Game {
@@ -146,6 +150,8 @@ impl Game {
             store: StoreView::default(),
             haptics: Default::default(),
             haptic: None,
+            crash: None,
+            clipboard: None,
             content,
             ore,
             controls,
@@ -176,6 +182,14 @@ impl Game {
     }
 
     /// Paint everything again in the colour-blind look, or the usual one.
+    /// The game crashed last time: say so, and offer the report in the menu.
+    pub fn set_crash_report(&mut self, report: String) {
+        self.crash = Some(report);
+        self.hud.toast(
+            "Mofact stopped unexpectedly last time. Nothing was sent; the menu can copy the report.",
+        );
+    }
+
     /// Sell the full game through `shop`: the demo's gate holds until it
     /// is bought (T61).
     pub fn set_shop(&mut self, shop: Box<dyn crate::shop::Shop>) {
@@ -439,6 +453,7 @@ impl Game {
             nudge,
             slots: &self.slots,
             store: &self.store,
+            crash: self.crash.is_some(),
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -510,6 +525,13 @@ impl Game {
                 self.requests.push(Request::New { slot, seed, preset })
             }
             Action::Redo => self.sim.redo(),
+            Action::CopyCrash => {
+                if let Some(r) = self.crash.take() {
+                    self.clipboard = Some(r);
+                    self.hud
+                        .toast("Crash report copied: paste it into a bug report or an email.");
+                }
+            }
             Action::Buy => {
                 if let Some(p) = &mut self.purchase {
                     p.buy();
