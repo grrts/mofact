@@ -1322,9 +1322,9 @@ fn every_character_has_a_glyph() {
 }
 
 #[test]
-fn nearly_every_content_name_is_translated() {
-    // New content shows in English until it is translated; this catches a
-    // language falling far behind, not each new name.
+fn every_content_name_is_translated() {
+    // New content would show in English until translated: translate it in
+    // the same pull request, in every crates/ui/lang file.
     let keys = i18n::content_keys(&content());
     for lang in i18n::Lang::ALL.into_iter().skip(1) {
         let t = i18n::table(lang);
@@ -1333,7 +1333,7 @@ fn nearly_every_content_name_is_translated() {
             .filter(|(k, _)| t.contains_key(k.as_str()))
             .count();
         assert!(
-            done * 10 >= keys.len() * 9,
+            done == keys.len(),
             "{}: only {done} of {} content names translated",
             lang.code(),
             keys.len()
@@ -1711,4 +1711,88 @@ fn a_long_blueprint_library_pages_on_a_sideways_phone() {
     // Each page's rows take the blueprint they show.
     let last = centre(f.find(&Hit::Pick(11)));
     assert_eq!(f.tap(last).1, vec![Action::Paste(11)]);
+}
+
+/// Words in `text` that look like English left in by mistake: three or
+/// more Latin letters in a row, other than units, names and the seed.
+fn english_in(text: &str) -> Vec<String> {
+    const FINE: [&str; 8] = ["kW", "fps", "Mofact", "AI", "OK", "Auto", "English", "min"];
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| w.len() >= 3 && !FINE.contains(w))
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn japanese_and_chinese_screens_show_no_english() {
+    // Every word on screen in Japanese and Chinese goes through the
+    // string tables: a hardcoded English label shows up here as Latin
+    // letters, in any HUD state, on any screen.
+    let mut found = Vec::new();
+    for lang in [i18n::Lang::Ja, i18n::Lang::ZhHans] {
+        every_state(|f, size, scale, tool, state| {
+            i18n::set_lang(lang);
+            f.content = i18n::localize(&f.content);
+            // The slots' words come from the app, in the player's language.
+            for s in &mut f.slots {
+                if s.used {
+                    s.title = trf("slot.title", &[&tr("preset.lakes"), &42]);
+                    s.detail = trf("slot.detail", &[&tr("slot.just_started"), &14]);
+                }
+            }
+            // So are blueprints' names, as the player saved them.
+            for b in &mut f.blueprints {
+                b.name = mofact_input::blueprint::next_name(&[], tr("blueprint.name"));
+            }
+            f.overlay.keep_words = true;
+            f.draw(size, scale, tool);
+            for w in &f.overlay.words {
+                for e in english_in(w) {
+                    let line = format!("{}: {e:?} in {w:?} ({state}, {tool:?})", lang.code());
+                    if !found.contains(&line) {
+                        found.push(line);
+                    }
+                }
+            }
+            i18n::set_lang(i18n::Lang::En);
+        });
+    }
+    assert!(found.is_empty(), "English on screen:\n{}", found.join("\n"));
+}
+
+#[test]
+fn no_words_are_written_into_the_code() {
+    // Toasts and labels take their words from the string tables. A literal
+    // like `toast("Saved")` would stay English in every language.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut found = Vec::new();
+    for dir in ["crates/ui/src", "app/src", "crates/input/src"] {
+        for entry in std::fs::read_dir(root.join(dir)).expect("source folder") {
+            let path = entry.expect("file").path();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if !name.ends_with(".rs") || name == "tests.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("source");
+            // Only the code before its tests.
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for (n, line) in code.lines().enumerate() {
+                for call in ["toast(\"", ".text(\"", "button(\""] {
+                    let Some(at) = line.find(call) else { continue };
+                    let word: String = line[at + call.len()..]
+                        .chars()
+                        .take_while(|c| *c != '"')
+                        .collect();
+                    if word.chars().filter(char::is_ascii_alphabetic).count() >= 2 {
+                        found.push(format!("{dir}/{name}:{}: {}", n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "use tr(\"key\"):\n{}", found.join("\n"));
 }

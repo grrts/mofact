@@ -514,7 +514,7 @@ pub struct Hud {
     found: Vec<Problem>,
     /// What [`Hud::found`] was worked out from: the time in quarter seconds,
     /// how much is built, and a digest of every machine's state.
-    found_for: Option<(u64, usize, u64, usize)>,
+    found_for: Option<(u64, usize, u64, usize, i18n::Lang)>,
     /// The line last jumped to and which of its places, so another tap
     /// on it goes to the next one.
     jumped: Option<(problems::Trouble, Option<BuildingId>, usize)>,
@@ -1232,6 +1232,8 @@ impl Hud {
                 .map(|e| e.state as u64 + 1)
                 .fold(0u64, |h, s| h.wrapping_mul(31).wrapping_add(s)),
             snap.grids.len(),
+            // Its words are in the language they were found in.
+            i18n::lang(),
         );
         if self.found_for != Some(key) {
             self.found_for = Some(key);

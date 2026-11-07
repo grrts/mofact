@@ -46,3 +46,14 @@ Build numbers come from the CI run number.
    tag against `Cargo.toml` and the changelog, then publishes a GitHub release
    with the builds and that changelog entry. Store uploads join once the
    signing keys exist (see `docs/decisions.md` and the platform READMEs).
+
+## Words the player reads
+
+Every word on screen comes from `crates/ui/lang/<code>.txt` through `tr("key")`
+or `trf("key", &[..])`; content names come from `data/*.ron` in English and are
+translated by id (`item.<id>`, `building.<id>`, …). A pull request that adds a
+string or content name adds it to all seven files. CI fails on a missing
+translation, a name left untranslated, English showing on a Japanese or Chinese
+screen, or a toast or label written straight into the code. New Japanese or
+Chinese characters need `tools/fonts/subset.py` run again (the
+`every_character_has_a_glyph` test says when).
