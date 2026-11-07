@@ -25,4 +25,24 @@ mod tests {
         let starter = mofact_headless::parse(super::STARTER).expect("starter parses");
         mofact_headless::build(&content, &starter).expect("starter builds");
     }
+
+    #[test]
+    fn a_new_game_starts_without_a_problem() {
+        // The first thing a player sees must not be a red mark: the
+        // furnace waits for the drill's first ore, it isn't starved.
+        use mofact_core::snapshot::MachineState;
+        let content = super::content().unwrap();
+        let (mut sim, _) = crate::game::new_game(&content, 1).unwrap();
+        for t in 0..20 * mofact_core::TICKS_PER_SECOND {
+            sim.step();
+            let snap = sim.snapshot();
+            let trouble: Vec<_> = snap
+                .entities
+                .iter()
+                .filter(|e| matches!(e.state, MachineState::Starved | MachineState::Blocked))
+                .map(|e| (e.building.as_str().to_owned(), e.state))
+                .collect();
+            assert!(trouble.is_empty(), "tick {t}: {trouble:?}");
+        }
+    }
 }
