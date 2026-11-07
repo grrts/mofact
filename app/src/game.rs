@@ -178,6 +178,25 @@ impl Game {
         self.scene
             .animate(&self.look, atlases, &camera, target.size(), &latest, t);
         self.sound.frame(&latest, &camera, target.size());
+        // The land in view, sampled on a coarse grid, sets the ambient beds.
+        {
+            let (lo, hi) = camera.visible(target.size().0, target.size().1);
+            let stride = mofact_render::scene::map_stride(camera.pixels_per_tile);
+            let ore = &self.ore;
+            let samples = (0..12).flat_map(|j| {
+                (0..8).filter_map(move |i| {
+                    let x = lo[0] + (hi[0] - lo[0]) * (i as f32 + 0.5) / 8.0;
+                    let y = lo[1] + (hi[1] - lo[1]) * (j as f32 + 0.5) / 12.0;
+                    let t = mofact_core::geom::TilePos::new(
+                        (x / stride as f32).floor() as i32,
+                        (y / stride as f32).floor() as i32,
+                    );
+                    ore.terrain(t, stride).map(|(kind, _)| kind)
+                })
+            });
+            self.sound
+                .ground(samples, crate::worldmap::is_map(&camera, scale));
+        }
         self.ore.update(&camera, target.size());
         self.scene.ore(
             &self.look,
