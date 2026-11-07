@@ -90,6 +90,9 @@ pub struct Snapshot {
     /// Ore tiles mined out, sorted; shared like `cleared`.
     #[serde(default)]
     pub depleted: std::sync::Arc<Vec<TilePos>>,
+    /// The player's pins on the world map, sorted; shared like `cleared`.
+    #[serde(default)]
+    pub pins: std::sync::Arc<Vec<TilePos>>,
     /// Trains, which ride on rail tiles rather than standing on their own.
     #[serde(default)]
     pub trains: Vec<TrainView>,

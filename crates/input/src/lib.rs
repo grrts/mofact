@@ -48,7 +48,7 @@ pub enum Pointer {
 }
 
 /// Closest and furthest zoom, in points per tile (screen pixels at scale 1).
-pub const ZOOM: (f32, f32) = (8.0, 128.0);
+pub const ZOOM: (f32, f32) = (0.5, 128.0);
 /// How much one wheel notch zooms.
 const WHEEL_STEP: f32 = 1.15;
 
@@ -157,6 +157,17 @@ impl CameraControl {
     fn pan(&mut self, from: [f32; 2], to: [f32; 2]) {
         self.center[0] -= (to[0] - from[0]) / self.pixels_per_tile;
         self.center[1] -= (to[1] - from[1]) / self.pixels_per_tile;
+        self.clamp();
+    }
+
+    /// Pixels per point.
+    pub fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// Zoom to `pixels_per_tile` about the middle of the screen.
+    pub fn zoom_to(&mut self, pixels_per_tile: f32) {
+        self.pixels_per_tile = pixels_per_tile;
         self.clamp();
     }
 

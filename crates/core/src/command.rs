@@ -33,6 +33,10 @@ pub enum Command {
     Clear { tile: TilePos },
     /// Put a cleared tree or boulder back: the undo of [`Command::Clear`].
     Regrow { tile: TilePos },
+    /// Put a pin on the world map, to find a place again.
+    Pin { tile: TilePos },
+    /// Take a pin off the map.
+    Unpin { tile: TilePos },
     /// Give a train its schedule: the stops it visits in turn.
     SetSchedule {
         entity: EntityId,

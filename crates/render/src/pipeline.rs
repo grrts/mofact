@@ -32,8 +32,9 @@ pub struct Renderer {
     terrain: (wgpu::Texture, wgpu::BindGroup, u64),
 }
 
-/// Bytes in the globals uniform: the transform, the view and the terrain map's place.
-const GLOBALS: u64 = 48;
+/// Bytes in the globals uniform: the transform, the view, the terrain map's
+/// place and how many tiles each of its texels covers.
+const GLOBALS: u64 = 64;
 
 const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Unorm8x4, 4 => Uint32
@@ -313,6 +314,10 @@ impl Renderer {
                     map[1],
                     map[2],
                     map[3],
+                    scene.terrain.stride.max(1) as f32,
+                    0.0,
+                    0.0,
+                    0.0,
                 ]
             }),
         );
@@ -345,6 +350,10 @@ impl Renderer {
                     0.0,
                     1.0,
                     1.0,
+                    1.0,
+                    0.0,
+                    0.0,
+                    0.0,
                 ]),
             );
             let at = std::mem::size_of::<Instance>() as u64 * n as u64;
@@ -387,7 +396,7 @@ impl Renderer {
 
     /// Copy the scene's terrain map to the GPU when it changed, growing the
     /// texture if it no longer fits. Returns where the map lies, for the
-    /// shader: its top-left tile, width and height.
+    /// shader: its top-left texel, width and height in texels.
     fn upload_terrain(&mut self, gpu: &Gpu, scene: &Scene) -> [f32; 4] {
         let map = &scene.terrain;
         let [w, h] = map.size;

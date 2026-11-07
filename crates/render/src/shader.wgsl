@@ -5,8 +5,10 @@ struct Globals {
     xf: vec4<f32>,
     // Pixels per tile, target width, target height, seconds since start.
     view: vec4<f32>,
-    // The terrain map's top-left tile (xy) and its size in tiles (zw).
+    // The terrain map's top-left texel (xy) and its size in texels (zw).
     ground: vec4<f32>,
+    // Tiles per terrain texel (x): 1 up close, more on the world map.
+    map: vec4<f32>,
 };
 
 @group(0) @binding(0) var<uniform> globals: Globals;
@@ -85,7 +87,7 @@ fn patches(p: vec2<f32>) -> f32 {
     return mix(a, b, u.y);
 }
 
-// The terrain number and shade at a tile, from the map.
+// The terrain number and shade at a texel, from the map.
 fn tile_at(t: vec2<f32>) -> vec2<f32> {
     let size = vec2<i32>(globals.ground.zw);
     let p = clamp(vec2<i32>(t - globals.ground.xy), vec2<i32>(0), size - vec2<i32>(1));
@@ -170,10 +172,12 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let clip = vec2<f32>(frag.x / globals.view.y * 2.0 - 1.0, 1.0 - frag.y / globals.view.z * 2.0);
     let world = (clip - globals.xf.zw) / globals.xf.xy;
 
-    // Wobble where the pixel reads the map from, so borders curve.
-    let wobble = vec2<f32>(patches(world * 0.35) - 0.5, patches(world * 0.35 + 31.7) - 0.5)
-        + 0.5 * vec2<f32>(patches(world * 1.1 + 7.3) - 0.5, patches(world * 1.1 + 3.1) - 0.5);
-    let q = world + wobble * 1.1 - 0.5;
+    // Wobble where the pixel reads the map from, so borders curve. On the
+    // world map a texel spans several tiles, so this works in texels.
+    let texel = world / max(globals.map.x, 1.0);
+    let wobble = vec2<f32>(patches(texel * 0.35) - 0.5, patches(texel * 0.35 + 31.7) - 0.5)
+        + 0.5 * vec2<f32>(patches(texel * 1.1 + 7.3) - 0.5, patches(texel * 1.1 + 3.1) - 0.5);
+    let q = texel + wobble * 1.1 - 0.5;
     let i = floor(q);
     // Straight blends for the shoreline, so it runs on the diagonal instead of
     // stepping; a little sharper for the land colours.

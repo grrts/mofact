@@ -1446,3 +1446,46 @@ fn version_9_saves_from_before_ore_ran_out_still_load() {
     assert_eq!(sim.ore_left(TilePos::new(0, 0)), Some(PLACED_ORE));
     assert!(sim.snapshot().depleted.is_empty());
 }
+
+#[test]
+fn pins_go_on_the_map_undo_and_save() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    let a = TilePos::new(400, -30);
+    let CommandResult::Applied { undo, .. } = sim.apply(&Command::Pin { tile: a }) else {
+        panic!("pinning a tile")
+    };
+    assert_eq!(undo, vec![Command::Unpin { tile: a }]);
+    assert_eq!(*sim.snapshot().pins, vec![a]);
+    assert!(matches!(
+        sim.apply(&Command::Pin { tile: a }),
+        CommandResult::Refused(_)
+    ));
+    let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+    assert_eq!(*loaded.snapshot().pins, vec![a]);
+    assert!(matches!(
+        sim.apply(&Command::Unpin { tile: a }),
+        CommandResult::Applied { .. }
+    ));
+    assert!(sim.snapshot().pins.is_empty());
+    for i in 0..MAX_PINS as i32 + 3 {
+        sim.apply(&Command::Pin {
+            tile: TilePos::new(i, 0),
+        });
+    }
+    assert_eq!(sim.snapshot().pins.len(), MAX_PINS, "the map holds so many");
+}
+
+#[test]
+fn version_11_saves_from_before_pins_still_load() {
+    let content = content();
+    let (sim, warnings) = Sim::load(&content, include_bytes!("../tests/v11.mofact")).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(sim.snapshot().entities.len(), 1);
+    let left = sim.ore_left(TilePos::new(0, 0)).expect("ore still there");
+    assert!(
+        left < 50,
+        "the amount mined before the save is kept: {left}"
+    );
+    assert!(sim.snapshot().pins.is_empty());
+}

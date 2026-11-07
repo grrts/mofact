@@ -43,6 +43,8 @@ pub struct Game {
     pub safe: [f32; 4],
     /// The first-hour coach.
     guide: Guide,
+    /// The zoom to go back to when the map closes, in points a tile.
+    before_map: Option<f32>,
 }
 
 impl Game {
@@ -98,6 +100,7 @@ impl Game {
             started: Instant::now(),
             safe: [0.0; 4],
             guide: Guide::default(),
+            before_map: None,
             content,
             ore,
             controls,
@@ -195,7 +198,9 @@ impl Game {
         );
         let ore = &self.ore;
         self.scene
-            .terrain(&camera, target.size(), ore.version(), |t| ore.terrain(t));
+            .terrain(&camera, target.size(), ore.version(), |t, s| {
+                ore.terrain(t, s)
+            });
         self.scene.time = self.started.elapsed().as_secs_f32() % 3600.0;
         let (coach, turn) = self.guide.update(
             &self.content,
@@ -248,6 +253,36 @@ impl Game {
             self.overlay
                 .panel([x, y], [w, h], ppt * 0.12, [0xff, 0x5d, 0x5d, 0x80]);
         }
+        // Far out, the world map: the factory as a schematic, the ore
+        // patches as icons. Pins show at every zoom.
+        let map = crate::worldmap::is_map(&camera, scale);
+        self.hud.set_map(map);
+        if map {
+            crate::worldmap::factory(
+                &mut self.overlay,
+                &self.content,
+                &camera,
+                target.size(),
+                scale,
+                &latest,
+            );
+            let patches = self.ore.patches(&camera, target.size());
+            crate::worldmap::patches(
+                &mut self.overlay,
+                &self.look,
+                &camera,
+                target.size(),
+                scale,
+                &patches,
+            );
+        }
+        crate::worldmap::pins(
+            &mut self.overlay,
+            &camera,
+            target.size(),
+            scale,
+            &latest.pins,
+        );
         // Trees it has marked to clear.
         for t in self.controls.builder.marked_trees() {
             let ppt = camera.pixels_per_tile;
@@ -347,6 +382,10 @@ impl Game {
             // With a building in hand, a tap on something already built
             // inspects it instead of trying to build on top of it.
             Action::Inspect(at) => {
+                // Picking a train stop wins over dropping a pin.
+                if self.hud.picking_stop().is_none() && self.map_tap(at) {
+                    return;
+                }
                 let hand = self.controls.builder.tool == Tool::Hand;
                 let placing = matches!(self.controls.builder.tool, Tool::Place(_));
                 if !hand && !placing {
@@ -401,11 +440,51 @@ impl Game {
             // A problem from the list: look at it, with the hand, so its
             // inspect sheet (opened by the HUD) says what's wrong.
             Action::Mute(muted) => self.sound.set_muted(muted),
+            Action::Map(open) => {
+                let cam = &mut self.controls.camera;
+                let scale = cam.scale();
+                if open {
+                    self.before_map = Some(cam.pixels_per_tile / scale);
+                    cam.zoom_to(crate::worldmap::MAP_OPEN * scale);
+                } else {
+                    let back = self.before_map.take().unwrap_or(32.0);
+                    cam.zoom_to(back.max(crate::worldmap::MAP_ZOOM * 2.0) * scale);
+                }
+                self.controls.builder.set_tool(Tool::Hand);
+            }
             Action::Focus(at) => {
                 self.controls.camera.center = at;
                 self.controls.builder.set_tool(Tool::Hand);
             }
         }
+    }
+
+    /// On the world map a tap drops a pin, or picks one up. Returns whether
+    /// the tap was on the map.
+    fn map_tap(&mut self, at: [f32; 2]) -> bool {
+        let cam = &self.controls.camera;
+        let camera = Camera {
+            center: cam.center,
+            pixels_per_tile: cam.pixels_per_tile,
+        };
+        let scale = cam.scale();
+        if !crate::worldmap::is_map(&camera, scale) {
+            return false;
+        }
+        let Some(size) = self.target.as_ref().map(|t| t.size()) else {
+            return false;
+        };
+        let pins = self.sim.latest().pins.clone();
+        let command = match crate::worldmap::pin_at(&camera, size, scale, &pins, at) {
+            Some(tile) => mofact_core::command::Command::Unpin { tile },
+            None => {
+                let [x, y] = cam.world_at(at);
+                let tile = mofact_core::geom::TilePos::new(x.floor() as i32, y.floor() as i32);
+                mofact_core::command::Command::Pin { tile }
+            }
+        };
+        self.sim.send(command);
+        true
     }
 
     /// A pointer event goes to the HUD first, then to the camera and build tools.

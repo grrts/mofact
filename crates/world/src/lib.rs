@@ -477,6 +477,35 @@ fn ore_on_land(gen: &WorldGen, t: TilePos) -> Option<Ore> {
         return None;
     }
     let (cx, cy) = (t.x.div_euclid(PATCH_CELL), t.y.div_euclid(PATCH_CELL));
+    let cell = patch_cell(gen, cx, cy)?;
+    let edge = 0.7 + 0.6 * value_noise(gen.seed ^ 0xed6e, t.x, t.y, 4);
+    let (dx, dy) = (f64::from(t.x - cell.mid.x), f64::from(t.y - cell.mid.y));
+    let d = sqrt(dx * dx + dy * dy) / (cell.radius * edge);
+    if d >= 1.0 {
+        return None;
+    }
+    let resource = cell_resource(gen, &cell);
+    // A far biome's own ore stops at the biome's edge.
+    if resource >= 4 && biome_at(gen, t).exclusive() != Some(resource) {
+        return None;
+    }
+    let (h, far) = (cell.hash, cell.far);
+    // Richest in the middle, and richer the further you go.
+    let rich = 1.0 + ((h >> 40) % 100) as f64 / 100.0 + far / 600.0;
+    let amount = (1200.0 + 3600.0 * rich * (1.0 - d * d)) as u32;
+    Some(Ore { resource, amount })
+}
+
+/// The patch a 44-tile cell holds, if any: its middle and size.
+struct PatchCell {
+    mid: TilePos,
+    radius: f64,
+    hash: u64,
+    /// How far its middle is from the origin, in tiles.
+    far: f64,
+}
+
+fn patch_cell(gen: &WorldGen, cx: i32, cy: i32) -> Option<PatchCell> {
     let h = hash(gen.seed ^ 0x0e0e, cx, cy);
     // About two cells in three hold a patch.
     if h % 3 == 0 {
@@ -488,25 +517,100 @@ fn ore_on_land(gen: &WorldGen, t: TilePos) -> Option<Ore> {
     let far = sqrt(f64::from(px) * f64::from(px) + f64::from(py) * f64::from(py));
     // Bigger further out, and ragged at the edge.
     let radius = 4.0 + ((h >> 24) % 5) as f64 + (far / 400.0).min(3.0);
-    let edge = 0.7 + 0.6 * value_noise(gen.seed ^ 0xed6e, t.x, t.y, 4);
-    let (dx, dy) = (f64::from(t.x - px), f64::from(t.y - py));
-    let d = sqrt(dx * dx + dy * dy) / (radius * edge);
-    if d >= 1.0 {
-        return None;
-    }
-    let resource = match biome_at(gen, TilePos::new(px, py)).exclusive() {
+    Some(PatchCell {
+        mid: TilePos::new(px, py),
+        radius,
+        hash: h,
+        far,
+    })
+}
+
+fn cell_resource(gen: &WorldGen, cell: &PatchCell) -> u8 {
+    let h = cell.hash;
+    match biome_at(gen, cell.mid).exclusive() {
         // Two patches in five in a far biome hold its own ore.
         Some(own) if own < gen.resources && (h >> 48) % 5 < 2 => own,
         _ => pick_resource(gen.resources.min(4), (h >> 32) % 100),
-    };
-    // A far biome's own ore stops at the biome's edge.
-    if resource >= 4 && biome_at(gen, t).exclusive() != Some(resource) {
-        return None;
     }
-    // Richest in the middle, and richer the further you go.
-    let rich = 1.0 + ((h >> 40) % 100) as f64 / 100.0 + far / 600.0;
-    let amount = (1200.0 + 3600.0 * rich * (1.0 - d * d)) as u32;
-    Some(Ore { resource, amount })
+}
+
+/// One ore patch, for the world map: its middle, its ore and about how far
+/// it reaches, in tiles.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Patch {
+    pub center: TilePos,
+    pub resource: u8,
+    pub radius: f32,
+}
+
+/// Every ore patch whose middle lies between `lo` and `hi` (inclusive),
+/// starter patches included.
+pub fn patches(gen: &WorldGen, lo: TilePos, hi: TilePos) -> Vec<Patch> {
+    let inside = |t: TilePos| (lo.x..=hi.x).contains(&t.x) && (lo.y..=hi.y).contains(&t.y);
+    let mut out: Vec<Patch> = SPAWN_PATCHES
+        .iter()
+        .filter(|p| p.3 < gen.resources)
+        .map(|&(x, y, r, resource)| Patch {
+            center: TilePos::new(x, y),
+            resource,
+            radius: r as f32,
+        })
+        .filter(|p| inside(p.center))
+        .collect();
+    let keep_out = i64::from(SPAWN_RADIUS * 2).pow(2);
+    for cy in lo.y.div_euclid(PATCH_CELL)..=hi.y.div_euclid(PATCH_CELL) {
+        for cx in lo.x.div_euclid(PATCH_CELL)..=hi.x.div_euclid(PATCH_CELL) {
+            let Some(cell) = patch_cell(gen, cx, cy) else {
+                continue;
+            };
+            let m = cell.mid;
+            if !inside(m) || i64::from(m.x).pow(2) + i64::from(m.y).pow(2) < keep_out {
+                continue;
+            }
+            // Lakes and lava can swallow a whole patch.
+            if ore_at(gen, m).is_none() {
+                continue;
+            }
+            out.push(Patch {
+                center: m,
+                resource: cell_resource(gen, &cell),
+                radius: cell.radius as f32,
+            });
+        }
+    }
+    out
+}
+
+/// A far-out view of the map: every `stride`-th tile's terrain and shade,
+/// in blocks the size of a chunk. Block `pos` covers tiles from
+/// `pos.origin() * stride`, sampling the middle of each `stride` square.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Coarse {
+    pub stride: i32,
+    pub pos: ChunkPos,
+    /// Terrain number and shade, two bytes a sample, row by row.
+    pub ground: Box<[u8]>,
+}
+
+pub fn coarse(gen: &WorldGen, stride: i32, pos: ChunkPos) -> Coarse {
+    let stride = stride.max(1);
+    let o = pos.origin();
+    let mut ground = Vec::with_capacity(TILES * 2);
+    for y in 0..CHUNK_SIZE {
+        for x in 0..CHUNK_SIZE {
+            let t = TilePos::new(
+                (o.x + x) * stride + stride / 2,
+                (o.y + y) * stride + stride / 2,
+            );
+            let (terrain, shade) = terrain_at(gen, t);
+            ground.extend_from_slice(&[terrain as u8, shade]);
+        }
+    }
+    Coarse {
+        stride,
+        pos,
+        ground: ground.into(),
+    }
 }
 
 /// Which ore a patch holds: iron and copper are commonest, then coal and stone.
@@ -623,37 +727,65 @@ impl Fnv {
 /// The browser has no threads to give it, so there each chunk is made as it
 /// is asked for, and is ready at once.
 pub struct Generator {
-    tx: Option<Sender<ChunkPos>>,
-    rx: Receiver<Chunk>,
-    asked: HashSet<ChunkPos>,
+    tx: Option<Sender<Job>>,
+    rx: Receiver<Made>,
+    asked: HashSet<Job>,
     worker: Option<std::thread::JoinHandle<()>>,
-    /// Where chunks go when they are made inline, and how to make them.
+    /// On the web there are no threads: jobs wait here, and a few are done
+    /// each frame so the page never stalls.
     #[cfg(target_arch = "wasm32")]
-    inline: (Sender<Chunk>, WorldGen),
+    queue: std::cell::RefCell<(std::collections::VecDeque<Job>, WorldGen)>,
 }
+
+/// What the generator is asked for: a chunk, or a far-out block of the map.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Job {
+    Chunk(ChunkPos),
+    Coarse(i32, ChunkPos),
+}
+
+/// What the generator made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Made {
+    Chunk(Chunk),
+    Coarse(Coarse),
+}
+
+impl Job {
+    fn run(self, gen: &WorldGen) -> Made {
+        match self {
+            Job::Chunk(pos) => Made::Chunk(generate(gen, pos)),
+            Job::Coarse(stride, pos) => Made::Coarse(coarse(gen, stride, pos)),
+        }
+    }
+}
+
+/// Jobs the web build does per [`Generator::ready`] call.
+#[cfg(target_arch = "wasm32")]
+const JOBS_PER_FRAME: usize = 3;
 
 impl Generator {
     #[cfg(target_arch = "wasm32")]
     pub fn spawn(gen: WorldGen) -> Self {
-        let (done, rx) = mpsc::channel();
+        let (_, rx) = mpsc::channel();
         Self {
             tx: None,
             rx,
             asked: HashSet::new(),
             worker: None,
-            inline: (done, gen),
+            queue: std::cell::RefCell::new((std::collections::VecDeque::new(), gen)),
         }
     }
 
     #[cfg(not(target_arch = "wasm32"))]
     pub fn spawn(gen: WorldGen) -> Self {
-        let (tx, jobs) = mpsc::channel::<ChunkPos>();
+        let (tx, jobs) = mpsc::channel::<Job>();
         let (done, rx) = mpsc::channel();
         let worker = std::thread::Builder::new()
             .name("mofact-worldgen".into())
             .spawn(move || {
-                for pos in jobs {
-                    if done.send(generate(&gen, pos)).is_err() {
+                for job in jobs {
+                    if done.send(job.run(&gen)).is_err() {
                         break;
                     }
                 }
@@ -669,22 +801,46 @@ impl Generator {
 
     /// Queue a chunk unless it was already asked for.
     pub fn request(&mut self, pos: ChunkPos) {
-        if self.asked.insert(pos) {
+        self.ask(Job::Chunk(pos));
+    }
+
+    /// Queue a far-out block of the map unless it was already asked for.
+    pub fn request_coarse(&mut self, stride: i32, pos: ChunkPos) {
+        self.ask(Job::Coarse(stride, pos));
+    }
+
+    fn ask(&mut self, job: Job) {
+        if self.asked.insert(job) {
             #[cfg(target_arch = "wasm32")]
-            let _ = self.inline.0.send(generate(&self.inline.1, pos));
+            self.queue.borrow_mut().0.push_back(job);
             if let Some(tx) = &self.tx {
-                let _ = tx.send(pos);
+                let _ = tx.send(job);
             }
         }
     }
 
-    /// Chunks finished since the last call.
-    pub fn ready(&self) -> impl Iterator<Item = Chunk> + '_ {
-        self.rx.try_iter()
+    /// Whether `job` was asked for already.
+    pub fn asked(&self, job: Job) -> bool {
+        self.asked.contains(&job)
     }
 
-    /// Wait for the next finished chunk.
-    pub fn wait(&self) -> Option<Chunk> {
+    /// What was finished since the last call.
+    pub fn ready(&self) -> impl Iterator<Item = Made> + '_ {
+        #[cfg(target_arch = "wasm32")]
+        let inline: Vec<Made> = {
+            let mut q = self.queue.borrow_mut();
+            let gen = q.1;
+            let n = q.0.len().min(JOBS_PER_FRAME);
+            q.0.drain(..n).map(|j| j.run(&gen)).collect()
+        };
+        #[cfg(not(target_arch = "wasm32"))]
+        let inline: Vec<Made> = Vec::new();
+        inline.into_iter().chain(self.rx.try_iter())
+    }
+
+    /// Wait for the next finished job.
+    #[cfg(not(target_arch = "wasm32"))]
+    pub fn wait(&self) -> Option<Made> {
         self.rx.recv().ok()
     }
 }
@@ -835,10 +991,46 @@ mod tests {
             g.request(ChunkPos { x, y: 0 });
             g.request(ChunkPos { x, y: 0 });
         }
-        let mut got: Vec<_> = (0..4).map(|_| g.wait().unwrap()).collect();
+        let mut got: Vec<Chunk> = (0..4)
+            .map(|_| match g.wait().unwrap() {
+                Made::Chunk(c) => c,
+                Made::Coarse(_) => panic!("only chunks were asked for"),
+            })
+            .collect();
         got.sort_by_key(|c| c.pos.x);
         assert_eq!(got[2], generate(&GEN, ChunkPos { x: 2, y: 0 }));
         assert_eq!(g.ready().count(), 0, "duplicates were not generated");
+        g.request_coarse(4, ChunkPos { x: 0, y: 0 });
+        let Some(Made::Coarse(c)) = g.wait() else {
+            panic!("a far-out block")
+        };
+        assert_eq!(c, coarse(&GEN, 4, ChunkPos { x: 0, y: 0 }));
+    }
+
+    #[test]
+    fn coarse_blocks_sample_the_real_terrain() {
+        let c = coarse(&GEN, 8, ChunkPos { x: -1, y: 2 });
+        for (i, pair) in c.ground.chunks(2).enumerate().step_by(97) {
+            let (x, y) = ((i as i32) % CHUNK_SIZE, (i as i32) / CHUNK_SIZE);
+            let t = TilePos::new((-CHUNK_SIZE + x) * 8 + 4, (2 * CHUNK_SIZE + y) * 8 + 4);
+            let (terrain, shade) = terrain_at(&GEN, t);
+            assert_eq!(pair, [terrain as u8, shade], "{t:?}");
+        }
+    }
+
+    #[test]
+    fn patches_list_where_the_ore_is() {
+        let gen = WorldGen::new(42, 7);
+        let found = patches(&gen, TilePos::new(-600, -600), TilePos::new(600, 600));
+        assert!(found.len() > 100, "{} patches", found.len());
+        for p in &found {
+            let ore = ore_at(&gen, p.center).expect("ore at a patch's middle");
+            assert_eq!(ore.resource, p.resource, "{p:?}");
+        }
+        assert!(
+            found.iter().any(|p| p.resource == 4),
+            "the desert's own ore shows"
+        );
     }
 }
 #[cfg(test)]
