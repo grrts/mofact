@@ -1679,3 +1679,36 @@ fn a_requester_chest_sheet_picks_what_drones_bring_and_how_many() {
     f.find(&more);
     f.find(&Hit::SetRequest(EntityId(7), None));
 }
+
+#[test]
+fn a_long_blueprint_library_pages_on_a_sideways_phone() {
+    let mut f = Fixture::new();
+    let size = (2532, 1170);
+    f.blueprints = (0..12)
+        .map(|k| {
+            mofact_input::Blueprint::capture(
+                format!("Blueprint {}", k + 1),
+                [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
+            )
+        })
+        .collect();
+    f.hud.library = true;
+    let mut picks = std::collections::HashSet::new();
+    for _ in 0..20 {
+        f.draw(size, 3.0, &Tool::Paste);
+        for (_, h) in &f.hud.hits {
+            if let Hit::Pick(i) = h {
+                picks.insert(*i);
+            }
+        }
+        let Some(next) = f.hud.hits.iter().find(|(_, h)| *h == Hit::Page(true)) else {
+            break;
+        };
+        let next = centre(next.0);
+        f.tap(next);
+    }
+    assert_eq!(picks.len(), 12, "every blueprint on some page: {picks:?}");
+    // Each page's rows take the blueprint they show.
+    let last = centre(f.find(&Hit::Pick(11)));
+    assert_eq!(f.tap(last).1, vec![Action::Paste(11)]);
+}

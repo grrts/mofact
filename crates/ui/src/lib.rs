@@ -1121,6 +1121,7 @@ impl Hud {
             Hit::Place => vec![Action::PlacePaste],
             Hit::Library => {
                 self.library = !self.library;
+                self.page = 0;
                 self.confirm_forget = None;
                 Vec::new()
             }
@@ -1446,6 +1447,9 @@ impl Hud {
             .floor()
             .max(1.0) as usize;
         let rows = list.len().clamp(1, fits);
+        // What doesn't fit goes on further pages.
+        let pages = list.len().div_ceil(rows).max(1);
+        self.page = self.page.min(pages - 1);
         let height = pad + title + rows as f32 * (row + gap) - gap + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
@@ -1469,6 +1473,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
+        self.pager(o, c, pages);
         let inner = width - 2.0 * pad;
         if list.is_empty() {
             let lines = wrap(o, tr("blueprint.empty"), 14.0 * u, inner);
@@ -1478,8 +1483,10 @@ impl Hud {
             }
             return;
         }
-        for (i, bp) in list.iter().enumerate().take(rows) {
-            let b = [left, top + title + i as f32 * (row + gap), inner, row];
+        let first = self.page * rows;
+        for (i, bp) in list.iter().enumerate().skip(first).take(rows) {
+            let y = top + title + (i - first) as f32 * (row + gap);
+            let b = [left, y, inner, row];
             o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, RAISED);
             self.hits.push((b, Hit::Pick(i)));
             // A sketch: each building's icon where it stands.
