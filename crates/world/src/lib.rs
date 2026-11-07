@@ -6,7 +6,12 @@
 //! [`Generator`] runs it on a worker thread so generation never touches the
 //! simulation thread.
 //!
-//! For now chunks hold ore patches. Biomes (T42) and terrain (T43) come later.
+//! Each tile has a [`Terrain`] picked from two noise fields, height and
+//! moisture: lakes in the low ground with sand around them, grassland, dense
+//! forest where it is wet, dry scrub where it is not, and bare rock up high.
+//! Trees, bushes and stones ([`Decor`]) dress the land; they are only looks
+//! and never block building. Ore comes in separate patches, richer in the
+//! middle and further from the start.
 
 pub use mofact_core as core;
 
@@ -17,12 +22,14 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 const TILES: usize = (CHUNK_SIZE * CHUNK_SIZE) as usize;
 
-/// Ore patches are this many tiles across on average.
-const PATCH_SCALE: i32 = 11;
-/// Noise above this is ore.
-const THRESHOLD: f64 = 0.74;
+/// Ore patches sit one to a cell this many tiles across, at most.
+const PATCH_CELL: i32 = 44;
 /// Spawn always has an iron and a copper patch within this many tiles of (0, 0).
 pub const SPAWN_RADIUS: i32 = 24;
+/// The middle of the starter factory: the land around it is always dry and open.
+pub const START: TilePos = TilePos { x: 26, y: 26 };
+/// No trees or stones this close to [`START`], so the first factory has room.
+const CLEARING: i32 = 18;
 
 /// One tile's ore: which resource (an index into the generator's resource list) and how much is left.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -31,42 +38,107 @@ pub struct Ore {
     pub amount: u32,
 }
 
+/// What the ground is made of. The numbers are what the renderer's terrain
+/// texture stores, so they stay fixed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Terrain {
+    DeepWater = 0,
+    Water = 1,
+    Sand = 2,
+    Grass = 3,
+    Forest = 4,
+    Scrub = 5,
+    Rock = 6,
+}
+
+impl Terrain {
+    /// Lakes: nothing can be built on them.
+    pub fn is_water(self) -> bool {
+        matches!(self, Terrain::DeepWater | Terrain::Water)
+    }
+}
+
+/// Small things lying on the land, for looks only.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Decor {
+    Tree = 1,
+    Pine = 2,
+    Bush = 3,
+    Stone = 4,
+    Boulder = 5,
+    Flowers = 6,
+    Tuft = 7,
+}
+
+impl Decor {
+    pub const ALL: [Decor; 7] = [
+        Decor::Tree,
+        Decor::Pine,
+        Decor::Bush,
+        Decor::Stone,
+        Decor::Boulder,
+        Decor::Flowers,
+        Decor::Tuft,
+    ];
+}
+
+/// Everything generated on one tile.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Tile {
+    pub terrain: Terrain,
+    /// A gentle variation within the terrain (0 to 255), for shading: how
+    /// deep the water is, how lush the grass.
+    pub shade: u8,
+    pub decor: Option<Decor>,
+    pub ore: Option<Ore>,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Chunk {
     pub pos: ChunkPos,
-    tiles: Box<[Option<Ore>; TILES]>,
+    tiles: Box<[Tile]>,
 }
 
 impl Chunk {
-    /// The ore at a tile inside this chunk.
-    pub fn ore(&self, tile: TilePos) -> Option<Ore> {
+    fn index(&self, tile: TilePos) -> Option<usize> {
         let o = self.pos.origin();
         let (x, y) = (tile.x - o.x, tile.y - o.y);
-        if !(0..CHUNK_SIZE).contains(&x) || !(0..CHUNK_SIZE).contains(&y) {
-            return None;
-        }
-        self.tiles[(y * CHUNK_SIZE + x) as usize]
+        ((0..CHUNK_SIZE).contains(&x) && (0..CHUNK_SIZE).contains(&y))
+            .then_some((y * CHUNK_SIZE + x) as usize)
+    }
+
+    /// Everything at a tile inside this chunk.
+    pub fn tile(&self, tile: TilePos) -> Option<Tile> {
+        self.index(tile).map(|i| self.tiles[i])
+    }
+
+    /// The ore at a tile inside this chunk.
+    pub fn ore(&self, tile: TilePos) -> Option<Ore> {
+        self.tile(tile)?.ore
+    }
+
+    /// Every tile in the chunk, row by row from the top left.
+    pub fn tiles(&self) -> impl Iterator<Item = (TilePos, Tile)> + '_ {
+        let o = self.pos.origin();
+        self.tiles.iter().enumerate().map(move |(i, t)| {
+            let i = i as i32;
+            (TilePos::new(o.x + i % CHUNK_SIZE, o.y + i / CHUNK_SIZE), *t)
+        })
     }
 
     /// Every ore tile in the chunk.
     pub fn ores(&self) -> impl Iterator<Item = (TilePos, Ore)> + '_ {
-        let o = self.pos.origin();
-        self.tiles.iter().enumerate().filter_map(move |(i, t)| {
-            let i = i as i32;
-            t.map(|ore| {
-                (
-                    TilePos::new(o.x + i % CHUNK_SIZE, o.y + i / CHUNK_SIZE),
-                    ore,
-                )
-            })
-        })
+        self.tiles().filter_map(|(p, t)| Some((p, t.ore?)))
     }
 
     /// A stable fingerprint of the chunk's contents, for seed snapshot tests.
     pub fn fingerprint(&self) -> u64 {
         let mut h = Fnv::default();
         for t in self.tiles.iter() {
-            match t {
+            h.write(&[t.terrain as u8, t.shade, t.decor.map_or(0, |d| d as u8)]);
+            match t.ore {
                 None => h.write(&[0]),
                 Some(o) => {
                     h.write(&[1, o.resource]);
@@ -96,19 +168,144 @@ impl WorldGen {
 
 /// Generate one chunk. Pure: same inputs, same chunk.
 pub fn generate(gen: &WorldGen, pos: ChunkPos) -> Chunk {
-    let mut tiles = Box::new([None; TILES]);
     let o = pos.origin();
-    for y in 0..CHUNK_SIZE {
-        for x in 0..CHUNK_SIZE {
-            let t = TilePos::new(o.x + x, o.y + y);
-            tiles[(y * CHUNK_SIZE + x) as usize] = ore_at(gen, t);
-        }
-    }
+    let tiles = (0..TILES as i32)
+        .map(|i| {
+            tile_at(
+                gen,
+                TilePos::new(o.x + i % CHUNK_SIZE, o.y + i / CHUNK_SIZE),
+            )
+        })
+        .collect();
     Chunk { pos, tiles }
+}
+
+/// Everything generated at one tile.
+pub fn tile_at(gen: &WorldGen, t: TilePos) -> Tile {
+    let (terrain, shade) = terrain_at(gen, t);
+    let ore = if terrain.is_water() {
+        None
+    } else {
+        ore_on_land(gen, t)
+    };
+    let decor = match ore {
+        Some(_) => None,
+        None => decor_at(gen, t, terrain),
+    };
+    Tile {
+        terrain,
+        shade,
+        decor,
+        ore,
+    }
 }
 
 /// The ore generated at one tile.
 pub fn ore_at(gen: &WorldGen, t: TilePos) -> Option<Ore> {
+    if terrain_at(gen, t).0.is_water() {
+        return None;
+    }
+    ore_on_land(gen, t)
+}
+
+/// Whether a tile is lake, where nothing can be built.
+pub fn is_water(gen: &WorldGen, t: TilePos) -> bool {
+    terrain_at(gen, t).0.is_water()
+}
+
+/// How far `t` is from [`START`], in tiles.
+fn from_start(t: TilePos) -> f64 {
+    let (dx, dy) = (f64::from(t.x - START.x), f64::from(t.y - START.y));
+    sqrt(dx * dx + dy * dy)
+}
+
+/// How strongly a tile is kept dry (0 to 1): fully near the start and the
+/// starter ore, fading out over a few tiles.
+fn keep_dry(t: TilePos) -> f64 {
+    let mut keep = smooth((44.0 - from_start(t)) / 20.0);
+    for (cx, cy, _, _) in SPAWN_PATCHES {
+        let (dx, dy) = (f64::from(t.x - cx), f64::from(t.y - cy));
+        keep = keep.max(smooth((14.0 - sqrt(dx * dx + dy * dy)) / 7.0));
+    }
+    keep
+}
+
+/// The terrain at a tile and its shade.
+pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
+    let s = gen.seed;
+    // Bend the noise a little so lake shores and forest edges wander.
+    let wx = t.x + ((value_noise(s ^ 0x3a17, t.x, t.y, 9) - 0.5) * 10.0) as i32;
+    let wy = t.y + ((value_noise(s ^ 0x91c3, t.x, t.y, 9) - 0.5) * 10.0) as i32;
+    let mut height = 0.5 * value_noise(s ^ 0xe1e7, wx, wy, 96)
+        + 0.32 * value_noise(s ^ 0x2b0b, wx, wy, 36)
+        + 0.18 * value_noise(s ^ 0x77aa, wx, wy, 12);
+    let mut wet = 0.6 * value_noise(s ^ 0x3017, wx, wy, 120)
+        + 0.3 * value_noise(s ^ 0x0d0d, wx, wy, 40)
+        + 0.1 * value_noise(s ^ 0xbeef, wx, wy, 10);
+    // Around the start and the starter patches: dry land, never lake or bare
+    // rock. Further out the world is left as it falls.
+    let keep = keep_dry(t);
+    height += (height.clamp(0.4, 0.64) - height) * keep;
+    let near = smooth((40.0 - from_start(t)) / 22.0);
+    wet += (wet.clamp(0.36, 0.6) - wet) * near;
+
+    let terrain = if height < 0.29 {
+        Terrain::DeepWater
+    } else if height < 0.335 {
+        Terrain::Water
+    } else if height < 0.355 || (wet < 0.34 && height < 0.62) {
+        Terrain::Sand
+    } else if height > 0.7 {
+        Terrain::Rock
+    } else if wet > 0.6 {
+        Terrain::Forest
+    } else if wet < 0.44 {
+        Terrain::Scrub
+    } else {
+        Terrain::Grass
+    };
+    let shade = match terrain {
+        Terrain::DeepWater | Terrain::Water => height / 0.335,
+        _ => 0.5 * value_noise(s ^ 0x5ade, t.x, t.y, 6) + 0.5 * wet,
+    };
+    (terrain, (shade.clamp(0.0, 1.0) * 255.0) as u8)
+}
+
+/// Trees, bushes and stones: how thick they lie on each terrain, in 1/1000ths.
+fn decor_at(gen: &WorldGen, t: TilePos, terrain: Terrain) -> Option<Decor> {
+    use Decor::*;
+    let table: &[(Decor, u64)] = match terrain {
+        Terrain::Forest => &[(Tree, 260), (Pine, 160), (Bush, 70), (Flowers, 20)],
+        Terrain::Grass => &[(Tree, 30), (Bush, 45), (Flowers, 45), (Tuft, 90)],
+        Terrain::Scrub => &[(Bush, 40), (Stone, 35), (Tuft, 80), (Pine, 10)],
+        Terrain::Sand => &[(Stone, 20), (Tuft, 25)],
+        Terrain::Rock => &[(Boulder, 90), (Stone, 110), (Pine, 15)],
+        Terrain::Water | Terrain::DeepWater => &[],
+    };
+    // Groves: trees bunch together rather than lying evenly.
+    let grove = value_noise(gen.seed ^ 0x6a0e, t.x, t.y, 7);
+    let near = from_start(t);
+    let mut roll = hash(gen.seed ^ 0xdec0, t.x, t.y) % 1000;
+    for &(decor, per_mille) in table {
+        let tall = matches!(decor, Tree | Pine | Boulder);
+        if tall && near < f64::from(CLEARING) {
+            continue;
+        }
+        let n = if tall {
+            (per_mille as f64 * (0.3 + 1.4 * grove)) as u64
+        } else {
+            per_mille
+        };
+        if roll < n {
+            return Some(decor);
+        }
+        roll -= n.min(roll);
+    }
+    None
+}
+
+/// Ore on a land tile: a starter patch, or one of the patches dotted about.
+fn ore_on_land(gen: &WorldGen, t: TilePos) -> Option<Ore> {
     if let Some(ore) = spawn_patch(gen, t) {
         return Some(ore);
     }
@@ -117,25 +314,57 @@ pub fn ore_at(gen: &WorldGen, t: TilePos) -> Option<Ore> {
     if d2 < i64::from(SPAWN_RADIUS * 2).pow(2) {
         return None;
     }
-    // Two octaves, so patches have ragged edges rather than the noise grid's squares.
-    let n = 0.7 * value_noise(gen.seed, t.x, t.y, PATCH_SCALE)
-        + 0.3 * value_noise(gen.seed ^ 0xf00d, t.x, t.y, 4);
-    if n < THRESHOLD {
+    let (cx, cy) = (t.x.div_euclid(PATCH_CELL), t.y.div_euclid(PATCH_CELL));
+    let h = hash(gen.seed ^ 0x0e0e, cx, cy);
+    // About two cells in three hold a patch.
+    if h % 3 == 0 {
         return None;
     }
-    // Which resource varies slowly, so a patch is almost always one kind.
-    let kind = value_noise(gen.seed ^ 0x5eed, t.x, t.y, PATCH_SCALE * 4);
-    let resource = ((kind * f64::from(gen.resources)) as u8).min(gen.resources - 1);
-    // Richer towards the middle of a patch and further from spawn.
-    let distance = (d2 as f64).sqrt() as u32;
-    let amount = ((n - THRESHOLD) * 10_000.0) as u32 + 300 + distance / 4;
+    // Its middle, well inside the cell so it never runs into the next one.
+    let px = cx * PATCH_CELL + 13 + ((h >> 8) % 18) as i32;
+    let py = cy * PATCH_CELL + 13 + ((h >> 16) % 18) as i32;
+    let far = sqrt(f64::from(px) * f64::from(px) + f64::from(py) * f64::from(py));
+    // Bigger further out, and ragged at the edge.
+    let radius = 4.0 + ((h >> 24) % 5) as f64 + (far / 400.0).min(3.0);
+    let edge = 0.7 + 0.6 * value_noise(gen.seed ^ 0xed6e, t.x, t.y, 4);
+    let (dx, dy) = (f64::from(t.x - px), f64::from(t.y - py));
+    let d = sqrt(dx * dx + dy * dy) / (radius * edge);
+    if d >= 1.0 {
+        return None;
+    }
+    let resource = pick_resource(gen.resources, (h >> 32) % 100);
+    // Richest in the middle, and richer the further you go.
+    let rich = 1.0 + ((h >> 40) % 100) as f64 / 100.0 + far / 600.0;
+    let amount = (300.0 + 900.0 * rich * (1.0 - d * d)) as u32;
     Some(Ore { resource, amount })
 }
 
-/// Iron (resource 0) west of spawn and copper (resource 1) south-east, as in the prototype.
+/// Which ore a patch holds: iron and copper are commonest, then coal and stone.
+fn pick_resource(resources: u8, roll: u64) -> u8 {
+    const WEIGHTS: [u64; 4] = [34, 30, 18, 18];
+    if usize::from(resources) > WEIGHTS.len() {
+        return (roll % u64::from(resources)) as u8;
+    }
+    let weights = &WEIGHTS[..usize::from(resources)];
+    let total: u64 = weights.iter().sum();
+    let mut roll = roll * total / 100;
+    for (i, &w) in weights.iter().enumerate() {
+        if roll < w {
+            return i as u8;
+        }
+        roll -= w;
+    }
+    resources - 1
+}
+
+/// The starter patches: centre, radius and resource.
+const SPAWN_PATCHES: [(i32, i32, i32, u8); 4] =
+    [(-10, 1, 4, 0), (11, 8, 3, 1), (4, 44, 3, 2), (52, 6, 3, 3)];
+
+/// Iron (resource 0) west of spawn and copper (resource 1) south-east, as in
+/// the prototype; stone (2) and coal (3) a short walk from the factory.
 fn spawn_patch(gen: &WorldGen, t: TilePos) -> Option<Ore> {
-    const PATCHES: [(i32, i32, i32, u8); 2] = [(-10, 1, 4, 0), (11, 8, 3, 1)];
-    for (cx, cy, r, resource) in PATCHES {
+    for (cx, cy, r, resource) in SPAWN_PATCHES {
         if resource >= gen.resources {
             continue;
         }
@@ -149,6 +378,27 @@ fn spawn_patch(gen: &WorldGen, t: TilePos) -> Option<Ore> {
         }
     }
     None
+}
+
+/// Square root by Newton's method, so every platform gets the same bits.
+fn sqrt(v: f64) -> f64 {
+    if v <= 0.0 {
+        return 0.0;
+    }
+    let mut x = if v > 1.0 { v / 2.0 } else { 1.0 };
+    for _ in 0..40 {
+        let next = 0.5 * (x + v / x);
+        if (next - x).abs() < 1e-9 {
+            return next;
+        }
+        x = next;
+    }
+    x
+}
+
+fn smooth(t: f64) -> f64 {
+    let t = t.clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
 }
 
 fn hash(seed: u64, x: i32, y: i32) -> u64 {
@@ -300,7 +550,7 @@ mod tests {
         );
     }
 
-    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 7_317_724_568_364_547_354;
+    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 13_658_882_497_565_849_921;
 
     #[test]
     fn spawn_has_iron_and_copper_close_by() {
@@ -365,31 +615,39 @@ mod tests {
 }
 #[cfg(test)]
 mod map_print {
+    use super::*;
+
+    /// `cargo test -p mofact-world print_map -- --ignored --nocapture`
     #[test]
     #[ignore]
     fn print_map() {
-        let g = super::WorldGen::new(42, 2);
-        for y in (-60..60).step_by(2) {
-            let row: String = (-100..100)
-                .step_by(1)
-                .map(|x| match super::ore_at(&g, super::TilePos::new(x, y)) {
-                    None => {
-                        if x == 0 && y == 0 {
-                            '@'
-                        } else {
-                            '.'
-                        }
+        let g = WorldGen::new(42, 4);
+        let mut counts = std::collections::BTreeMap::new();
+        for y in (-80..120).step_by(3) {
+            let row: String = (-100..160)
+                .step_by(2)
+                .map(|x| {
+                    let t = tile_at(&g, TilePos::new(x, y));
+                    *counts.entry(format!("{:?}", t.terrain)).or_insert(0) += 1;
+                    if x == START.x && y == START.y {
+                        return '@';
                     }
-                    Some(o) => {
-                        if o.resource == 0 {
-                            'I'
-                        } else {
-                            'c'
-                        }
+                    if let Some(o) = t.ore {
+                        return ['I', 'C', 'S', 'K'][usize::from(o.resource)];
+                    }
+                    match t.terrain {
+                        Terrain::DeepWater => '#',
+                        Terrain::Water => '~',
+                        Terrain::Sand => ':',
+                        Terrain::Grass => '.',
+                        Terrain::Forest => 'f',
+                        Terrain::Scrub => ',',
+                        Terrain::Rock => '^',
                     }
                 })
                 .collect();
             println!("{row}");
         }
+        println!("{counts:?}");
     }
 }

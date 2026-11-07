@@ -27,7 +27,13 @@ pub struct Renderer {
     screen_group: wgpu::BindGroup,
     /// The overlay atlas on the GPU and the atlas version it holds.
     ui: Option<(wgpu::Texture, wgpu::BindGroup, u64)>,
+    terrain_layout: wgpu::BindGroupLayout,
+    /// The terrain map on the GPU, its bind group and the map version it holds.
+    terrain: (wgpu::Texture, wgpu::BindGroup, u64),
 }
+
+/// Bytes in the globals uniform: the transform, the view and the terrain map's place.
+const GLOBALS: u64 = 48;
 
 const ATTRIBUTES: [wgpu::VertexAttribute; 5] = wgpu::vertex_attr_array![
     0 => Float32x2, 1 => Float32x2, 2 => Float32x4, 3 => Unorm8x4, 4 => Uint32
@@ -83,14 +89,27 @@ impl Renderer {
             bind_group_layouts: &[Some(&globals_layout), Some(&atlas_layout)],
             ..Default::default()
         });
+        let terrain_layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+            label: Some("terrain"),
+            entries: &[wgpu::BindGroupLayoutEntry {
+                binding: 0,
+                visibility: wgpu::ShaderStages::FRAGMENT,
+                ty: wgpu::BindingType::Texture {
+                    sample_type: wgpu::TextureSampleType::Float { filterable: false },
+                    view_dimension: wgpu::TextureViewDimension::D2,
+                    multisampled: false,
+                },
+                count: None,
+            }],
+        });
         let ground_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: Some("ground"),
-            bind_group_layouts: &[Some(&globals_layout)],
+            bind_group_layouts: &[Some(&globals_layout), Some(&terrain_layout)],
             ..Default::default()
         });
         let globals = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("globals"),
-            size: 32,
+            size: GLOBALS,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -104,7 +123,7 @@ impl Renderer {
         });
         let screen = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("screen"),
-            size: 32,
+            size: GLOBALS,
             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -161,7 +180,21 @@ impl Renderer {
             })
             .collect();
         let capacity = 1024;
+        let terrain = terrain_texture(gpu, &terrain_layout, [1, 1]);
+        let (u, v) = crate::scene::UNKNOWN_TERRAIN;
+        gpu.queue.write_texture(
+            terrain.0.as_image_copy(),
+            &[u, v, 0, 255],
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4),
+                rows_per_image: Some(1),
+            },
+            terrain.0.size(),
+        );
         Self {
+            terrain_layout,
+            terrain,
             atlas_layout,
             sampler,
             screen,
@@ -261,6 +294,7 @@ impl Renderer {
             self.capacity = (n + ui).next_power_of_two();
             self.instances = instance_buffer(&gpu.device, self.capacity);
         }
+        let map = self.upload_terrain(gpu, scene);
         gpu.queue.write_buffer(
             &self.globals,
             0,
@@ -274,7 +308,11 @@ impl Renderer {
                     camera.pixels_per_tile,
                     width as f32,
                     height as f32,
-                    0.0,
+                    scene.time,
+                    map[0],
+                    map[1],
+                    map[2],
+                    map[3],
                 ]
             }),
         );
@@ -294,7 +332,20 @@ impl Renderer {
             gpu.queue.write_buffer(
                 &self.screen,
                 0,
-                bytemuck::cast_slice(&[2.0 / w, -2.0 / h, -1.0, 1.0, 1.0, w, h, 0.0]),
+                bytemuck::cast_slice(&[
+                    2.0 / w,
+                    -2.0 / h,
+                    -1.0,
+                    1.0,
+                    1.0,
+                    w,
+                    h,
+                    0.0,
+                    0.0,
+                    0.0,
+                    1.0,
+                    1.0,
+                ]),
             );
             let at = std::mem::size_of::<Instance>() as u64 * n as u64;
             gpu.queue
@@ -317,6 +368,7 @@ impl Renderer {
         let (sprites, ground) = &self.pipelines[&format];
         pass.set_bind_group(0, &self.globals_group, &[]);
         pass.set_pipeline(ground);
+        pass.set_bind_group(1, &self.terrain.1, &[]);
         pass.draw(0..3, 0..1);
         if n > 0 {
             pass.set_pipeline(sprites);
@@ -331,6 +383,50 @@ impl Renderer {
             pass.set_vertex_buffer(0, self.instances.slice(..));
             pass.draw(0..6, n as u32..(n + ui) as u32);
         }
+    }
+
+    /// Copy the scene's terrain map to the GPU when it changed, growing the
+    /// texture if it no longer fits. Returns where the map lies, for the
+    /// shader: its top-left tile, width and height.
+    fn upload_terrain(&mut self, gpu: &Gpu, scene: &Scene) -> [f32; 4] {
+        let map = &scene.terrain;
+        let [w, h] = map.size;
+        if w == 0 || h == 0 {
+            return [0.0, 0.0, 1.0, 1.0];
+        }
+        if self.terrain.2 != map.version {
+            let size = self.terrain.0.size();
+            if w > size.width || h > size.height {
+                // Room to spare, so zooming out a little doesn't make a new one each frame.
+                let grow = |n: u32, had: u32| (n + n / 4).max(had).max(64);
+                self.terrain = terrain_texture(
+                    gpu,
+                    &self.terrain_layout,
+                    [grow(w, size.width), grow(h, size.height)],
+                );
+            }
+            gpu.queue.write_texture(
+                self.terrain.0.as_image_copy(),
+                &map.texels,
+                wgpu::TexelCopyBufferLayout {
+                    offset: 0,
+                    bytes_per_row: Some(w * 4),
+                    rows_per_image: Some(h),
+                },
+                wgpu::Extent3d {
+                    width: w,
+                    height: h,
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.terrain.2 = map.version;
+        }
+        [
+            map.origin[0] as f32,
+            map.origin[1] as f32,
+            w as f32,
+            h as f32,
+        ]
     }
 
     /// Copy the overlay atlas to the GPU when it has new glyphs.
@@ -468,6 +564,38 @@ fn atlas_group(
             },
         ],
     })
+}
+
+/// An empty terrain map texture of `size` tiles and its bind group.
+fn terrain_texture(
+    gpu: &Gpu,
+    layout: &wgpu::BindGroupLayout,
+    [width, height]: [u32; 2],
+) -> (wgpu::Texture, wgpu::BindGroup, u64) {
+    let texture = gpu.device.create_texture(&wgpu::TextureDescriptor {
+        label: Some("terrain"),
+        size: wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        },
+        mip_level_count: 1,
+        sample_count: 1,
+        dimension: wgpu::TextureDimension::D2,
+        format: wgpu::TextureFormat::Rgba8Unorm,
+        usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+        view_formats: &[],
+    });
+    let view = texture.create_view(&Default::default());
+    let group = gpu.device.create_bind_group(&wgpu::BindGroupDescriptor {
+        label: Some("terrain"),
+        layout,
+        entries: &[wgpu::BindGroupEntry {
+            binding: 0,
+            resource: wgpu::BindingResource::TextureView(&view),
+        }],
+    });
+    (texture, group, u64::MAX)
 }
 
 fn instance_buffer(device: &wgpu::Device, capacity: usize) -> wgpu::Buffer {

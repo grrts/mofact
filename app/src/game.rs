@@ -153,6 +153,16 @@ impl Game {
             target.size(),
             self.ore.tiles(),
         );
+        self.scene.decor(
+            atlases,
+            &camera,
+            target.size(),
+            self.ore.decor(&camera, target.size()),
+        );
+        let ore = &self.ore;
+        self.scene
+            .terrain(&camera, target.size(), ore.version(), |t| ore.terrain(t));
+        self.scene.time = self.started.elapsed().as_secs_f32() % 3600.0;
         let ghosts = self.controls.builder.ghosts();
         let recipe = self.controls.builder.recipe.as_ref();
         self.scene.ghosts(
