@@ -745,7 +745,7 @@ fn screenshots(
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
             "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
-            "menu", "new-game",
+            "menu", "new-game", "plan",
         ];
         for sheet in sheets {
             let mut hud = Hud::new();
@@ -770,6 +770,8 @@ fn screenshots(
                 "research" => hud.toggle_research(),
                 "problems" => hud.toggle_problems(),
                 "recipes" => hud.browse("iron-plate".into()),
+                // A whole chain for the ratio calculator.
+                "plan" => hud.browse("circuit".into()),
                 "menu" => hud.open_menu(None),
                 "new-game" => hud.open_menu(Some((2, 271_828))),
                 "radial" => {

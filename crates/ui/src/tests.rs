@@ -1090,3 +1090,35 @@ fn the_die_rolls_a_different_seed_each_time() {
     }
     assert!(seeds.len() >= 19, "{seeds:?}");
 }
+
+#[test]
+fn the_recipe_browser_works_out_machines_for_a_rate_even_on_a_small_phone_held_sideways() {
+    let mut f = Fixture::new();
+    f.hud.browse("circuit".into());
+    for (size, scale) in [((1080, 2340), 3.0), ((1334, 750), 2.0)] {
+        f.draw(size, scale, &Tool::Hand);
+        f.find(&Hit::Rate(true));
+        f.find(&Hit::Rate(false));
+    }
+    assert_eq!(f.hud.rate_per_minute(), 60);
+    let up = f.find(&Hit::Rate(true));
+    f.tap(centre(up));
+    assert_eq!(f.hud.rate_per_minute(), 120);
+    // It stops at either end.
+    for _ in 0..20 {
+        f.draw((1334, 750), 2.0, &Tool::Hand);
+        let up = f.find(&Hit::Rate(true));
+        f.tap(centre(up));
+    }
+    assert_eq!(f.hud.rate_per_minute(), *plan::RATES.last().unwrap());
+    for _ in 0..20 {
+        f.draw((1334, 750), 2.0, &Tool::Hand);
+        let down = f.find(&Hit::Rate(false));
+        f.tap(centre(down));
+    }
+    assert_eq!(f.hud.rate_per_minute(), plan::RATES[0]);
+    // Something nothing makes has nothing to work out.
+    f.hud.browse("copper-ore".into());
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Rate(_))));
+}

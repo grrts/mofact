@@ -251,6 +251,8 @@ enum Hit {
     Build(BuildingId),
     /// An item's icon: opens the recipe browser on it.
     Item(ItemId),
+    /// The ratio calculator's rate buttons: up or down a step.
+    Rate(bool),
     Close,
     /// Undo and redo buttons.
     Undo,
@@ -386,6 +388,8 @@ pub struct Hud {
     radial: Option<[f32; 2]>,
     /// The item the recipe browser shows.
     browse: Option<ItemId>,
+    /// The ratio calculator's rate, as an index into [`plan::RATES`].
+    rate: Option<usize>,
     /// Where each control went in the last frame, topmost last.
     hits: Vec<(Rect, Hit)>,
     press: Option<Press>,
@@ -428,6 +432,16 @@ impl Hud {
     /// Whether the research sheet is open.
     pub fn researching(&self) -> bool {
         self.research
+    }
+
+    /// The ratio calculator's rate, as an index into [`plan::RATES`].
+    fn rate(&self) -> usize {
+        self.rate.unwrap_or(plan::START).min(plan::RATES.len() - 1)
+    }
+
+    /// The ratio calculator's rate in items a minute.
+    pub fn rate_per_minute(&self) -> u32 {
+        plan::RATES[self.rate()]
     }
 
     /// Open the recipe browser on `item`, as tapping its icon does.
@@ -689,6 +703,15 @@ impl Hud {
                 self.research = false;
                 self.problems = false;
                 self.more = false;
+                Vec::new()
+            }
+            Hit::Rate(up) => {
+                let at = self.rate();
+                self.rate = Some(if up {
+                    (at + 1).min(plan::RATES.len() - 1)
+                } else {
+                    at.saturating_sub(1)
+                });
                 Vec::new()
             }
             Hit::Close => {
@@ -961,8 +984,9 @@ impl Hud {
         // Cards and tips read as a column, not a banner, on a wide screen.
         let column = (corner[0] - ml).min(560.0 * u);
         // The map and the game menu want the whole screen: the goal waits
-        // until they close.
-        let top = if self.map || self.menu {
+        // until they close. So does the recipe browser on a screen held
+        // sideways, where it needs the height for its calculator.
+        let top = if self.map || self.menu || (self.browse.is_some() && !portrait) {
             top
         } else {
             self.goal_card(view, o, [ml, top + gap], column)
@@ -2011,15 +2035,62 @@ impl Hud {
             .collect();
         // Fit what we can, makers first.
         let mut budget = ((room - 2.0 * pad - title) / row).floor().max(1.0) as usize;
-        let mut take = |n: usize| {
+        let take = |budget: &mut usize, n: usize| {
             let k = n.min(budget.saturating_sub(usize::from(n > 0)));
-            budget -= k + usize::from(k > 0);
+            *budget -= k + usize::from(k > 0);
             k
         };
-        let (nm, nu) = (take(made.len()), take(used.len()));
-        let nr = usize::from(!research.is_empty() && take(1) > 0);
-        let sections = [nm, nu, nr].iter().filter(|&&n| n > 0).count() as f32;
-        let rows = (nm + nu + nr) as f32;
+        // The ratio calculator, for what something makes: a chip for each
+        // machine of the chain, wrapped into lines.
+        let chip = 34.0 * u;
+        let line = chip + 6.0 * u;
+        let cpx = 13.0 * u;
+        let chips: Vec<(BuildingId, u32)> = if made.is_empty() {
+            Vec::new()
+        } else {
+            let p = plan::plan(
+                view.content,
+                item,
+                self.rate_per_minute() as f32,
+                |r| view.recipe_open(r),
+                |b| view.building_open(b),
+            );
+            let mut c = p.machines();
+            c.extend(p.belts);
+            c
+        };
+        let chip_w = |o: &Overlay, n: u32| 24.0 * u + o.measure(&format!("×{n}"), cpx) + 18.0 * u;
+        let lines = {
+            let (mut lines, mut x) = (0usize, f32::INFINITY);
+            for (_, n) in &chips {
+                let w = chip_w(o, *n);
+                if x + w > width - 2.0 * pad {
+                    lines += 1;
+                    x = 0.0;
+                }
+                x += w + 6.0 * u;
+            }
+            lines
+        };
+        // The calculator's lines, in browser rows, if there is room for them
+        // and one recipe that makes the item: the plan matters more than a
+        // second way to make it.
+        let plan_rows = (lines as f32 * line / row).ceil() as usize;
+        let np = if chips.is_empty() || budget < plan_rows + 3 {
+            0
+        } else {
+            take(&mut budget, plan_rows)
+        };
+        let nm = take(&mut budget, made.len());
+        let nu = take(&mut budget, used.len());
+        let nr = usize::from(!research.is_empty() && take(&mut budget, 1) > 0);
+        let sections = [nm, np, nu, nr].iter().filter(|&&n| n > 0).count() as f32;
+        let rows = (nm + nu + nr) as f32
+            + if np > 0 {
+                lines as f32 * line / row
+            } else {
+                0.0
+            };
         let empty = rows == 0.0;
         let height =
             pad + title + sections * head + rows * row + if empty { row } else { 0.0 } + pad;
@@ -2085,6 +2156,9 @@ impl Hud {
                 );
                 y += row;
             }
+            if label == "MADE BY" && np > 0 {
+                y = self.plan_lines(view, o, &chips, [left, y, r[2] - 2.0 * pad], head, line);
+            }
         }
         if nr > 0 {
             header(o, &mut y, "RESEARCH");
@@ -2093,6 +2167,80 @@ impl Hud {
             let px = fit(o, &text, 14.0 * u, r[2] - 2.0 * pad);
             o.text(&text, [left, y + row / 2.0], px, TEXT);
         }
+    }
+
+    /// The ratio calculator in the browser at `b` (left, top, width): a
+    /// header with the rate and its buttons, then a chip for each machine.
+    /// Returns where it ends.
+    fn plan_lines(
+        &mut self,
+        view: &View,
+        o: &mut Overlay,
+        chips: &[(BuildingId, u32)],
+        b: [f32; 3],
+        head: f32,
+        line: f32,
+    ) -> f32 {
+        let u = self.unit;
+        let [left, mut y, width] = b;
+        o.text("TO MAKE", [left, y + head * 0.7], 12.0 * u, MUTED);
+        // − rate +, on the right of the header.
+        let btn = 30.0 * u;
+        let rate = format!("{}/min", self.rate_per_minute());
+        let rpx = 14.0 * u;
+        let rw = o.measure("1200/min", rpx);
+        let right = left + width;
+        let by = y + (head - btn) / 2.0;
+        let plus = [right - btn, by, btn, btn];
+        let minus = [right - btn * 2.0 - rw - 12.0 * u, by, btn, btn];
+        for (r, label, up) in [(minus, "−", false), (plus, "+", true)] {
+            o.panel([r[0], r[1]], [btn, btn], btn / 2.0, RAISED);
+            let w = o.measure(label, 20.0 * u);
+            o.text(
+                label,
+                [r[0] + (btn - w) / 2.0, r[1] + btn * 0.72],
+                20.0 * u,
+                TEXT,
+            );
+            // A finger's width to hit, though drawn smaller.
+            let f = 44.0 * u;
+            let hit = [r[0] - (f - btn) / 2.0, r[1] - (f - btn) / 2.0, f, f];
+            self.hits.push((hit, Hit::Rate(up)));
+        }
+        let tw = o.measure(&rate, rpx);
+        let mid = minus[0] + btn + (plus[0] - minus[0] - btn - tw) / 2.0;
+        o.text(
+            &rate,
+            [mid, by + (btn + o.cap_height(rpx)) / 2.0],
+            rpx,
+            TEXT,
+        );
+        y += head;
+        let chip = line - 6.0 * u;
+        let cpx = 13.0 * u;
+        let s = 24.0 * u;
+        let mut x = f32::INFINITY;
+        let mut top = y - line;
+        for (building, n) in chips {
+            let text = format!("×{n}");
+            let w = s + o.measure(&text, cpx) + 18.0 * u;
+            if x + w > right {
+                x = left;
+                top += line;
+            }
+            o.panel([x, top], [w, chip], 8.0 * u, RAISED);
+            if let Some((sprite, t)) = view.look.building(building) {
+                o.icon(sprite, [x + 6.0 * u, top + (chip - s) / 2.0], s, t);
+            }
+            o.text(
+                &text,
+                [x + s + 10.0 * u, top + (chip + o.cap_height(cpx)) / 2.0],
+                cpx,
+                TEXT,
+            );
+            x += w + 6.0 * u;
+        }
+        top + line
     }
 
     /// One recipe in the browser: inputs, an arrow, outputs, then its
@@ -2947,6 +3095,7 @@ fn wrap(o: &Overlay, text: &str, px: f32, width: f32) -> Vec<String> {
 #[cfg(test)]
 mod tests;
 
+pub mod plan;
 pub mod problems;
 mod train;
 use problems::Problem;
