@@ -309,6 +309,36 @@ impl<'a> Bot<'a> {
                 return Ok(());
             }
         }
+        // Packed in: a pole beside it, wired to a pole further out with
+        // room for the turbines round it.
+        for pole in near(m.pos, foot, end).into_iter().filter(&free) {
+            for r in 3..=7 {
+                let ring = near(
+                    pole,
+                    (pole.x - r + 2, pole.y - r + 2),
+                    (pole.x + r - 2, pole.y + r - 2),
+                );
+                for far in ring
+                    .into_iter()
+                    .filter(|t| free(t) && (t.x - pole.x).abs().max((t.y - pole.y).abs()) == r)
+                {
+                    let spots: Vec<_> = near(far, (far.x, far.y), (far.x, far.y))
+                        .into_iter()
+                        .filter(|t| free(t) && *t != pole)
+                        .take(need)
+                        .collect();
+                    if spots.len() == need {
+                        for p in [pole, far] {
+                            self.place(&Part::new("pole", (1, 1), p.x, p.y, Dir::East))?;
+                        }
+                        for t in spots {
+                            self.place(&Part::new("wind-turbine", (1, 1), t.x, t.y, Dir::East))?;
+                        }
+                        return Ok(());
+                    }
+                }
+            }
+        }
         Err(format!("no room to power the machine at {:?}", m.pos))
     }
 
