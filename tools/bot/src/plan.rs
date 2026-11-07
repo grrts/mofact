@@ -344,6 +344,22 @@ mod tests {
                 .block(&item.id)
                 .unwrap_or_else(|e| panic!("{}: {e}", item.id));
             assert_eq!(b.fault(), None, "{}\n{}", item.id, b.picture());
+            // Every powered machine has a free tile in a pole's reach.
+            let taken: HashSet<_> = b.parts.iter().flat_map(|p| p.tiles()).collect();
+            for m in &b.powered {
+                let (w, h) = (i32::from(m.size.0), i32::from(m.size.1));
+                let room = (m.pos.y - 2..m.pos.y + h + 2).any(|y| {
+                    (m.pos.x - 2..m.pos.x + w + 2)
+                        .any(|x| !taken.contains(&mofact_core::geom::TilePos::new(x, y)))
+                });
+                assert!(
+                    room,
+                    "{}: no room for a pole at {:?}\n{}",
+                    item.id,
+                    m.pos,
+                    b.picture()
+                );
+            }
             let (x0, y0, x1, y1) = b.bounds();
             println!(
                 "{:<22} {:>4} parts, {} x {}",

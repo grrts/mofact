@@ -383,7 +383,11 @@ pub fn fan_in(
     lower: Vec<Block>,
 ) -> Block {
     let (w, h) = (i32::from(size.0), i32::from(size.1));
-    let columns: Vec<i32> = (0..count as i32 * w).map(|i| 1 + i).collect();
+    // Six or more columns: the middle one takes no belts, so a pole has
+    // room in reach of the middle of the row.
+    let span = count as i32 * w;
+    let gap = (span >= 6).then_some(1 + span / 2);
+    let columns: Vec<i32> = (1..=span).filter(|&c| Some(c) != gap).collect();
     assert!(upper.len() <= columns.len() && lower.len() <= columns.len());
     let mut b = Block::default();
     let mut y = 0;
@@ -537,5 +541,33 @@ mod tests {
         );
         check(&labs);
         assert_eq!(labs.powered.len(), 3);
+    }
+
+    /// Six labs fed by five belts on each side: every lab keeps a free
+    /// tile in a pole's reach.
+    #[test]
+    fn a_long_row_of_labs_leaves_room_for_poles() {
+        let labs = fan_in(
+            "lab",
+            (1, 1),
+            6,
+            60.0,
+            (0..5).map(|_| leaf()).collect(),
+            Some(leaf()),
+            (0..5).map(|_| leaf()).collect(),
+        );
+        check(&labs);
+        let taken: std::collections::HashSet<_> =
+            labs.parts.iter().flat_map(|p| p.tiles()).collect();
+        for m in &labs.powered {
+            let room = (m.pos.y - 2..=m.pos.y + 2)
+                .any(|y| (m.pos.x - 2..=m.pos.x + 2).any(|x| !taken.contains(&TilePos::new(x, y))));
+            assert!(
+                room,
+                "no room for a pole by {:?}\n{}",
+                m.pos,
+                labs.picture()
+            );
+        }
     }
 }

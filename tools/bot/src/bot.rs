@@ -40,9 +40,13 @@ const LEFT: i32 = 60;
 const SHELF: i32 = 1600;
 
 /// Labs in a station for `packs` pack types, and the trees that feed it.
+/// From five labs on, the belts into the middle lab would leave no room
+/// for a pole in reach of it, so one lab more takes no belts of its own
+/// (see [`layout::fan_in`]): labs beside each other share their packs.
 pub fn station_shape(packs: usize) -> (usize, usize) {
-    let labs = packs.saturating_sub(1).div_ceil(2).max(2);
-    (labs, 2 * labs + 1)
+    let fed = packs.saturating_sub(1).div_ceil(2).max(2);
+    let labs = if fed >= 5 { fed + 1 } else { fed };
+    (labs, 2 * fed + 1)
 }
 
 pub struct Bot<'a> {
@@ -50,6 +54,8 @@ pub struct Bot<'a> {
     planner: Planner<'a>,
     content: &'a Content,
     taken: HashSet<TilePos>,
+    /// Where the bot's poles stand.
+    poles: HashSet<TilePos>,
     at: (i32, i32),
     row: i32,
     lines: HashMap<ItemId, usize>,
@@ -90,6 +96,7 @@ impl<'a> Bot<'a> {
             planner: Planner::new(content),
             content,
             taken: HashSet::new(),
+            poles: HashSet::new(),
             at: (LEFT, 0),
             row: 0,
             lines: HashMap::new(),
@@ -143,6 +150,15 @@ impl<'a> Bot<'a> {
         let mut bot = Bot::new(content, hours)?;
         bot.sim = sim;
         bot.taken = saved.taken.into_iter().collect();
+        // The sim knows where the poles stand.
+        bot.poles = bot
+            .sim
+            .snapshot()
+            .entities
+            .iter()
+            .filter(|e| e.building.as_str() == "pole")
+            .map(|e| e.pos)
+            .collect();
         bot.at = saved.at;
         bot.row = saved.row;
         bot.lines = saved.lines.into_iter().collect();
@@ -244,6 +260,9 @@ impl<'a> Bot<'a> {
             }
         }
         self.taken.extend(p.tiles());
+        if p.building.as_str() == "pole" {
+            self.poles.insert(p.pos);
+        }
         Ok(())
     }
 
@@ -265,81 +284,82 @@ impl<'a> Bot<'a> {
         for p in &b.parts {
             self.place(p)?;
         }
+        // Every machine's pole first, so turbines can't take the last
+        // tile in a packed machine's reach; then the turbines.
+        let mut poles = Vec::new();
         for m in &b.powered {
-            self.power(m)?;
+            poles.push(self.pole(m)?);
+        }
+        for (m, pole) in b.powered.iter().zip(poles) {
+            self.power(m, pole)?;
         }
         Ok(())
     }
 
-    /// A pole beside `m` and enough wind turbines round the pole.
-    fn power(&mut self, m: &Powered) -> Result<(), String> {
+    /// The tiles within `r` of a footprint from `lo` to `hi`.
+    fn around(lo: (i32, i32), hi: (i32, i32), r: i32) -> impl Iterator<Item = TilePos> {
+        (lo.1 - r..=hi.1 + r)
+            .flat_map(move |y| (lo.0 - r..=hi.0 + r).map(move |x| TilePos::new(x, y)))
+    }
+
+    /// A pole that powers `m`: one of the bot's own in reach, or a new one.
+    fn pole(&mut self, m: &Powered) -> Result<TilePos, String> {
+        let (w, h) = (i32::from(m.size.0), i32::from(m.size.1));
+        let (lo, hi) = ((m.pos.x, m.pos.y), (m.pos.x + w - 1, m.pos.y + h - 1));
+        if let Some(p) = Self::around(lo, hi, 2).find(|t| self.poles.contains(t)) {
+            return Ok(p);
+        }
+        let p = Self::around(lo, hi, 2)
+            .find(|t| !self.taken.contains(t))
+            .ok_or_else(|| format!("no room for a pole by the machine at {:?}", m.pos))?;
+        self.place(&Part::new("pole", (1, 1), p.x, p.y, Dir::East))?;
+        Ok(p)
+    }
+
+    /// Enough wind turbines for `m` round its `pole`, or round another
+    /// pole wired to it when there's no room.
+    fn power(&mut self, m: &Powered, pole: TilePos) -> Result<(), String> {
         let turbine = self.planner.building("wind-turbine");
         let kw = match turbine.role {
             BuildingRole::Generator { kw } => kw,
             _ => 60.0,
         };
         let need = (m.kw / kw).ceil() as usize;
-        let (w, h) = (i32::from(m.size.0), i32::from(m.size.1));
-        let free = |t: &TilePos| !self.taken.contains(t);
-        let near = |c: TilePos, lo: (i32, i32), hi: (i32, i32)| {
-            let mut v = Vec::new();
-            for y in lo.1 - 2..=hi.1 + 2 {
-                for x in lo.0 - 2..=hi.0 + 2 {
-                    let t = TilePos::new(x, y);
-                    if t != c {
-                        v.push(t);
-                    }
-                }
-            }
-            v
+        let spots = |bot: &Self, at: TilePos| -> Vec<TilePos> {
+            Self::around((at.x, at.y), (at.x, at.y), 2)
+                .filter(|t| !bot.taken.contains(t))
+                .collect()
         };
-        let foot = (m.pos.x, m.pos.y);
-        let end = (m.pos.x + w - 1, m.pos.y + h - 1);
-        for pole in near(m.pos, foot, end).into_iter().filter(&free) {
-            let spots: Vec<_> = near(pole, (pole.x, pole.y), (pole.x, pole.y))
-                .into_iter()
-                .filter(|t| free(t) && *t != pole)
-                .take(need)
-                .collect();
-            if spots.len() == need {
-                self.place(&Part::new("pole", (1, 1), pole.x, pole.y, Dir::East))?;
-                for t in spots {
-                    self.place(&Part::new("wind-turbine", (1, 1), t.x, t.y, Dir::East))?;
-                }
-                return Ok(());
-            }
-        }
-        // Packed in: a pole beside it, wired to a pole further out with
-        // room for the turbines round it.
-        for pole in near(m.pos, foot, end).into_iter().filter(&free) {
-            for r in 3..=7 {
-                let ring = near(
-                    pole,
-                    (pole.x - r + 2, pole.y - r + 2),
-                    (pole.x + r - 2, pole.y + r - 2),
-                );
-                for far in ring
-                    .into_iter()
-                    .filter(|t| free(t) && (t.x - pole.x).abs().max((t.y - pole.y).abs()) == r)
-                {
-                    let spots: Vec<_> = near(far, (far.x, far.y), (far.x, far.y))
-                        .into_iter()
-                        .filter(|t| free(t) && *t != pole)
-                        .take(need)
-                        .collect();
-                    if spots.len() == need {
-                        for p in [pole, far] {
-                            self.place(&Part::new("pole", (1, 1), p.x, p.y, Dir::East))?;
-                        }
-                        for t in spots {
-                            self.place(&Part::new("wind-turbine", (1, 1), t.x, t.y, Dir::East))?;
-                        }
-                        return Ok(());
+        let mut at = spots(self, pole);
+        let mut far = None;
+        if at.len() < need {
+            // Poles link within wire reach: look further out, ring by ring.
+            'out: for r in 3..=7 {
+                for t in Self::around((pole.x, pole.y), (pole.x, pole.y), r) {
+                    if (t.x - pole.x).abs().max((t.y - pole.y).abs()) != r
+                        || self.taken.contains(&t)
+                    {
+                        continue;
+                    }
+                    let v: Vec<_> = spots(self, t).into_iter().filter(|s| *s != t).collect();
+                    if v.len() >= need {
+                        far = Some(t);
+                        at = v;
+                        break 'out;
                     }
                 }
             }
+            if far.is_none() {
+                return Err(format!("no room to power the machine at {:?}", m.pos));
+            }
         }
-        Err(format!("no room to power the machine at {:?}", m.pos))
+        if let Some(p) = far {
+            self.place(&Part::new("pole", (1, 1), p.x, p.y, Dir::East))?;
+        }
+        for t in at.into_iter().take(need) {
+            self.place(&Part::new("wind-turbine", (1, 1), t.x, t.y, Dir::East))?;
+        }
+        Ok(())
     }
 
     fn done(&self) -> HashSet<ResearchId> {
@@ -375,7 +395,7 @@ impl<'a> Bot<'a> {
             trees.push(self.planner.block(&packs[i % packs.len()])?);
         }
         let west = trees.remove(0);
-        let upper: Vec<_> = trees.drain(..labs).collect();
+        let upper: Vec<_> = trees.drain(..(slots - 1) / 2).collect();
         let lab = self.planner.building("lab");
         let b = layout::fan_in("lab", lab.size, labs, lab.power, upper, Some(west), trees);
         self.build(b)?;
