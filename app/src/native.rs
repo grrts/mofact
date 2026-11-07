@@ -801,7 +801,7 @@ fn screenshots(
         // As a fresh install sees it: the demo, with the price known.
         let store = mofact_ui::StoreView {
             demo: Some(crate::shop::DEMO_TIER),
-            price: Some("€4.99".into()),
+            price: Some("$9.99".into()),
             ..Default::default()
         };
         for sheet in sheets {

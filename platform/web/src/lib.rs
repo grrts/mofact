@@ -31,7 +31,6 @@ const SLOT_KEY: &str = "mofact-slot";
 /// not of the save.
 const LOW_POWER_KEY: &str = "mofact-low-power";
 const COLOUR_BLIND_KEY: &str = "mofact-colour-blind";
-const FULL_GAME_KEY: &str = "mofact-full-game";
 /// Milliseconds between autosaves.
 const SAVE_EVERY: f64 = 30_000.0;
 
@@ -392,17 +391,8 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
             s.game.set_colour_blind(true);
             s.colour_blind = true;
         }
-        // No store on the web yet: the sandbox unlocks the full game free
-        // and remembers it in local storage (T61).
-        let keep = window.clone();
-        s.game.set_shop(Box::new(mofact::shop::Sandbox::new(
-            stored(FULL_GAME_KEY),
-            Box::new(move |on| {
-                if let Ok(Some(st)) = keep.local_storage() {
-                    let _ = st.set_item(FULL_GAME_KEY, if on { "1" } else { "0" });
-                }
-            }),
-        )));
+        // The web link plays the full game until a store build is live
+        // (docs/decisions.md); then it becomes the demo with store links.
         s.saved = s.now();
         match speaker(&mut s.game) {
             Ok(ctx) => s.sound = Some(ctx),
