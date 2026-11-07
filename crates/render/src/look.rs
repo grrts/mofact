@@ -54,7 +54,10 @@ const PIPE_FLUID: &str = "pipe-fluid";
 /// What a sprite in the catalogue is a picture of.
 #[derive(Clone, Debug, PartialEq)]
 enum Art {
-    Belt,
+    /// A belt as an icon, its rails in its tier's colour past the first.
+    Belt {
+        trim: Option<Rgba>,
+    },
     /// The moving layer of a belt tile at one phase of [`belt::FRAMES`].
     BeltSurface {
         bend: Bend,
@@ -64,6 +67,7 @@ enum Art {
     BeltFrame {
         bend: Bend,
         joins: Joins,
+        trim: Option<Rgba>,
     },
     Hub,
     Pole,
@@ -89,6 +93,13 @@ enum Art {
     Well {
         fluid: Rgba,
     },
+    /// A well for anything but water: a pumpjack.
+    Pumpjack {
+        fluid: Rgba,
+    },
+    Lab {
+        pack: Rgba,
+    },
     Boiler {
         pose: Pose,
     },
@@ -113,6 +124,8 @@ enum Art {
     Assembler {
         product: Option<(Shape, Rgba)>,
         pose: Pose,
+        /// A faster tier's colour.
+        trim: Option<Rgba>,
     },
     Item {
         shape: Shape,
@@ -132,7 +145,6 @@ enum Kind {
     Drill,
     Furnace,
     Assembler,
-    /// Drawn as an assembler showing a research pack until labs get their own art.
     Lab,
     Pole,
     Generator,
@@ -195,8 +207,11 @@ pub struct Look {
     pipe_fluid: usize,
     /// The first belt surface sprite: [`belt::FRAMES`] per bend.
     belt_surface: usize,
-    /// The first belt frame sprite: sixteen straight, then two per corner.
-    belt_frame: usize,
+    /// The first belt frame sprite of each tier: sixteen straight, then two
+    /// per corner.
+    belt_frame: Vec<usize>,
+    /// Each belt's tier, 0 for the slowest.
+    belt_tier: HashMap<BuildingId, usize>,
     /// How fast each belt runs, in tiles a second, to move its surface.
     belt_speed: HashMap<BuildingId, f32>,
 }
@@ -245,7 +260,7 @@ impl Look {
                 art,
             });
         };
-        push(&mut look, BELT.into(), (1, 1), Art::Belt);
+        push(&mut look, BELT.into(), (1, 1), Art::Belt { trim: None });
         push(
             &mut look,
             STARVED.into(),
@@ -265,23 +280,50 @@ impl Look {
                 push(&mut look, format!("belt-surface:{b}:{frame}"), (1, 1), art);
             }
         }
-        look.belt_frame = look.sprites.len();
-        for bits in 0..16u8 {
-            let art = Art::BeltFrame {
-                bend: Bend::Straight,
-                joins: Joins::from_bits(bits),
-            };
-            push(&mut look, format!("belt-frame:0:{bits}"), (1, 1), art);
-        }
-        for (b, bend) in [(1, Bend::FromLeft), (2, Bend::FromRight)] {
-            for end in [false, true] {
-                let joins = Joins {
-                    end,
-                    ..Joins::default()
+        // Belts are told apart by speed: the slowest has steel rails, each
+        // faster one its tier's colour.
+        let mut speeds: Vec<f32> = content
+            .buildings
+            .iter()
+            .filter_map(|b| match b.role {
+                BuildingRole::Belt { tiles_per_second } => Some(tiles_per_second),
+                _ => None,
+            })
+            .collect();
+        speeds.sort_by(f32::total_cmp);
+        speeds.dedup();
+        let tiers = speeds.len().clamp(1, 1 + palette::TIER.len());
+        for tier in 0..tiers {
+            look.belt_frame.push(look.sprites.len());
+            let trim = tier_trim(tier);
+            for bits in 0..16u8 {
+                let art = Art::BeltFrame {
+                    bend: Bend::Straight,
+                    joins: Joins::from_bits(bits),
+                    trim,
                 };
-                let art = Art::BeltFrame { bend, joins };
-                let bits = joins.bits();
-                push(&mut look, format!("belt-frame:{b}:{bits}"), (1, 1), art);
+                push(
+                    &mut look,
+                    format!("belt-frame:{tier}:0:{bits}"),
+                    (1, 1),
+                    art,
+                );
+            }
+            for (b, bend) in [(1, Bend::FromLeft), (2, Bend::FromRight)] {
+                for end in [false, true] {
+                    let joins = Joins {
+                        end,
+                        ..Joins::default()
+                    };
+                    let art = Art::BeltFrame { bend, joins, trim };
+                    let bits = joins.bits();
+                    push(
+                        &mut look,
+                        format!("belt-frame:{tier}:{b}:{bits}"),
+                        (1, 1),
+                        art,
+                    );
+                }
             }
         }
         for (k, name) in [FX_DOT, FX_RING, FX_BAR].into_iter().enumerate() {
@@ -305,6 +347,12 @@ impl Look {
             let (kind, recipes) = match &b.role {
                 BuildingRole::Belt { tiles_per_second } => {
                     look.belt_speed.insert(b.id.clone(), *tiles_per_second);
+                    let tier = speeds
+                        .iter()
+                        .position(|&v| v == *tiles_per_second)
+                        .unwrap_or(0)
+                        .min(tiers - 1);
+                    look.belt_tier.insert(b.id.clone(), tier);
                     (Kind::Belt, Vec::new())
                 }
                 BuildingRole::Hub => (Kind::Hub, Vec::new()),
@@ -355,8 +403,23 @@ impl Look {
             };
             let base = look.sprites.len();
             let id = b.id.as_str();
+            // A crafter faster than the first kind wears its tier's colour.
+            let trim = match b.role {
+                BuildingRole::Crafter { speed, .. } if speed > 1.0 => {
+                    tier_trim(if speed >= 3.0 { 2 } else { 1 })
+                }
+                _ => None,
+            };
             match kind {
-                Kind::Belt => {}
+                Kind::Belt => {
+                    let tier = look.belt_tier.get(&b.id).copied().unwrap_or(0);
+                    if tier > 0 {
+                        let art = Art::Belt {
+                            trim: tier_trim(tier),
+                        };
+                        push(&mut look, format!("{id}:icon"), b.size, art);
+                    }
+                }
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
                 Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
                 Kind::Generator => push(&mut look, id.to_owned(), b.size, Art::Turbine),
@@ -393,8 +456,14 @@ impl Look {
                         BuildingRole::Well { fluid, .. } => item_look(fluid).map(|l| l.1),
                         _ => None,
                     };
+                    let water = matches!(&b.role, BuildingRole::Well { fluid, .. } if fluid.as_str() == "water");
                     let fluid = fluid.unwrap_or(palette::item("water"));
-                    push(&mut look, id.to_owned(), b.size, Art::Well { fluid });
+                    let art = if water {
+                        Art::Well { fluid }
+                    } else {
+                        Art::Pumpjack { fluid }
+                    };
+                    push(&mut look, id.to_owned(), b.size, art);
                 }
                 _ => {
                     let none = std::iter::once(None);
@@ -452,12 +521,8 @@ impl Look {
                                         product: product.map(|p| p.1),
                                         pose,
                                     },
-                                    Kind::Lab => Art::Assembler {
-                                        product: Some((Shape::Pack, palette::item("pack-survey"))),
-                                        pose: Pose {
-                                            working: false,
-                                            ..pose
-                                        },
+                                    Kind::Lab => Art::Lab {
+                                        pack: palette::item("pack-survey"),
                                     },
                                     _ => Art::Assembler {
                                         product,
@@ -465,6 +530,7 @@ impl Look {
                                             working: false,
                                             ..pose
                                         },
+                                        trim,
                                     },
                                 };
                                 let r = setting.unwrap_or("none");
@@ -516,7 +582,15 @@ impl Look {
 
     /// The two layers that draw a belt tile, both facing east and turned
     /// with it: its surface at `phase` (0 to 1) of its cycle, then its frame.
-    pub fn belt_layers(&self, bend: Bend, joins: Joins, phase: f32) -> (&str, &str) {
+    pub fn belt_layers(
+        &self,
+        building: &BuildingId,
+        bend: Bend,
+        joins: Joins,
+        phase: f32,
+    ) -> (&str, &str) {
+        let tier = self.belt_tier.get(building).copied().unwrap_or(0);
+        let frames_at = self.belt_frame.get(tier).copied().unwrap_or(0);
         let frames = usize::from(belt::FRAMES);
         let frame = ((phase.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1);
         let b = Bend::ALL.iter().position(|&x| x == bend).unwrap_or(0);
@@ -526,7 +600,7 @@ impl Look {
             _ => 16 + (b - 1) * 2 + usize::from(joins.end),
         };
         let name = |i: usize| self.sprites.get(i).map_or(BELT, |s| s.name.as_str());
-        (name(surface), name(self.belt_frame + framed))
+        (name(surface), name(frames_at + framed))
     }
 
     /// Whether `building` is drawn facing east and turned by its direction:
@@ -634,6 +708,7 @@ impl Look {
     ) -> Option<&str> {
         let b = self.buildings.get(building)?;
         let at = match b.kind {
+            Kind::Belt if self.belt_tier.get(building).is_some_and(|&t| t > 0) => b.base,
             Kind::Belt => return Some(BELT),
             Kind::Hub | Kind::Pole | Kind::Generator | Kind::Splitter => b.base,
             Kind::Tank | Kind::Pump | Kind::Well | Kind::Engine => b.base,
@@ -675,6 +750,15 @@ impl Look {
     pub fn building(&self, building: &BuildingId) -> Option<(&str, Rgba)> {
         self.sprite(building, Dir::East, None, false)
             .map(|s| (s, palette::WHITE))
+    }
+
+    /// `building` drawn as its icon at `px` pixels a tile, as RGBA rows:
+    /// its width, height and pixels. For the silhouette sheet and tests.
+    pub fn picture(&self, building: &BuildingId, px: u32) -> Option<(u32, u32, Vec<u8>)> {
+        let (name, _) = self.building(building)?;
+        let s = self.sprites.iter().find(|s| s.name == name)?;
+        let (w, h, canvas) = render(&s.art, s.tiles, s.tiles_high, px, px >= FINE_PX);
+        Some((w, h, canvas.rgba()))
     }
 
     /// Paint every sprite at `px` pixels a tile into `atlas`. Returns false if
@@ -725,6 +809,12 @@ pub fn atlas_size(px: u32) -> u32 {
 /// Items and badges are drawn at this fraction of a tile.
 pub const ITEM_TILES: f32 = 0.5;
 
+/// The trim colour of tier `tier`, counted from 0 for the first kind.
+fn tier_trim(tier: usize) -> Option<Rgba> {
+    tier.checked_sub(1)
+        .map(|k| palette::TIER[k.min(palette::TIER.len() - 1)])
+}
+
 fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, u32, Canvas) {
     let z = px as f32;
     let small = ((z * ITEM_TILES).round() as u32).max(4);
@@ -734,12 +824,12 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
     };
     let mut c = Canvas::new(w, h);
     match *art {
-        Art::Belt => draw::belt(&mut c, z, fine, 0.0, 2.0),
+        Art::Belt { trim } => draw::belt_icon(&mut c, z, fine, trim),
         Art::BeltSurface { bend, frame } => {
             let phase = f32::from(frame) / f32::from(belt::FRAMES);
             belt::surface(&mut c, z, fine, bend, phase);
         }
-        Art::BeltFrame { bend, joins } => belt::frame(&mut c, z, fine, bend, joins),
+        Art::BeltFrame { bend, joins, trim } => belt::trimmed(&mut c, z, fine, bend, joins, trim),
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
@@ -751,7 +841,9 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::TankFluid => draw::tank_fluid(&mut c, z),
         Art::Pump => draw::pump(&mut c, z, fine),
         Art::UndergroundPipe { exit } => draw::underground_pipe(&mut c, z, fine, exit),
-        Art::Well { fluid } => draw::well(&mut c, z, fine, fluid),
+        Art::Well { fluid } => draw::water_well(&mut c, z, fine, fluid),
+        Art::Pumpjack { fluid } => draw::pumpjack(&mut c, z, fine, fluid, 0.4),
+        Art::Lab { pack } => draw::lab(&mut c, z, fine, pack),
         Art::Boiler { ref pose } => draw::boiler(&mut c, z, fine, pose),
         Art::Engine => draw::engine(&mut c, z, fine, 0.3),
         Art::Refinery {
@@ -764,7 +856,16 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         }
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
         Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
-        Art::Assembler { product, ref pose } => draw::assembler(&mut c, z, product, fine, pose),
+        Art::Assembler {
+            product,
+            ref pose,
+            trim: None,
+        } => draw::assembler(&mut c, z, product, fine, pose),
+        Art::Assembler {
+            product,
+            ref pose,
+            trim: Some(trim),
+        } => draw::fast_assembler(&mut c, z, product, fine, pose, trim),
         Art::Item { shape, color } => {
             // On a belt, the prototype draws items 0.32 of a tile across.
             let s = w as f32;
@@ -779,7 +880,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     pub(crate) fn content() -> Content {

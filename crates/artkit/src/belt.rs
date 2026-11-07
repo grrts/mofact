@@ -9,7 +9,7 @@
 //! looks exactly like [`crate::draw::belt`].
 
 use crate::canvas::{arc, poly, rect, rr, Canvas};
-use crate::palette::{self as pal, alpha, Rgba};
+use crate::palette::{self as pal, alpha, shade, Rgba};
 use std::f32::consts::{FRAC_PI_2, PI};
 use tiny_skia::PathBuilder;
 
@@ -207,6 +207,22 @@ fn arrow(c: &mut Canvas, s: f32) {
 /// with nothing beyond it and opened where a belt feeds in from the side.
 /// On a corner only `joins.end` counts.
 pub fn frame(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins) {
+    trimmed(c, z, fine, bend, joins, None);
+}
+
+/// The rails' colour and their lit edge: steel, or for a faster belt its
+/// tier's colour, so belts of each speed can be told apart at a glance.
+fn rails(trim: Option<Rgba>, fine: bool) -> (Rgba, Rgba) {
+    match trim {
+        None => (pal::BELT_RAIL, pal::RAIL_HI),
+        Some(t) if fine => (shade(t, -0.3), t),
+        Some(t) => (shade(t, -0.25), t),
+    }
+}
+
+/// [`frame`] with its rails in `trim`, a tier's colour.
+pub fn trimmed(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins, trim: Option<Rgba>) {
+    let (rail, rail_hi) = rails(trim, fine);
     c.save();
     c.translate(z / 2.0, z / 2.0);
     // Rail band across the belt, as fractions of a tile from its centre line.
@@ -220,15 +236,9 @@ pub fn frame(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins) {
                 &[(-0.5, 0.5)]
             };
             for &(x0, x1) in spans {
-                c.fill_rect(
-                    x0 * z,
-                    y * z,
-                    (x1 - x0) * z,
-                    (outer - inner) * z,
-                    pal::BELT_RAIL,
-                );
+                c.fill_rect(x0 * z, y * z, (x1 - x0) * z, (outer - inner) * z, rail);
                 if fine {
-                    c.fill_rect(x0 * z, y * z, (x1 - x0) * z, z * 0.025, pal::RAIL_HI);
+                    c.fill_rect(x0 * z, y * z, (x1 - x0) * z, z * 0.025, rail_hi);
                 }
             }
             if open {
@@ -240,15 +250,9 @@ pub fn frame(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins) {
                 };
                 c.fill_rect(-0.38 * z, y0 * z, 0.76 * z, (y1 - y0) * z, pal::BELT);
                 for x in [-outer, inner] {
-                    c.fill_rect(
-                        x * z,
-                        y0 * z,
-                        (outer - inner) * z,
-                        (y1 - y0) * z,
-                        pal::BELT_RAIL,
-                    );
+                    c.fill_rect(x * z, y0 * z, (outer - inner) * z, (y1 - y0) * z, rail);
                     if fine {
-                        c.fill_rect(x * z, y0 * z, z * 0.025, (y1 - y0) * z, pal::RAIL_HI);
+                        c.fill_rect(x * z, y0 * z, z * 0.025, (y1 - y0) * z, rail_hi);
                     }
                 }
             } else if fine {
@@ -259,14 +263,14 @@ pub fn frame(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins) {
             }
         }
         if joins.start {
-            cap(c, z, fine, -0.5);
+            cap(c, z, fine, -0.5, (rail, rail_hi));
         }
     } else {
         let s = bend.side();
         for (r0, r1) in [(0.5 - outer, 0.5 - inner), (0.5 + inner, 0.5 + outer)] {
-            fill(c, ring(z, s, r0, r1), pal::BELT_RAIL);
+            fill(c, ring(z, s, r0, r1), rail);
             if fine {
-                fill(c, ring(z, s, r0, r0 + 0.025), pal::RAIL_HI);
+                fill(c, ring(z, s, r0, r0 + 0.025), rail_hi);
             }
         }
         if fine {
@@ -280,19 +284,19 @@ pub fn frame(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins) {
         }
     }
     if joins.end {
-        cap(c, z, fine, 0.5 - 0.09);
+        cap(c, z, fine, 0.5 - 0.09, (rail, rail_hi));
     }
     c.restore();
 }
 
 /// A lip across the belt at `x` (tiles from the centre) closing off its rails.
-fn cap(c: &mut Canvas, z: f32, fine: bool, x: f32) {
+fn cap(c: &mut Canvas, z: f32, fine: bool, x: f32, (rail, rail_hi): (Rgba, Rgba)) {
     let w = 0.09;
     if let Some(p) = rr(x * z, -0.4 * z, w * z, 0.8 * z, 0.03 * z) {
-        c.fill(&p, pal::BELT_RAIL);
+        c.fill(&p, rail);
     }
     if fine {
-        c.fill_rect(x * z, -0.4 * z, w * z, 0.025 * z, pal::RAIL_HI);
+        c.fill_rect(x * z, -0.4 * z, w * z, 0.025 * z, rail_hi);
         c.fill_rect(
             (x + w * 0.5) * z - 0.01 * z,
             -0.3 * z,

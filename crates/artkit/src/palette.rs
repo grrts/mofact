@@ -58,6 +58,12 @@ pub const PIPE_EMPTY: Rgba = [0x16, 0x1a, 0x1f, 0xff];
 /// A well's concrete pad.
 pub const CONCRETE: Rgba = [0x4d, 0x52, 0x57, 0xff];
 
+/// Trim for the faster tiers of a building, so a fast belt or a fast
+/// assembler stands out from the first kind: teal for tier 2, violet for 3.
+pub const TIER: [Rgba; 2] = [[0x3f, 0xc1, 0xb0, 0xff], [0xa8, 0x7c, 0xf0, 0xff]];
+/// A lab's glass dome.
+pub const GLASS: Rgba = [0x7f, 0xc8, 0xe6, 0xff];
+
 /// `c` with its alpha scaled by `a` (0 to 1).
 pub fn alpha(c: Rgba, a: f32) -> Rgba {
     [c[0], c[1], c[2], (c[3] as f32 * a) as u8]

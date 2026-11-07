@@ -65,6 +65,7 @@ pub fn base(name: &str, cells: usize) -> Scenario {
         ],
         ore: Vec::new(),
         patches: Vec::new(),
+        research: Vec::new(),
         build: Vec::new(),
         warmup_seconds: 0,
         measure_seconds: 0,

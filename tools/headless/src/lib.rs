@@ -12,7 +12,7 @@
 use mofact_core::command::{Command, CommandResult};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
-use mofact_core::ids::{BuildingId, ItemId, RecipeId};
+use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use mofact_sim::Sim;
 use serde::Deserialize;
@@ -29,6 +29,9 @@ pub struct Scenario {
     /// [`parse`] adds their tiles to `ore`.
     #[serde(default)]
     pub patches: Vec<(f32, f32, f32, ItemId)>,
+    /// Research already done, so its buildings can be placed.
+    #[serde(default)]
+    pub research: Vec<ResearchId>,
     pub build: Vec<Build>,
     /// Seconds to run before measuring, so the chain fills up.
     pub warmup_seconds: u32,
@@ -118,6 +121,9 @@ pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
     }
     for (x, y, item) in &s.ore {
         sim.set_ore(TilePos::new(*x, *y), item);
+    }
+    for r in &s.research {
+        sim.complete_research(r);
     }
     let mut place = |building: &BuildingId, pos: TilePos, dir: Dir, recipe: &Option<RecipeId>| {
         let cmd = Command::Place {
