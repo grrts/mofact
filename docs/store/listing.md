@@ -14,6 +14,9 @@ the numbers here and in the long descriptions.
 
 - **Name:** Mofact
 - **Tagline:** Build a factory that runs itself
+- **Support email:** `SUPPORT-EMAIL-TO-COME` (all three stores require one; Leroy to provide)
+- **Privacy policy URL:** https://grrts.github.io/mofact/privacy.html
+- **Website:** https://grrts.github.io/mofact/
 - **Genre:** Simulation / Strategy (factory building, automation)
 - **Age rating:** Everyone / 4+ / PEGI 3: no violence, no chat, no ads, no
   data collected.
