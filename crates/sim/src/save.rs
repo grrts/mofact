@@ -636,7 +636,8 @@ impl Sim {
             .current
             .as_ref()
             .and_then(|id| research(id, &mut warnings))
-            .filter(|&r| !sim.research.done[r as usize]);
+            .filter(|&r| !sim.research.done[r as usize] || t.research[r as usize].repeat.is_some());
+        sim.boost();
         // An empty id, from a save older than goals, starts at the first;
         // a goal the content no longer has starts over too, and the sim
         // moves past what's already done.

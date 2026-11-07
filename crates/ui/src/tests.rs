@@ -478,6 +478,7 @@ fn the_research_sheet_picks_what_labs_study() {
         current: None,
         progress: (0, 0),
         done: vec!["steel-working".into()],
+        ..Default::default()
     };
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     f.find(&Hit::Study(Some("motors".into())));
@@ -1210,4 +1211,17 @@ fn research_past_the_demo_opens_the_full_game_sheet() {
         .hits
         .iter()
         .any(|(_, h)| h == &Hit::Study(Some("titanium-smelting".into()))));
+}
+
+#[test]
+fn late_and_repeatable_research_shows_on_a_phone_and_can_be_studied_again() {
+    let mut f = Fixture::new();
+    // Everything done that can be: only the repeatable research is left.
+    f.snapshot.research.done = f.content.research.iter().map(|r| r.id.clone()).collect();
+    f.snapshot.research.levels = vec![("deep-survey".into(), 2)];
+    f.hud.toggle_research();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    for id in ["deep-survey", "lean-assembly", "lab-automation"] {
+        f.find(&Hit::Study(Some(id.into())));
+    }
 }

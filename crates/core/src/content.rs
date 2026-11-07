@@ -207,6 +207,49 @@ pub struct ResearchDef {
     pub recipes: Vec<RecipeId>,
     #[serde(default)]
     pub buildings: Vec<BuildingId>,
+    /// Late-game research that never runs out (S2): each level done gives
+    /// this bonus and the next level costs more units.
+    #[serde(default)]
+    pub repeat: Option<Repeat>,
+}
+
+/// What each level of a repeatable research gives (S2).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Repeat {
+    pub bonus: Bonus,
+    /// The share each level adds, such as 0.1 for ten percent faster.
+    pub per_level: f32,
+}
+
+/// Which machines a repeatable research speeds up.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Bonus {
+    /// Drills dig faster.
+    Mining,
+    /// Crafters make faster.
+    Crafting,
+    /// Labs research faster.
+    Research,
+}
+
+impl Repeat {
+    /// Units for all of the first `levels` levels: the first takes `units`,
+    /// the second twice that, and so on.
+    pub fn total(units: u32, levels: u32) -> u64 {
+        u64::from(units) * u64::from(levels) * (u64::from(levels) + 1) / 2
+    }
+
+    /// The levels `done` units have finished, and the units into the next
+    /// level and that level's size.
+    pub fn level(units: u32, done: u32) -> (u32, (u32, u32)) {
+        let units = units.max(1);
+        let mut level = 0;
+        while Repeat::total(units, level + 1) <= u64::from(done) {
+            level += 1;
+        }
+        let into = u64::from(done) - Repeat::total(units, level);
+        (level, (into as u32, units * (level + 1)))
+    }
 }
 
 /// What a goal asks for (T38, R42).
@@ -286,5 +329,16 @@ mod tests {
                 speed: 1.0
             }
         );
+    }
+
+    #[test]
+    fn each_level_of_repeatable_research_costs_one_base_more_than_the_last() {
+        // 50, then 100, then 150.
+        assert_eq!(Repeat::level(50, 0), (0, (0, 50)));
+        assert_eq!(Repeat::level(50, 49), (0, (49, 50)));
+        assert_eq!(Repeat::level(50, 50), (1, (0, 100)));
+        assert_eq!(Repeat::level(50, 149), (1, (99, 100)));
+        assert_eq!(Repeat::level(50, 150), (2, (0, 150)));
+        assert_eq!(Repeat::total(50, 3), 300);
     }
 }

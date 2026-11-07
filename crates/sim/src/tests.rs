@@ -1850,3 +1850,73 @@ fn the_demo_stops_research_at_its_tier_until_the_full_game_is_bought() {
         CommandResult::Applied { .. }
     ));
 }
+
+#[test]
+fn repeatable_research_never_runs_out_and_each_level_speeds_drills() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    // Everything up to it.
+    for r in &content.research {
+        if r.repeat.is_none() {
+            sim.complete_research(&r.id);
+        }
+    }
+    let deep: mofact_core::ids::ResearchId = "deep-survey".into();
+    let pick = Command::SetResearch {
+        research: Some(deep.clone()),
+    };
+    assert!(matches!(sim.apply(&pick), CommandResult::Applied { .. }));
+    let r = sim.tables.research(&deep).unwrap() as usize;
+    // One unit short of the first level, then labs finish it.
+    sim.research.units[r] = 49;
+    for (i, n) in [
+        ("iron-plate", 100),
+        ("gear", 100),
+        ("wire", 100),
+        ("brick", 100),
+        ("circuit", 100),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    place(&mut sim, "pole", 0, 0, Dir::East, None);
+    place(&mut sim, "wind-turbine", 1, 0, Dir::East, None);
+    let lab = place(&mut sim, "lab", 0, 1, Dir::East, None);
+    for st in &content.research[r].cost {
+        assert!(sim.feed(lab, &st.item), "{}", st.item);
+    }
+    let before = sim.snapshot().research.progress;
+    assert_eq!(before, (49, 50));
+    run(&mut sim, 120);
+    let snap = sim.snapshot().research;
+    assert!(snap.done.contains(&deep));
+    assert_eq!(snap.levels, vec![(deep.clone(), 1)]);
+    // Labs carry on with the next level, which takes twice the units.
+    assert_eq!(snap.current, Some(deep.clone()), "it never runs out");
+    assert_eq!(snap.progress, (0, 100));
+    let again = Command::SetResearch {
+        research: Some(deep.clone()),
+    };
+    assert!(matches!(sim.apply(&again), CommandResult::Applied { .. }));
+
+    // Each level digs ten percent faster.
+    let ticks = |sim: &Sim| {
+        let Role::Miner { ticks } =
+            sim.tables.buildings[sim.tables.building(&"drill".into()).unwrap() as usize].role
+        else {
+            unreachable!()
+        };
+        sim.mine_ticks(ticks)
+    };
+    let one = ticks(&sim);
+    sim.complete_research(&deep);
+    sim.complete_research(&deep);
+    let three = ticks(&sim);
+    assert_eq!(sim.snapshot().research.levels, vec![(deep.clone(), 3)]);
+    assert!(three < one, "{three} < {one}");
+
+    // A save keeps the level, the boost and the labs on it.
+    let (loaded, warnings) = Sim::load(&content, &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.snapshot().research, sim.snapshot().research);
+    assert_eq!(ticks(&loaded), three);
+}

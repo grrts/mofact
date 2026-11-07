@@ -13,7 +13,9 @@
 //! rests. The rotate button, recipe pills and inspect sheet sit next to it.
 
 use mofact_core::command::Command;
-use mofact_core::content::{BuildingDef, BuildingRole, Content, RecipeDef, ResearchDef, Stack};
+use mofact_core::content::{
+    Bonus, BuildingDef, BuildingRole, Content, RecipeDef, ResearchDef, Stack,
+};
 use mofact_core::geom::Dir;
 use mofact_core::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
 use mofact_core::snapshot::{EntityView, MachineState, Snapshot};
@@ -190,7 +192,13 @@ impl View<'_> {
 
     /// Whether `r` can be picked now: not done, and its prerequisites are.
     fn research_ready(&self, r: &ResearchDef) -> bool {
-        !self.done(&r.id) && r.requires.iter().all(|q| self.done(q))
+        (!self.done(&r.id) || r.repeat.is_some()) && r.requires.iter().all(|q| self.done(q))
+    }
+
+    /// The levels done of a repeatable research (S2).
+    fn level(&self, id: &ResearchId) -> u32 {
+        let levels = &self.snapshot.research.levels;
+        levels.iter().find(|(r, _)| r == id).map_or(0, |l| l.1)
     }
 
     /// The unlocked recipes a building can be set to, if it is a crafter.
@@ -2577,7 +2585,8 @@ impl Hud {
         for d in shown {
             let b = [left, y, r[2] - 2.0 * pad, row - 6.0 * u];
             let is_current = current == Some(&d.id);
-            let (label, color, hit) = if view.done(&d.id) {
+            let again = d.repeat.is_some();
+            let (label, color, hit) = if view.done(&d.id) && !again {
                 ("Done", WORKING, None)
             } else if is_current {
                 ("Studying", palette::ACCENT, Some(Hit::Study(None)))
@@ -2592,18 +2601,40 @@ impl Hud {
             o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, fill);
             let npx = 15.0 * u;
             let ink = if label == "Locked" { MUTED } else { TEXT };
+            // Repeatable research says which level is next, and what it gives.
+            let level = view.level(&d.id);
+            let name = match d.repeat {
+                Some(rep) => format!(
+                    "{} {} · +{:.0}% {}",
+                    d.name,
+                    level + 1,
+                    rep.per_level * 100.0,
+                    match rep.bonus {
+                        Bonus::Mining => "drills",
+                        Bonus::Crafting => "crafting",
+                        Bonus::Research => "labs",
+                    }
+                ),
+                None => d.name.clone(),
+            };
+            let name_px = fit(o, &name, npx, b[2] - 100.0 * u);
             o.text(
-                &d.name,
+                &name,
                 [b[0] + 12.0 * u, b[1] + 6.0 * u + o.cap_height(npx)],
-                npx,
+                name_px,
                 ink,
             );
-            // Cost per unit, times the units.
+            // Cost per unit, times the units (the next level's, for repeatable).
             let spx = 12.0 * u;
             let s = 14.0 * u;
             let sy = b[1] + b[3] - 8.0 * u - s;
             let mut x = b[0] + 12.0 * u;
-            x += o.text(&format!("{}×", d.units), [x, sy + s * 0.85], spx, MUTED) + 4.0 * u;
+            let units = if again {
+                d.units * (level + 1)
+            } else {
+                d.units
+            };
+            x += o.text(&format!("{units}×"), [x, sy + s * 0.85], spx, MUTED) + 4.0 * u;
             for st in &d.cost {
                 if let Some((sprite, t)) = view.look.item(&st.item) {
                     o.icon(sprite, [x, sy], s, t);

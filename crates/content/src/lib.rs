@@ -430,9 +430,9 @@ mod tests {
                 c.items.len(), // with the three far ores (T42)
                 c.recipes.len(),
                 c.buildings.len(),
-                c.research.len()
+                c.research.len() // with three repeatable (S2)
             ),
-            (53, 64, 32, 33)
+            (53, 64, 32, 36)
         );
         let circuit = c
             .recipes
