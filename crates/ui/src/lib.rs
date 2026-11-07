@@ -197,6 +197,8 @@ pub enum Action {
     Mute(bool),
     /// Open the world map (true): zoom far out. Or close it and zoom back in.
     Map(bool),
+    /// Turn low-power mode on (true) or off: 30 fps and calmer ground.
+    LowPower(bool),
 }
 
 /// A control on screen, and what tapping it does.
@@ -239,6 +241,8 @@ enum Hit {
     PickStop(EntityId),
     /// The map button: opens and closes the world map.
     Map,
+    /// The battery button: turns low-power mode on and off.
+    Power,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -274,6 +278,8 @@ pub struct Hud {
     map: bool,
     /// Whether the stock shows every item rather than one row.
     stock_open: bool,
+    /// Whether low-power mode is on.
+    low_power: bool,
     /// The entity the inspect sheet shows.
     selected: Option<EntityId>,
     /// The train waiting for a stop to be tapped on the map.
@@ -354,6 +360,15 @@ impl Hud {
     /// restore what the player chose last time).
     pub fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
+    }
+
+    pub fn low_power(&self) -> bool {
+        self.low_power
+    }
+
+    /// Turn low-power mode on or off, as a saved setting does at start.
+    pub fn set_low_power(&mut self, on: bool) {
+        self.low_power = on;
     }
 
     /// Tell the HUD whether the camera is out on the world map.
@@ -587,6 +602,15 @@ impl Hud {
                 self.muted = !self.muted;
                 vec![Action::Mute(self.muted)]
             }
+            Hit::Power => {
+                self.low_power = !self.low_power;
+                self.toast(if self.low_power {
+                    "Low-power mode: 30 fps and calmer ground, to save battery."
+                } else {
+                    "Low-power mode off."
+                });
+                vec![Action::LowPower(self.low_power)]
+            }
             Hit::Map => {
                 self.map = !self.map;
                 self.selected = None;
@@ -688,11 +712,13 @@ impl Hud {
         // The sound button keeps the top-right corner, clear of the thumb.
         let right = corner[0] - 36.0 * u;
         self.sound_button(o, [right, mt]);
-        // The map button sits beside it.
+        // The map and battery buttons sit beside it.
+        let right = right - gap - 36.0 * u;
+        self.power_button(o, [right, mt]);
         let right = right - gap - 36.0 * u;
         self.map_button(o, [right, mt]);
         let right = right - gap;
-        // The stock wraps onto more rows rather than run under the buttons.
+        // The stock keeps to one row beside the buttons, with a "+N" pill for the rest.
         let top = self.stock(view, o, [ml, mt], right);
         self.found = problems::find(view);
         if self.found.is_empty() {
@@ -1115,6 +1141,48 @@ impl Hud {
             ));
         }
         y + h
+    }
+
+    /// A round button that turns low-power mode on and off: a battery,
+    /// full and green while saving power.
+    fn power_button(&mut self, o: &mut Overlay, at: [f32; 2]) {
+        let u = self.unit;
+        let d = 36.0 * u;
+        let on = self.low_power;
+        o.panel(at, [d, d], d / 2.0, if on { PRESSED } else { RAISED });
+        let ink = if on { WORKING } else { TEXT };
+        let (cx, cy) = (at[0] + d / 2.0, at[1] + d / 2.0);
+        let (bw, bh) = (18.0 * u, 11.0 * u);
+        let body = [cx - bw / 2.0 - 1.5 * u, cy - bh / 2.0];
+        // The case, hollowed out, and its nub.
+        o.panel(body, [bw, bh], 2.5 * u, ink);
+        let wall = 2.0 * u;
+        o.panel(
+            [body[0] + wall, body[1] + wall],
+            [bw - 2.0 * wall, bh - 2.0 * wall],
+            1.5 * u,
+            if on { PRESSED } else { RAISED },
+        );
+        o.panel(
+            [body[0] + bw + 0.5 * u, cy - 2.5 * u],
+            [2.5 * u, 5.0 * u],
+            u,
+            ink,
+        );
+        // Charge: full when on, a third when off.
+        let inner = bw - 2.0 * wall - 2.0 * u;
+        let fill = if on { inner } else { inner / 3.0 };
+        o.panel(
+            [body[0] + wall + u, body[1] + wall + u],
+            [fill, bh - 2.0 * wall - 2.0 * u],
+            u,
+            ink,
+        );
+        let pad = 4.0 * u;
+        self.hits.push((
+            [at[0] - pad, at[1] - pad, d + 2.0 * pad, d + 2.0 * pad],
+            Hit::Power,
+        ));
     }
 
     /// A round button that opens the world map: a map folded in three. Lit

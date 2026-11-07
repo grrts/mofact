@@ -19,7 +19,7 @@ mod scape;
 mod synth;
 
 pub use scape::{Machine, Soundscape, State};
-pub use synth::{Cue, Hum, Synth, HUMS};
+pub use synth::{Ambient, Cue, Hum, Synth, AMBIENTS, HUMS};
 
 use std::sync::{Arc, Mutex, MutexGuard};
 

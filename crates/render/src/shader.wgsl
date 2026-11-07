@@ -8,6 +8,7 @@ struct Globals {
     // The terrain map's top-left texel (xy) and its size in texels (zw).
     ground: vec4<f32>,
     // Tiles per terrain texel (x): 1 up close, more on the world map.
+    // Low-power mode (y): 1 keeps the ground still and plain.
     map: vec4<f32>,
 };
 
@@ -168,7 +169,9 @@ fn water_depth(t: vec2<f32>) -> vec2<f32> {
 @fragment
 fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let ppt = globals.view.x;
-    let time = globals.view.w;
+    let calm = 1.0 - globals.map.y;
+    // In low-power mode the ground holds still.
+    let time = globals.view.w * calm;
     let clip = vec2<f32>(frag.x / globals.view.y * 2.0 - 1.0, 1.0 - frag.y / globals.view.z * 2.0);
     let world = (clip - globals.xf.zw) / globals.xf.xy;
 
@@ -199,7 +202,7 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     c = c * (1.0 + 0.07 * grain * smoothstep(20.0, 48.0, ppt));
 
     // Close-up detail on each biome's ground, fading in as tiles grow.
-    let near = smoothstep(14.0, 28.0, ppt);
+    let near = smoothstep(14.0, 28.0, ppt) * calm;
     // Sand and dunes: wind ripples running across the slope.
     let sandy = share(2.0, t00.x, t10.x, t01.x, t11.x, f) + share(8.0, t00.x, t10.x, t01.x, t11.x, f);
     let ripple = sin(world.x * 2.6 + world.y * 1.1 + patches(world * 0.25) * 9.0);
