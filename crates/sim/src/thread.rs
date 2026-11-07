@@ -86,6 +86,12 @@ impl SimHandle {
         }
     }
 
+    /// Gate research above `tier` behind the full game, or open it all
+    /// with `None`, at the start of the next tick.
+    pub fn set_demo(&self, tier: Option<u8>) {
+        let _ = self.tx.send(Msg::Job(Job::Demo(tier)));
+    }
+
     /// Undo the latest player action, at the start of the next tick.
     pub fn undo(&self) {
         let _ = self.tx.send(Msg::Job(Job::Undo));
@@ -192,7 +198,8 @@ fn run(
             std::thread::park_timeout(Stepper::TICK);
             continue;
         }
-        for _ in 0..stepper.advance(elapsed) {
+        let due = stepper.advance(elapsed);
+        for k in 0..due {
             for job in queued.drain(..) {
                 work(&mut sim, &mut history, job, |r| {
                     let _ = results.send(r);
@@ -200,9 +207,13 @@ fn run(
                 undo.store(pack(&history), Ordering::Relaxed);
             }
             sim.step();
-            let snap = Arc::new(sim.snapshot());
-            let mut s = lock(&snapshots);
-            s.previous = std::mem::replace(&mut s.latest, snap);
+            // Catching up on a slow phone, only the last two ticks are ever
+            // drawn: a snapshot costs more than a tick, so skip the rest.
+            if k + 2 >= due {
+                let snap = Arc::new(sim.snapshot());
+                let mut s = lock(&snapshots);
+                s.previous = std::mem::replace(&mut s.latest, snap);
+            }
         }
         std::thread::park_timeout(stepper.until_next());
     }

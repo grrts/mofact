@@ -79,7 +79,8 @@
     (
         id: "sulfur", name: "Sulfur", category: "chemistry", seconds: 1.0,
         inputs: [(item: "tar", count: 30), (item: "water", count: 30)],
-        outputs: [(item: "sulfur", count: 2)],
+        // Light oil out of the right side (T56): pipe it away or it stops.
+        outputs: [(item: "sulfur", count: 2), (item: "light-oil", count: 10)],
     ),
     (
         id: "sulfuric-acid", name: "Sulfuric acid", category: "chemistry", seconds: 1.0,
@@ -105,7 +106,8 @@
     (
         id: "silicon", name: "Silicon wafer", category: "smelting", seconds: 4.0,
         inputs: [(item: "stone", count: 2), (item: "coal", count: 1)],
-        outputs: [(item: "silicon", count: 1)],
+        // Slag out of the right side (T56), to melt down into bricks.
+        outputs: [(item: "silicon", count: 1), (item: "slag", count: 1)],
     ),
     (
         id: "processor", name: "Processor", category: "chemistry", seconds: 10.0,
@@ -114,7 +116,7 @@
     ),
     (
         id: "robot-frame", name: "Robot frame", category: "assembling", seconds: 10.0,
-        inputs: [(item: "motor", count: 2), (item: "battery", count: 2), (item: "processor", count: 1), (item: "steel", count: 2)],
+        inputs: [(item: "motor", count: 2), (item: "battery", count: 2), (item: "processor", count: 1)],
         outputs: [(item: "robot-frame", count: 1)],
     ),
     (
@@ -126,5 +128,214 @@
         id: "precision-pack", name: "Precision pack", category: "assembling", seconds: 20.0,
         inputs: [(item: "robot-frame", count: 1), (item: "low-density-structure", count: 1)],
         outputs: [(item: "precision-pack", count: 2)],
+    ),
+    // By-product chains (T56): a machine's second output leaves by its
+    // right side, and stops it when nothing takes it away.
+    (
+        id: "slag-brick", name: "Slag brick", category: "smelting", seconds: 3.2,
+        inputs: [(item: "slag", count: 2)],
+        outputs: [(item: "brick", count: 1)],
+    ),
+    // Titanium ore carries iron: it comes out beside the titanium.
+    (
+        id: "titanium-plate", name: "Titanium plate", category: "smelting", seconds: 5.0,
+        inputs: [(item: "titanium-ore", count: 3), (item: "coal", count: 1)],
+        outputs: [(item: "titanium-plate", count: 1), (item: "iron-ore", count: 1)],
+    ),
+    // Acid leaches alumina out of bauxite and leaves red mud.
+    (
+        id: "alumina", name: "Alumina", category: "chemistry", seconds: 3.0,
+        inputs: [(item: "bauxite", count: 4), (item: "sulfuric-acid", count: 20)],
+        outputs: [(item: "alumina", count: 2), (item: "red-mud", count: 20)],
+    ),
+    (
+        id: "aluminium-plate", name: "Aluminium plate", category: "smelting", seconds: 4.0,
+        inputs: [(item: "alumina", count: 2), (item: "coal", count: 1)],
+        outputs: [(item: "aluminium-plate", count: 1)],
+    ),
+    (
+        id: "red-mud-recovery", name: "Red mud recovery", category: "chemistry", seconds: 2.0,
+        inputs: [(item: "red-mud", count: 40), (item: "water", count: 20)],
+        outputs: [(item: "iron-ore", count: 2)],
+    ),
+    // Leaching rare earths gives back the acid's sulfur.
+    (
+        id: "rare-earth-oxide", name: "Rare earth oxide", category: "chemistry", seconds: 4.0,
+        inputs: [(item: "rare-earth", count: 2), (item: "sulfuric-acid", count: 20)],
+        outputs: [(item: "rare-earth-oxide", count: 1), (item: "sulfur", count: 1)],
+    ),
+    (
+        id: "magnet", name: "Magnet", category: "assembling", seconds: 3.0,
+        inputs: [(item: "rare-earth-oxide", count: 1), (item: "steel", count: 1)],
+        outputs: [(item: "magnet", count: 2)],
+    ),
+    (
+        id: "electric-engine", name: "Electric engine", category: "assembling", seconds: 8.0,
+        inputs: [(item: "magnet", count: 4), (item: "motor", count: 1), (item: "aluminium-plate", count: 2)],
+        outputs: [(item: "electric-engine", count: 1)],
+    ),
+    (
+        id: "aerospace-pack", name: "Aerospace pack", category: "assembling", seconds: 24.0,
+        inputs: [(item: "electric-engine", count: 1), (item: "titanium-plate", count: 2), (item: "low-density-structure", count: 1)],
+        outputs: [(item: "aerospace-pack", count: 2)],
+    ),
+    // Alternate recipes (T55): another way to the same thing, each with
+    // its own ratio, unlocked by research. Machines left on Auto keep the
+    // first recipe; pick an alternate by hand.
+    (
+        id: "coked-iron", name: "Coked iron", category: "smelting", seconds: 3.6,
+        inputs: [(item: "iron-ore", count: 3), (item: "coal", count: 1)],
+        outputs: [(item: "iron-plate", count: 4)],
+    ),
+    (
+        id: "coked-copper", name: "Coked copper", category: "smelting", seconds: 3.6,
+        inputs: [(item: "copper-ore", count: 3), (item: "coal", count: 1)],
+        outputs: [(item: "copper-plate", count: 4)],
+    ),
+    (
+        id: "fired-brick", name: "Fired brick", category: "smelting", seconds: 4.0,
+        inputs: [(item: "stone", count: 3), (item: "coal", count: 1)],
+        outputs: [(item: "brick", count: 2)],
+    ),
+    (
+        id: "bessemer-steel", name: "Bessemer steel", category: "smelting", seconds: 8.0,
+        inputs: [(item: "iron-plate", count: 2), (item: "coal", count: 2)],
+        outputs: [(item: "steel", count: 1)],
+    ),
+    (
+        id: "cast-gear", name: "Cast gears", category: "assembling", seconds: 1.6,
+        inputs: [(item: "iron-plate", count: 3)],
+        outputs: [(item: "gear", count: 2)],
+    ),
+    (
+        id: "fine-wire", name: "Fine wire", category: "assembling", seconds: 2.0,
+        inputs: [(item: "copper-plate", count: 2)],
+        outputs: [(item: "wire", count: 5)],
+    ),
+    (
+        id: "wire-wrapped-circuit", name: "Wire-wrapped circuit", category: "assembling", seconds: 2.0,
+        inputs: [(item: "iron-plate", count: 1), (item: "wire", count: 5)],
+        outputs: [(item: "circuit", count: 1)],
+    ),
+    (
+        id: "direct-drive-motor", name: "Direct-drive motor", category: "assembling", seconds: 3.0,
+        inputs: [(item: "steel", count: 2), (item: "wire", count: 4)],
+        outputs: [(item: "motor", count: 1)],
+    ),
+    (
+        id: "circuit-survey-pack", name: "Circuit survey pack", category: "assembling", seconds: 8.0,
+        inputs: [(item: "circuit", count: 1), (item: "copper-plate", count: 2)],
+        outputs: [(item: "survey-pack", count: 2)],
+    ),
+    (
+        id: "steel-engineering-pack", name: "Steel engineering pack", category: "assembling", seconds: 8.0,
+        inputs: [(item: "motor", count: 1), (item: "steel", count: 2), (item: "gear", count: 2)],
+        outputs: [(item: "engineering-pack", count: 1)],
+    ),
+    (
+        id: "tar-plastic", name: "Tar plastic", category: "chemistry", seconds: 1.5,
+        inputs: [(item: "tar", count: 30), (item: "coal", count: 1)],
+        outputs: [(item: "plastic", count: 2)],
+    ),
+    (
+        id: "pure-acid", name: "Pure acid", category: "chemistry", seconds: 1.0,
+        inputs: [(item: "sulfur", count: 3), (item: "water", count: 100)],
+        outputs: [(item: "sulfuric-acid", count: 30)],
+    ),
+    (
+        id: "plastic-circuit", name: "Plastic-board circuit", category: "assembling", seconds: 7.0,
+        inputs: [(item: "circuit", count: 1), (item: "plastic", count: 4), (item: "wire", count: 6)],
+        outputs: [(item: "advanced-circuit", count: 1)],
+    ),
+    (
+        id: "pure-silicon", name: "Pure silicon", category: "smelting", seconds: 10.0,
+        inputs: [(item: "stone", count: 3), (item: "coal", count: 2)],
+        outputs: [(item: "silicon", count: 2)],
+    ),
+    (
+        id: "titanium-reduction", name: "Titanium reduction", category: "smelting", seconds: 6.0,
+        inputs: [(item: "titanium-ore", count: 2), (item: "coal", count: 2)],
+        outputs: [(item: "titanium-plate", count: 1)],
+    ),
+    (
+        id: "carbonless-aluminium", name: "Carbonless aluminium", category: "smelting", seconds: 6.0,
+        inputs: [(item: "alumina", count: 3)],
+        outputs: [(item: "aluminium-plate", count: 2)],
+    ),
+    (
+        id: "aluminium-lds", name: "Aluminium structure", category: "assembling", seconds: 12.0,
+        inputs: [(item: "aluminium-plate", count: 4), (item: "plastic", count: 2)],
+        outputs: [(item: "low-density-structure", count: 1)],
+    ),
+    (
+        id: "ferrite-magnet", name: "Ferrite magnet", category: "assembling", seconds: 6.0,
+        inputs: [(item: "iron-plate", count: 4), (item: "rare-earth-oxide", count: 1)],
+        outputs: [(item: "magnet", count: 3)],
+    ),
+    (
+        id: "light-robot-frame", name: "Light robot frame", category: "assembling", seconds: 12.0,
+        inputs: [(item: "electric-engine", count: 1), (item: "processor", count: 1), (item: "aluminium-plate", count: 4)],
+        outputs: [(item: "robot-frame", count: 1)],
+    ),
+    (
+        id: "light-aerospace-pack", name: "Light aerospace pack", category: "assembling", seconds: 24.0,
+        inputs: [(item: "electric-engine", count: 1), (item: "aluminium-plate", count: 4), (item: "titanium-plate", count: 1)],
+        outputs: [(item: "aerospace-pack", count: 2)],
+    ),
+    // Tiers 7 and 8 (T54): the long chains up to the skyhook.
+    (
+        id: "superconductor", name: "Superconductor", category: "assembling", seconds: 8.0,
+        inputs: [(item: "magnet", count: 1), (item: "titanium-plate", count: 1), (item: "copper-plate", count: 2)],
+        outputs: [(item: "superconductor", count: 2)],
+    ),
+    (
+        id: "ai-core", name: "AI core", category: "assembling", seconds: 15.0,
+        inputs: [(item: "processor", count: 4), (item: "superconductor", count: 1), (item: "battery", count: 2)],
+        outputs: [(item: "ai-core", count: 1)],
+    ),
+    (
+        id: "drone", name: "Drone", category: "assembling", seconds: 20.0,
+        inputs: [(item: "robot-frame", count: 1), (item: "ai-core", count: 1), (item: "electric-engine", count: 2)],
+        outputs: [(item: "drone", count: 1)],
+    ),
+    (
+        id: "orbital-pack", name: "Orbital pack", category: "assembling", seconds: 30.0,
+        inputs: [(item: "drone", count: 1), (item: "low-density-structure", count: 2)],
+        outputs: [(item: "orbital-pack", count: 3)],
+    ),
+    (
+        id: "fusion-cell", name: "Fusion cell", category: "assembling", seconds: 20.0,
+        inputs: [(item: "superconductor", count: 4), (item: "ai-core", count: 1), (item: "titanium-plate", count: 2)],
+        outputs: [(item: "fusion-cell", count: 1)],
+    ),
+    (
+        id: "ion-thruster", name: "Ion thruster", category: "assembling", seconds: 20.0,
+        inputs: [(item: "fusion-cell", count: 1), (item: "electric-engine", count: 2), (item: "titanium-plate", count: 4)],
+        outputs: [(item: "ion-thruster", count: 1)],
+    ),
+    (
+        id: "satellite", name: "Satellite", category: "assembling", seconds: 30.0,
+        inputs: [(item: "ion-thruster", count: 1), (item: "drone", count: 1), (item: "aluminium-plate", count: 6)],
+        outputs: [(item: "satellite", count: 1)],
+    ),
+    (
+        id: "stellar-pack", name: "Stellar pack", category: "assembling", seconds: 40.0,
+        inputs: [(item: "satellite", count: 1), (item: "fusion-cell", count: 1)],
+        outputs: [(item: "stellar-pack", count: 4)],
+    ),
+    (
+        id: "tether-segment", name: "Tether segment", category: "assembling", seconds: 10.0,
+        inputs: [(item: "superconductor", count: 4), (item: "low-density-structure", count: 2), (item: "titanium-plate", count: 4)],
+        outputs: [(item: "tether-segment", count: 1)],
+    ),
+    (
+        id: "climber", name: "Climber", category: "assembling", seconds: 40.0,
+        inputs: [(item: "satellite", count: 1), (item: "fusion-cell", count: 2), (item: "drone", count: 1)],
+        outputs: [(item: "climber", count: 1)],
+    ),
+    (
+        id: "orbital-beacon", name: "Orbital beacon", category: "assembling", seconds: 60.0,
+        inputs: [(item: "climber", count: 1), (item: "ai-core", count: 4), (item: "ion-thruster", count: 2)],
+        outputs: [(item: "orbital-beacon", count: 1)],
     ),
 ]

@@ -17,6 +17,8 @@ members = [
     "tools/headless",
     "tools/bench",
     "tools/balance",
+    "tools/bot",
+    "tools/icon",
 ]
 
 [workspace.package]
@@ -37,6 +39,7 @@ mofact-ui = { path = "crates/ui" }
 mofact-input = { path = "crates/input" }
 mofact-audio = { path = "crates/audio" }
 mofact-headless = { path = "tools/headless" }
+mofact-bench = { path = "tools/bench" }
 mofact = { path = "app" }
 serde = { version = "1", features = ["derive", "rc"] }
 ron = "0.8"

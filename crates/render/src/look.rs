@@ -64,11 +64,13 @@ enum Art {
         bend: Bend,
         frame: u8,
     },
-    /// The still layer of a belt tile: rails, caps and side openings.
+    /// The still layer of a belt tile: rails, caps and side openings. A
+    /// corner is lit for the quarter `turns` it is drawn at.
     BeltFrame {
         bend: Bend,
         joins: Joins,
         trim: Option<Rgba>,
+        turns: u8,
     },
     Hub,
     Pole,
@@ -121,6 +123,8 @@ enum Art {
     Drill {
         ore: Rgba,
         pose: Pose,
+        /// A faster tier's colour: a deep drill.
+        trim: Option<Rgba>,
     },
     Furnace {
         ring: Option<Rgba>,
@@ -128,6 +132,15 @@ enum Art {
         /// A faster tier's colour: an electric furnace.
         trim: Option<Rgba>,
     },
+    /// A furnace's ring in white, to tint with what it smelts.
+    Ring {
+        electric: bool,
+    },
+    /// The output arrow, facing east.
+    Notch,
+    /// A chemical plant's vat in white, and its paddle facing east.
+    Vat,
+    Paddle,
     /// An assembler's stripe in white, to tint with its product's colour:
     /// an octagon's band for the faster kind.
     Stripe {
@@ -144,9 +157,13 @@ enum Art {
     Item {
         shape: Shape,
         color: Rgba,
+        /// A sign that tells it from items of the same shape (T58), 0 for none.
+        mark: u8,
     },
     Badge {
         starved: bool,
+        /// Painted in the colour-blind set.
+        safe: bool,
     },
     /// Track joined on the sides in `links`, as pipes are.
     Rail {
@@ -162,6 +179,8 @@ enum Art {
     /// A stop's platform, facing east and turned.
     Platform,
     Locomotive,
+    /// The megaproject's anchor.
+    Skyhook,
     /// 0 a dot, 1 a ring, 2 a bar.
     Fx(u8),
 }
@@ -199,6 +218,7 @@ enum Kind {
     Signal,
     Stop,
     Train,
+    Mega,
 }
 
 impl Kind {
@@ -224,17 +244,19 @@ struct BuildingLook {
     layers: Option<Layers>,
 }
 
-/// How an assembler shows its recipe: its stripe tinted the product's
-/// colour, and the product's icon over its window. Baking a sprite per
-/// recipe would fill the atlas many times over.
+/// How a machine shows its recipe, drawn over one body per direction: an
+/// assembler's stripe tinted the product's colour and the product's icon
+/// over its window, or a furnace's ring in the colour of what it smelts.
+/// Baking a sprite per recipe would fill the atlas many times over.
 #[derive(Clone, Copy, Debug)]
 struct Layers {
-    /// The white stripe sprite, if it has one.
+    /// The white sprite tinted the product's colour, if it has one.
     stripe: Option<usize>,
-    /// Where the icon's centre is, in tiles from the top-left.
-    centre: [f32; 2],
-    /// The item sprite's side, in tiles.
-    icon: f32,
+    /// The output arrow, facing east and turned, to keep it over the stripe.
+    notch: Option<usize>,
+    /// Where the icon's centre is, in tiles from the top-left, and the item
+    /// sprite's side in tiles, if it shows one.
+    icon: Option<([f32; 2], f32)>,
 }
 
 /// A sprite drawn over a machine: where, how big, and its tint.
@@ -245,6 +267,8 @@ pub struct Layer<'a> {
     pub offset: [f32; 2],
     pub size: [f32; 2],
     pub tint: Rgba,
+    /// Turned to the way the machine faces.
+    pub turned: bool,
 }
 
 /// One sprite: its name, its size in tiles, and what it shows.
@@ -275,6 +299,8 @@ pub struct Look {
     belt_tier: HashMap<BuildingId, usize>,
     /// How fast each belt runs, in tiles a second, to move its surface.
     belt_speed: HashMap<BuildingId, f32>,
+    /// Colour-blind mode (T58): safer colours, and marks on look-alike items.
+    colour_blind: bool,
 }
 
 /// What carries items from tile to tile, for joining belts up when drawn.
@@ -301,6 +327,9 @@ fn shape(s: IconShape) -> Shape {
         IconShape::Wafer => Shape::Wafer,
         IconShape::Chip => Shape::Chip,
         IconShape::Frame => Shape::Frame,
+        IconShape::Magnet => Shape::Magnet,
+        IconShape::Satellite => Shape::Satellite,
+        IconShape::Nozzle => Shape::Nozzle,
     }
 }
 
@@ -310,7 +339,22 @@ fn dir_index(d: Dir) -> usize {
 
 impl Look {
     pub fn new(content: &Content) -> Self {
-        let mut look = Look::default();
+        Self::with_colour_blind(content, false)
+    }
+
+    /// The look for `content`, in colour-blind mode (T58) if `on`.
+    pub fn with_colour_blind(content: &Content, on: bool) -> Self {
+        let mut look = Look {
+            colour_blind: on,
+            ..Look::default()
+        };
+        let item_color = |key: &str| {
+            if on {
+                palette::item_safe(key)
+            } else {
+                palette::item(key)
+            }
+        };
         for r in &content.recipes {
             if let Some(out) = r.outputs.first() {
                 look.products
@@ -322,7 +366,7 @@ impl Look {
                 .items
                 .iter()
                 .find(|i| &i.id == id)
-                .map(|i| (shape(i.shape), palette::item(&i.color)))
+                .map(|i| (shape(i.shape), item_color(&i.color)))
         };
         let push = |look: &mut Look, name: String, (w, h): (u8, u8), art| {
             look.sprites.push(Sprite {
@@ -337,13 +381,19 @@ impl Look {
             &mut look,
             STARVED.into(),
             (1, 1),
-            Art::Badge { starved: true },
+            Art::Badge {
+                starved: true,
+                safe: on,
+            },
         );
         push(
             &mut look,
             BLOCKED.into(),
             (1, 1),
-            Art::Badge { starved: false },
+            Art::Badge {
+                starved: false,
+                safe: on,
+            },
         );
         look.belt_surface = look.sprites.len();
         for (b, bend) in Bend::ALL.into_iter().enumerate() {
@@ -373,6 +423,7 @@ impl Look {
                     bend: Bend::Straight,
                     joins: Joins::from_bits(bits),
                     trim,
+                    turns: 0,
                 };
                 push(
                     &mut look,
@@ -382,19 +433,26 @@ impl Look {
                 );
             }
             for (b, bend) in [(1, Bend::FromLeft), (2, Bend::FromRight)] {
-                for end in [false, true] {
-                    let joins = Joins {
-                        end,
-                        ..Joins::default()
-                    };
-                    let art = Art::BeltFrame { bend, joins, trim };
-                    let bits = joins.bits();
-                    push(
-                        &mut look,
-                        format!("belt-frame:{tier}:{b}:{bits}"),
-                        (1, 1),
-                        art,
-                    );
+                for turns in 0..4u8 {
+                    for end in [false, true] {
+                        let joins = Joins {
+                            end,
+                            ..Joins::default()
+                        };
+                        let art = Art::BeltFrame {
+                            bend,
+                            joins,
+                            trim,
+                            turns,
+                        };
+                        let bits = joins.bits();
+                        push(
+                            &mut look,
+                            format!("belt-frame:{tier}:{b}:{turns}:{bits}"),
+                            (1, 1),
+                            art,
+                        );
+                    }
                 }
             }
         }
@@ -406,12 +464,29 @@ impl Look {
             let art = Art::PipeFluid { links };
             push(&mut look, format!("{PIPE_FLUID}:{links}"), (1, 1), art);
         }
+        // In colour-blind mode, each item after the first of its shape
+        // carries a mark of its own.
+        let mut same_shape: Vec<(IconShape, u8)> = Vec::new();
         for i in &content.items {
-            look.items
-                .insert(i.id.clone(), (look.sprites.len(), palette::item(&i.color)));
+            let color = item_color(&i.color);
+            look.items.insert(i.id.clone(), (look.sprites.len(), color));
+            let at = match same_shape.iter().position(|(k, _)| *k == i.shape) {
+                Some(at) => at,
+                None => {
+                    same_shape.push((i.shape, 0));
+                    same_shape.len() - 1
+                }
+            };
+            let seen = &mut same_shape[at].1;
+            let mark = match *seen {
+                0 => 0,
+                n => (n - 1) % draw::MARKS + 1,
+            };
+            *seen = seen.saturating_add(1);
             let art = Art::Item {
                 shape: shape(i.shape),
-                color: palette::item(&i.color),
+                color,
+                mark: if on { mark } else { 0 },
             };
             push(&mut look, format!("item:{}", i.id.as_str()), (1, 1), art);
         }
@@ -443,6 +518,7 @@ impl Look {
                 BuildingRole::RailSignal => (Kind::Signal, Vec::new()),
                 BuildingRole::TrainStop => (Kind::Stop, Vec::new()),
                 BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
+                BuildingRole::Megaproject { .. } => (Kind::Mega, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -484,6 +560,28 @@ impl Look {
             let trim = match b.role {
                 BuildingRole::Crafter { speed, .. } if speed > 1.0 => {
                     tier_trim(if speed >= 3.0 { 2 } else { 1 })
+                }
+                _ => None,
+            };
+            // So does a drill faster than the first, by how much faster.
+            let drill_trim = match b.role {
+                BuildingRole::Miner { seconds_per_ore } => {
+                    let first = content
+                        .buildings
+                        .iter()
+                        .find_map(|d| match d.role {
+                            BuildingRole::Miner { seconds_per_ore } => Some(seconds_per_ore),
+                            _ => None,
+                        })
+                        .unwrap_or(seconds_per_ore);
+                    let fast = first / seconds_per_ore.max(0.01);
+                    if fast >= 2.9 {
+                        tier_trim(2)
+                    } else if fast > 1.0 {
+                        tier_trim(1)
+                    } else {
+                        None
+                    }
                 }
                 _ => None,
             };
@@ -556,6 +654,7 @@ impl Look {
                     }
                 }
                 Kind::Train => push(&mut look, id.to_owned(), b.size, Art::Locomotive),
+                Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -573,12 +672,14 @@ impl Look {
                 }
                 _ => {
                     let none = std::iter::once(None);
-                    // Assemblers draw their recipe as layers over the body.
-                    let baked = if kind == Kind::Assembler {
-                        &[][..]
-                    } else {
-                        &recipes[..]
-                    };
+                    // Assemblers and furnaces draw their recipe as layers
+                    // over the body.
+                    let baked =
+                        if matches!(kind, Kind::Assembler | Kind::Furnace | Kind::ChemicalPlant) {
+                            &[][..]
+                        } else {
+                            &recipes[..]
+                        };
                     let choices: Vec<Option<&str>> =
                         none.chain(baked.iter().map(|r| Some(r.as_str()))).collect();
                     for setting in &choices {
@@ -616,6 +717,7 @@ impl Look {
                                             working: false,
                                             ..pose
                                         },
+                                        trim: drill_trim,
                                     },
                                     Kind::Furnace => Art::Furnace {
                                         ring: product.map(|p| p.1),
@@ -673,8 +775,39 @@ impl Look {
                 };
                 layers = Some(Layers {
                     stripe,
-                    centre,
-                    icon: across / 0.64,
+                    notch: None,
+                    icon: Some((centre, across / 0.64)),
+                });
+            }
+            if kind == Kind::ChemicalPlant {
+                // The vat in the product's colour, and the paddle over it.
+                let vat = look.sprites.len();
+                push(&mut look, format!("{id}:vat"), b.size, Art::Vat);
+                push(&mut look, format!("{id}:paddle"), b.size, Art::Paddle);
+                layers = Some(Layers {
+                    stripe: Some(vat),
+                    notch: Some(vat + 1),
+                    icon: None,
+                });
+            }
+            if kind == Kind::Furnace {
+                let ring = look.sprites.len();
+                let electric = trim.is_some();
+                push(
+                    &mut look,
+                    format!("{id}:ring"),
+                    b.size,
+                    Art::Ring { electric },
+                );
+                // The fire furnace's ring crosses its arrow.
+                let notch = (!electric).then(|| {
+                    push(&mut look, format!("{id}:notch"), b.size, Art::Notch);
+                    ring + 1
+                });
+                layers = Some(Layers {
+                    stripe: Some(ring),
+                    notch,
+                    icon: None,
                 });
             }
             look.buildings.insert(
@@ -692,6 +825,15 @@ impl Look {
     }
 
     /// The footprint of `building`, in tiles.
+    /// The most tiles across or down any building is.
+    pub fn largest(&self) -> u8 {
+        self.buildings
+            .values()
+            .map(|b| b.size.0.max(b.size.1))
+            .max()
+            .unwrap_or(1)
+    }
+
     pub fn size(&self, building: &BuildingId) -> Option<(u8, u8)> {
         self.buildings.get(building).map(|b| b.size)
     }
@@ -719,25 +861,45 @@ impl Look {
 
     /// The two layers that draw a belt tile, both facing east and turned
     /// with it: its surface at `phase` (0 to 1) of its cycle, then its frame.
+    ///
+    /// Drawn at `turns` quarter turns clockwise, a straight tile's rails would
+    /// show their lit edge on the south or east for half the directions, so
+    /// those are mirrored across the belt (`MIRROR` in the turns the shader
+    /// takes) and use the frame with its side openings swapped. Corners are
+    /// painted lit for each turn instead. Returns the turns to draw with.
     pub fn belt_layers(
         &self,
         building: &BuildingId,
         bend: Bend,
         joins: Joins,
         phase: f32,
-    ) -> (&str, &str) {
+        turns: u32,
+    ) -> (&str, &str, u32) {
         let tier = self.belt_tier.get(building).copied().unwrap_or(0);
         let frames_at = self.belt_frame.get(tier).copied().unwrap_or(0);
         let frames = usize::from(belt::FRAMES);
         let frame = ((phase.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1);
         let b = Bend::ALL.iter().position(|&x| x == bend).unwrap_or(0);
         let surface = self.belt_surface + b * frames + frame;
-        let framed = match bend {
-            Bend::Straight => usize::from(joins.bits()),
-            _ => 16 + (b - 1) * 2 + usize::from(joins.end),
+        let turns = turns % 4;
+        let mirror = bend == Bend::Straight && matches!(turns, 1 | 2);
+        let (framed, turns) = match bend {
+            Bend::Straight if mirror => {
+                let swapped = Joins {
+                    left: joins.right,
+                    right: joins.left,
+                    ..joins
+                };
+                (usize::from(swapped.bits()), turns | MIRROR)
+            }
+            Bend::Straight => (usize::from(joins.bits()), turns),
+            _ => {
+                let lit = ((b - 1) * 4 + turns as usize) * 2;
+                (16 + lit + usize::from(joins.end), turns)
+            }
         };
         let name = |i: usize| self.sprites.get(i).map_or(BELT, |s| s.name.as_str());
-        (name(surface), name(frames_at + framed))
+        (name(surface), name(frames_at + framed), turns)
     }
 
     /// Whether `building` is drawn facing east and turned by its direction:
@@ -805,6 +967,7 @@ impl Look {
                     | Kind::Signal
                     | Kind::Stop
                     | Kind::Train
+                    | Kind::Mega
             )
         })
     }
@@ -887,11 +1050,14 @@ impl Look {
             // A pipe or rail on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
-            Kind::Train => b.base,
+            Kind::Train | Kind::Mega => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
             Kind::Assembler => b.base + dir_index(dir),
+            Kind::Furnace | Kind::ChemicalPlant => {
+                b.base + usize::from(working) * 4 + dir_index(dir)
+            }
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -920,21 +1086,26 @@ impl Look {
         let (Some(l), Some(&(icon, color))) = (b.layers, self.items.get(item)) else {
             return Vec::new();
         };
+        let size = [f32::from(b.size.0), f32::from(b.size.1)];
+        let whole = |sprite: usize, tint, turned| Layer {
+            sprite: &self.sprites[sprite].name,
+            offset: [0.0, 0.0],
+            size,
+            tint,
+            turned,
+        };
         let mut out = Vec::new();
-        if let Some(stripe) = l.stripe {
+        out.extend(l.stripe.map(|s| whole(s, color, false)));
+        out.extend(l.notch.map(|s| whole(s, palette::WHITE, true)));
+        if let Some((centre, side)) = l.icon {
             out.push(Layer {
-                sprite: &self.sprites[stripe].name,
-                offset: [0.0, 0.0],
-                size: [f32::from(b.size.0), f32::from(b.size.1)],
-                tint: color,
+                sprite: &self.sprites[icon].name,
+                offset: [centre[0] - side / 2.0, centre[1] - side / 2.0],
+                size: [side, side],
+                tint: palette::WHITE,
+                turned: false,
             });
         }
-        out.push(Layer {
-            sprite: &self.sprites[icon].name,
-            offset: [l.centre[0] - l.icon / 2.0, l.centre[1] - l.icon / 2.0],
-            size: [l.icon, l.icon],
-            tint: palette::WHITE,
-        });
         out
     }
 
@@ -943,6 +1114,16 @@ impl Look {
         self.items
             .get(item)
             .map(|&(i, _)| (self.sprites[i].name.as_str(), palette::WHITE))
+    }
+
+    /// Whether this is the colour-blind look (T58).
+    pub fn colour_blind(&self) -> bool {
+        self.colour_blind
+    }
+
+    /// The colour that says `status`, in this look's set.
+    pub fn status(&self, status: palette::Status) -> Rgba {
+        palette::status(status, self.colour_blind)
     }
 
     /// An item's colour, for flat marks such as ore on the ground.
@@ -998,11 +1179,11 @@ impl Look {
     }
 }
 
-/// Each band's atlas is this many tiles on a side, padding included: 3,432
+/// Each band's atlas is this many tiles on a side, padding included: 3,564
 /// pixels at the closest zoom, inside the 4,096 every target GPU takes. Machines
 /// have a sprite per recipe, state and direction, so this grows with content;
 /// when tier 3-4 fills it, turn machine bodies on the GPU instead.
-pub const ATLAS_TILES: u32 = 26;
+pub const ATLAS_TILES: u32 = 27;
 
 /// Frames of a wind turbine's blades over a third of a turn, and the
 /// seconds that third takes.
@@ -1015,6 +1196,13 @@ const ROTOR_SECONDS: f64 = 1.4;
 pub fn atlas_size(px: u32) -> u32 {
     (px + 2 * crate::atlas::PAD) * ATLAS_TILES
 }
+
+/// Set in an instance's turns to mirror its sprite across the way it runs
+/// (top to bottom as painted) before it is turned.
+pub const MIRROR: u32 = 4;
+
+/// In an instance's turns: a light, which shines as bright by night (S9).
+pub const LIT: u32 = 8;
 
 /// Items and badges are drawn at this fraction of a tile.
 pub const ITEM_TILES: f32 = 0.5;
@@ -1039,7 +1227,12 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             let phase = f32::from(frame) / f32::from(belt::FRAMES);
             belt::surface(&mut c, z, fine, bend, phase);
         }
-        Art::BeltFrame { bend, joins, trim } => belt::trimmed(&mut c, z, fine, bend, joins, trim),
+        Art::BeltFrame {
+            bend,
+            joins,
+            trim,
+            turns,
+        } => belt::trimmed(&mut c, z, fine, bend, joins, trim, turns),
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
@@ -1051,6 +1244,10 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         }
         Art::Solar => draw::solar(&mut c, z, fine),
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
+        Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
+        Art::Notch => draw::notch_east(&mut c, z),
+        Art::Vat => draw::chemical_vat(&mut c, z),
+        Art::Paddle => draw::chemical_paddle(&mut c, z),
         Art::Splitter => draw::splitter(&mut c, z, fine),
         Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
         Art::Pipe { links } => draw::pipe(&mut c, z, fine, links),
@@ -1072,7 +1269,16 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::ChemicalPlant { product, ref pose } => {
             draw::chemical_plant(&mut c, z, fine, pose, product)
         }
-        Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
+        Art::Drill {
+            ore,
+            ref pose,
+            trim: None,
+        } => draw::drill(&mut c, z, ore, fine, pose),
+        Art::Drill {
+            ore,
+            ref pose,
+            trim: Some(trim),
+        } => draw::deep_drill(&mut c, z, ore, fine, pose, trim),
         Art::Furnace {
             ring,
             ref pose,
@@ -1101,18 +1307,20 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             trim: Some(trim),
             big: true,
         } => draw::precision_assembler(&mut c, z, product, fine, pose, trim),
-        Art::Item { shape, color } => {
+        Art::Item { shape, color, mark } => {
             // On a belt, the prototype draws items 0.32 of a tile across.
             let s = w as f32;
             draw::item(&mut c, shape, color, s / 2.0, s / 2.0, s * 0.64, !fine);
+            draw::mark(&mut c, mark, s / 2.0, s / 2.0, s * 0.8);
         }
-        Art::Badge { starved } => draw::badge(&mut c, w as f32 / 2.0, starved),
+        Art::Badge { starved, safe } => draw::badge(&mut c, w as f32 / 2.0, starved, safe),
         Art::Rail { links } => rail::rail(&mut c, z, fine, links),
         Art::Signal { links } => rail::signal(&mut c, z, fine, links),
         Art::Stop { links } => rail::stop(&mut c, z, fine, links),
         Art::StopIcon => rail::stop_icon(&mut c, z, fine),
         Art::Platform => rail::platform(&mut c, z, fine),
         Art::Locomotive => rail::locomotive(&mut c, z, fine),
+        Art::Skyhook => draw::skyhook(&mut c, z, fine, tiles),
         Art::Fx(0) => draw::fx_dot(&mut c, w as f32),
         Art::Fx(1) => draw::fx_ring(&mut c, w as f32),
         Art::Fx(_) => draw::fx_bar(&mut c, w as f32, h as f32),
@@ -1123,6 +1331,62 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn in_colour_blind_mode_no_two_items_share_both_shape_and_mark() {
+        let content = content();
+        let signs = |look: &Look| -> Vec<(String, (Shape, u8), Rgba)> {
+            content
+                .items
+                .iter()
+                .map(|i| {
+                    let (at, color) = look.items[&i.id];
+                    match look.sprites[at].art {
+                        Art::Item { shape, mark, .. } => {
+                            (i.id.as_str().to_owned(), (shape, mark), color)
+                        }
+                        _ => panic!("{} is not drawn as an item", i.id.as_str()),
+                    }
+                })
+                .collect()
+        };
+        let safe = signs(&Look::with_colour_blind(&content, true));
+        for (n, (a, sa, _)) in safe.iter().enumerate() {
+            for (b, sb, _) in &safe[n + 1..] {
+                assert_ne!(sa, sb, "{a} and {b} look alike without colour");
+            }
+        }
+        // The usual look has no marks, and takes the usual colours.
+        let plain = signs(&Look::new(&content));
+        assert!(plain.iter().all(|(_, (_, m), _)| *m == 0));
+        let ore = |v: &[(String, (Shape, u8), Rgba)]| {
+            v.iter().find(|(id, ..)| id == "copper-ore").unwrap().2
+        };
+        assert_ne!(ore(&safe), ore(&plain));
+        assert!(Look::with_colour_blind(&content, true).colour_blind());
+    }
+
+    #[test]
+    fn in_colour_blind_mode_every_ore_on_the_ground_stays_apart() {
+        // Ore lies on the ground as nothing but its colour, so every ore,
+        // including any added later, needs a colour-blind colour of its own.
+        let content = content();
+        let look = Look::with_colour_blind(&content, true);
+        let ores: Vec<_> = content
+            .items
+            .iter()
+            .filter(|i| i.shape == IconShape::Ore)
+            .map(|i| (i.id.as_str(), look.item_color(&i.id).unwrap()))
+            .collect();
+        for cvd in [None].into_iter().chain(palette::CVDS.map(Some)) {
+            for (n, (a, ca)) in ores.iter().enumerate() {
+                for (b, cb) in &ores[n + 1..] {
+                    let d = palette::difference(*ca, *cb, cvd);
+                    assert!(d >= 20.0, "{a} and {b} are {d:.1} apart under {cvd:?}");
+                }
+            }
+        }
+    }
 
     pub(crate) fn content() -> Content {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
@@ -1144,9 +1408,14 @@ pub(crate) mod tests {
         let cold = look.sprite(&furnace, Dir::East, Some(iron), false).unwrap();
         let lit = look.sprite(&furnace, Dir::East, Some(iron), true).unwrap();
         let south = look.sprite(&furnace, Dir::South, Some(iron), true).unwrap();
-        assert_eq!(cold, "furnace:iron-plate:cold:0");
-        assert_eq!(lit, "furnace:iron-plate:lit:0");
-        assert_eq!(south, "furnace:iron-plate:lit:1");
+        assert_eq!(cold, "furnace:none:cold:0");
+        assert_eq!(lit, "furnace:none:lit:0");
+        assert_eq!(south, "furnace:none:lit:1");
+        let ring = look.layers(&furnace, Some(iron));
+        assert_eq!(ring.len(), 2, "a ring and the arrow over it");
+        assert_eq!(ring[0].sprite, "furnace:ring");
+        assert_eq!(ring[0].tint, palette::item("iron"));
+        assert!(ring[1].turned);
         let gear = "gear";
         let asm = BuildingId::from("assembler");
         assert_eq!(
@@ -1160,7 +1429,10 @@ pub(crate) mod tests {
         assert_eq!(layers[0].tint, palette::item("iron"));
         assert_eq!(layers[1].sprite, "item:gear");
         assert!(look.layers(&asm, None).is_empty());
-        assert!(look.layers(&furnace, Some(iron)).is_empty());
+        let vat = look.layers(&"chemical-plant".into(), Some("plastic"));
+        assert_eq!(vat[0].sprite, "chemical-plant:vat");
+        assert_eq!(vat[0].tint, palette::item("plastic"));
+        assert!(vat[1].turned, "the paddle turns with the plant");
         assert_eq!(
             look.sprite(&asm, Dir::West, None, false),
             Some("assembler:none:cold:2")
@@ -1188,6 +1460,82 @@ pub(crate) mod tests {
             look.sprite(&drill, Dir::East, None, false),
             Some("drill:none:cold:0")
         );
+    }
+
+    /// `rgba`, a `z`-pixel square sprite, as the shader lays it on screen at
+    /// `turns` (with [`MIRROR`]): the pixel each screen pixel shows.
+    fn on_screen(rgba: &[u8], z: u32, turns: u32) -> Vec<[u8; 4]> {
+        let mut out = vec![[0; 4]; (z * z) as usize];
+        for y in 0..z {
+            for x in 0..z {
+                let mut t = ((x as f32 + 0.5) / z as f32, (y as f32 + 0.5) / z as f32);
+                for _ in 0..turns % 4 {
+                    t = (t.1, 1.0 - t.0);
+                }
+                if turns & MIRROR != 0 {
+                    t.1 = 1.0 - t.1;
+                }
+                let (px, py) = ((t.0 * z as f32) as u32, (t.1 * z as f32) as u32);
+                let i = ((py * z + px) * 4) as usize;
+                out[(y * z + x) as usize] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
+            }
+        }
+        out
+    }
+
+    /// Belt rails are lit from the top left of the screen whichever way the
+    /// belt runs: where a rail crosses a tile's edge, the lit side of it is
+    /// its north (or west) side, on straight runs and corners alike.
+    #[test]
+    fn belt_rails_are_lit_from_the_same_side_whichever_way_they_run() {
+        let look = Look::new(&content());
+        let belt: BuildingId = "belt".into();
+        let z = 64u32;
+        let bright = |p: [u8; 4]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+        for bend in Bend::ALL {
+            for (turns, dir) in Dir::ALL.into_iter().enumerate() {
+                let (_, frame, drawn) =
+                    look.belt_layers(&belt, bend, Joins::default(), 0.0, turns as u32);
+                let s = look.sprites.iter().find(|s| s.name == frame).unwrap();
+                let (_, _, c) = render(&s.art, 1.0, 1.0, z, true);
+                let px = on_screen(&c.rgba(), z, drawn);
+                // Each edge, one pixel in, read across the rails.
+                let lines: [Box<dyn Fn(u32) -> u32>; 4] = [
+                    Box::new(|i| i * z + 1),
+                    Box::new(|i| i * z + z - 2),
+                    Box::new(|i| z + i),
+                    Box::new(|i| (z - 2) * z + i),
+                ];
+                let mut crossings = 0;
+                for line in &lines {
+                    let at = |i: u32| px[line(i) as usize];
+                    let mut i = 0;
+                    while i < z {
+                        // A rail: a run of opaque pixels brighter than the belt.
+                        let rail = |p: [u8; 4]| p[3] > 200 && bright(p) > 180;
+                        if rail(at(i)) {
+                            let start = i;
+                            while i < z && rail(at(i)) {
+                                i += 1;
+                            }
+                            let (first, last) = (at(start), at(i - 1));
+                            if i - start >= 4 {
+                                crossings += 1;
+                                assert!(
+                                    bright(first) > bright(last),
+                                    "{bend:?} running {dir:?}: a rail is lit on its far side"
+                                );
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                assert!(
+                    crossings >= 4,
+                    "{bend:?} running {dir:?}: {crossings} rails found"
+                );
+            }
+        }
     }
 
     #[test]

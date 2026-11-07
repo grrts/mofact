@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 12;
+pub const VERSION: u16 = 14;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -67,6 +67,26 @@ struct World {
     ore_left: Vec<u32>,
     depleted: Vec<TilePos>,
     /// The player's pins on the world map.
+    pins: Vec<TilePos>,
+    /// The map's seed and preset (S4); none in saves from before them,
+    /// which were all seed 42, standard.
+    world: Option<(u64, u8)>,
+}
+
+/// Version 12: the same, before the map's seed was saved.
+#[derive(Deserialize)]
+struct WorldV12 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
     pins: Vec<TilePos>,
 }
 
@@ -194,6 +214,11 @@ enum SavedState {
     Rail,
     Stop,
     Train(SavedTrain),
+    /// The megaproject's stage and what that stage has taken, by item.
+    Mega {
+        stage: u32,
+        have: Vec<(ItemId, u32)>,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -243,6 +268,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -264,6 +290,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -283,6 +310,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -302,6 +330,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Version 12 adds pins on the world map.
@@ -320,9 +349,30 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: v11.ore_left,
                 depleted: v11.depleted,
                 pins: Vec::new(),
+                world: None,
             })
         }
-        12 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 13 saves the map's seed and preset.
+        12 => {
+            let v: WorldV12 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: None,
+            })
+        }
+        // Version 14 adds the megaproject: a new variant only.
+        13 | 14 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -450,6 +500,21 @@ impl Sim {
                     State::Engine { share } => SavedState::Engine { share: *share },
                     State::Rail => SavedState::Rail,
                     State::Stop { .. } => SavedState::Stop,
+                    State::Mega { stage, have } => {
+                        let needs = match &t.buildings[e.kind as usize].role {
+                            Role::Mega { stages, .. } => stages.get(*stage as usize).cloned(),
+                            _ => None,
+                        };
+                        SavedState::Mega {
+                            stage: *stage,
+                            have: needs
+                                .unwrap_or_default()
+                                .iter()
+                                .zip(have)
+                                .map(|(&(i, _), &n)| (item(i), n))
+                                .collect(),
+                        }
+                    }
                     State::Train(tr) => SavedState::Train(SavedTrain {
                         cargo: tr.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
                         schedule: tr.schedule.clone(),
@@ -511,6 +576,7 @@ impl Sim {
             ore_left,
             depleted: self.depleted.to_vec(),
             pins: self.pins.to_vec(),
+            world: self.world.map(|w| (w.seed, w.preset as u8)),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -570,7 +636,8 @@ impl Sim {
             .current
             .as_ref()
             .and_then(|id| research(id, &mut warnings))
-            .filter(|&r| !sim.research.done[r as usize]);
+            .filter(|&r| !sim.research.done[r as usize] || t.research[r as usize].repeat.is_some());
+        sim.boost();
         // An empty id, from a save older than goals, starts at the first;
         // a goal the content no longer has starts over too, and the sim
         // moves past what's already done.
@@ -581,6 +648,9 @@ impl Sim {
         pins.dedup();
         pins.truncate(crate::MAX_PINS);
         sim.pins = std::sync::Arc::new(pins);
+        if let Some((seed, preset)) = world.world {
+            sim.set_world_gen(seed, mofact_world::Preset::from_u8(preset));
+        }
         sim.goal = match &world.goal {
             None => content.goals.len() as u16,
             Some(id) => content
@@ -688,6 +758,20 @@ impl Sim {
                 },
                 (SavedState::Rail, Role::Rail { .. }) => State::Rail,
                 (SavedState::Stop, Role::Stop) => State::Stop { docked: None },
+                (SavedState::Mega { stage, have }, Role::Mega { stages, .. }) => {
+                    let stage = stage.min(stages.len() as u32);
+                    let needs = stages.get(stage as usize).cloned().unwrap_or_default();
+                    let mut held = vec![0; needs.len()];
+                    for (i, n) in &have {
+                        let Some(i) = item(i, &mut warnings) else {
+                            continue;
+                        };
+                        if let Some(k) = needs.iter().position(|&(x, _)| x == i) {
+                            held[k] = (*n).min(needs[k].1);
+                        }
+                    }
+                    State::Mega { stage, have: held }
+                }
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
                     cargo: tr
                         .cargo

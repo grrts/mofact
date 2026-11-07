@@ -11,14 +11,16 @@ use mofact_core::snapshot::{TrainState, TrainView};
 const ROWS: usize = 6;
 
 /// A train's state, as its chip says it.
-fn train_state(s: TrainState) -> (&'static str, Rgba) {
+fn train_state(s: TrainState, look: &Look) -> (&'static str, Rgba) {
+    use palette::Status;
+    let ok = look.status(Status::Working);
     match s {
-        TrainState::Idle => ("No stops", MUTED),
-        TrainState::Moving => ("On its way", WORKING),
-        TrainState::Waiting => ("Waiting for track", palette::ACCENT),
-        TrainState::Loading => ("Loading", WORKING),
-        TrainState::Unloading => ("Unloading", WORKING),
-        TrainState::NoPath => ("No route", palette::STARVE),
+        TrainState::Idle => (tr("train.no_stops"), MUTED),
+        TrainState::Moving => (tr("train.moving"), ok),
+        TrainState::Waiting => (tr("train.waiting"), look.status(Status::Blocked)),
+        TrainState::Loading => (tr("train.loading"), ok),
+        TrainState::Unloading => (tr("train.unloading"), ok),
+        TrainState::NoPath => (tr("train.no_route"), look.status(Status::Starved)),
     }
 }
 
@@ -89,7 +91,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
-        let (label, color) = train_state(t.state);
+        let (label, color) = train_state(t.state, view.look);
         let spx = 12.0 * u;
         let sw = o.measure(label, spx) + 16.0 * u;
         let sx = c[0] - 8.0 * u - sw;
@@ -127,11 +129,11 @@ impl Hud {
                 .push(([start, y, x - start, 26.0 * u], Hit::Item(item.clone())));
         }
         let text = if t.cargo.is_empty() {
-            format!("Empty · holds {}", t.capacity)
+            trf("train.empty", &[&t.capacity])
         } else {
             match t.cargo.len() {
-                1 => format!("of {}", t.capacity),
-                _ => format!("{held} of {}", t.capacity),
+                1 => trf("train.of", &[&t.capacity]),
+                _ => trf("train.held", &[&held, &t.capacity]),
             }
         };
         o.text(&text, [x, base], px, MUTED);
@@ -140,9 +142,9 @@ impl Hud {
         // The stops, in the order it visits them.
         let px = 13.0 * u;
         let hint = if t.schedule.is_empty() {
-            "Add a stop to load at, then one to unload at."
+            tr("train.hint")
         } else {
-            "Stops"
+            tr("train.stops")
         };
         o.text(hint, [left, y + o.cap_height(px) + 2.0 * u], px, MUTED);
         y += 20.0 * u;
@@ -158,7 +160,7 @@ impl Hud {
             let tpx = 15.0 * u;
             let mid = y + (row + o.cap_height(tpx)) / 2.0;
             o.text(
-                &format!("{}. Stop at {}, {}", k + 1, stop.at.x, stop.at.y),
+                &trf("train.stop_at", &[&(k + 1), &stop.at.x, &stop.at.y]),
                 [left + 12.0 * u, mid],
                 tpx,
                 TEXT,
@@ -179,12 +181,15 @@ impl Hud {
             self.hits.push((xb, Hit::Schedule(t.id, without)));
             // Load or unload: tap to switch.
             let (word, ink) = if stop.load {
-                ("Load", WORKING)
+                (tr("train.load"), WORKING)
             } else {
-                ("Unload", palette::ACCENT)
+                (tr("train.unload"), palette::ACCENT)
             };
             let ppx = 14.0 * u;
-            let pw = o.measure("Unload", ppx) + 24.0 * u;
+            let widest = o
+                .measure(tr("train.load"), ppx)
+                .max(o.measure(tr("train.unload"), ppx));
+            let pw = widest + 24.0 * u;
             let pb = [xb[0] - 8.0 * u - pw, y + 4.0 * u, pw, d];
             o.panel(
                 [pb[0], pb[1]],
@@ -209,8 +214,10 @@ impl Hud {
         }
         if picking {
             let px = 14.0 * u;
+            let text = tr("train.pick");
+            let px = fit(o, text, px, inner);
             o.text(
-                "Tap a train stop on the map to add it.",
+                text,
                 [left, y + o.cap_height(px) + 4.0 * u],
                 px,
                 palette::ACCENT,
@@ -221,15 +228,19 @@ impl Hud {
         // Add a stop (or stop adding one), and remove the train.
         let bh = 40.0 * u;
         let bw = (inner - 8.0 * u) / 2.0;
-        let add = if picking { "Cancel" } else { "Add stop" };
+        let add = tr(if picking {
+            "button.cancel"
+        } else {
+            "train.add"
+        });
         let buttons = [
             (add, Hit::PickStop(t.id), TEXT),
-            ("Remove", Hit::Remove(t.id), palette::STARVE),
+            (tr("tool.remove"), Hit::Remove(t.id), palette::STARVE),
         ];
         for (i, (label, hit, ink)) in buttons.into_iter().enumerate() {
             let b = [left + i as f32 * (bw + 8.0 * u), y, bw, bh];
             o.panel([b[0], b[1]], [bw, bh], 10.0 * u, RAISED);
-            let px = 15.0 * u;
+            let px = fit(o, label, 15.0 * u, bw - 12.0 * u);
             let lw = o.measure(label, px);
             o.text(
                 label,

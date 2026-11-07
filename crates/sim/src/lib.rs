@@ -38,7 +38,7 @@ pub use thread::SimHandle;
 use entities::{Entities, Entity};
 use fluids::Fluids;
 use mofact_core::command::{Command, CommandError, CommandResult};
-use mofact_core::content::Content;
+use mofact_core::content::{Bonus, Content, Repeat};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
 use mofact_core::snapshot::{
@@ -58,7 +58,9 @@ const SPACING: u32 = UNIT * 34 / 100;
 const BLOCKED_AFTER: u32 = 48;
 /// Packs of each kind a lab holds.
 const LAB_CAP: u32 = 4;
-const STARVED_AFTER: u32 = 90;
+/// Three seconds: longer than a new game's furnace waits for its first ore
+/// (about two), so a fresh factory never opens on a red mark.
+const STARVED_AFTER: u32 = 3 * mofact_core::TICKS_PER_SECOND;
 
 #[derive(Clone, Debug)]
 enum State {
@@ -108,6 +110,11 @@ enum State {
         docked: Option<EntityId>,
     },
     Train(rails::Train),
+    /// The megaproject: the stage it is on, and what that stage has taken.
+    Mega {
+        stage: u32,
+        have: Vec<u32>,
+    },
 }
 
 /// One end of an underground belt.
@@ -180,14 +187,23 @@ pub struct Sim {
     /// The goal the player is on: an index into the content's goals, which
     /// is their count once all are met.
     goal: u16,
+    /// The demo's last open tier: research of a higher tier is refused
+    /// until the full game is bought. Not saved: the app sets it from the
+    /// store each time it starts.
+    demo: Option<u8>,
 }
 
-/// Research progress, kept per research so switching loses nothing.
+/// Research progress, kept per research so switching loses nothing. A
+/// repeatable research (S2) counts every unit ever done in `units`, and is
+/// `done` once its first level is.
 #[derive(Clone, Debug, Default)]
 struct Research {
     current: Option<u16>,
     units: Vec<u32>,
     done: Vec<bool>,
+    /// What repeatable research has added, as extra speed: drills,
+    /// crafters, labs. Worked out from `units`, never saved.
+    boost: [f32; 3],
 }
 
 impl Sim {
@@ -209,6 +225,7 @@ impl Sim {
                 current: None,
                 units: vec![0; r],
                 done: vec![false; r],
+                boost: [0.0; 3],
             },
             ..Self::default()
         }
@@ -221,6 +238,23 @@ impl Sim {
         }
     }
 
+    /// Gate research above `tier` behind the full game, or open it all
+    /// with `None`. Research already under way above the gate stops.
+    pub fn set_demo(&mut self, tier: Option<u8>) {
+        self.demo = tier;
+        if let Some(r) = self.research.current {
+            if self.gated(r) {
+                self.research.current = None;
+            }
+        }
+    }
+
+    /// Whether research `r` is past the demo's gate.
+    fn gated(&self, r: u16) -> bool {
+        self.demo
+            .is_some_and(|t| self.tables.research[r as usize].tier > t)
+    }
+
     pub fn research_done(&self, id: &mofact_core::ids::ResearchId) -> bool {
         self.tables
             .research(id)
@@ -228,11 +262,50 @@ impl Sim {
     }
 
     fn finish_research(&mut self, r: u16) {
-        self.research.done[r as usize] = true;
-        self.research.units[r as usize] = self.tables.research[r as usize].units;
-        if self.research.current == Some(r) {
-            self.research.current = None;
+        let def = &self.tables.research[r as usize];
+        let units = &mut self.research.units[r as usize];
+        if def.repeat.is_some() {
+            // A level more, and labs carry on with the next.
+            let (level, _) = Repeat::level(def.units, *units);
+            *units = Repeat::total(def.units, level + 1) as u32;
+        } else {
+            *units = def.units;
+            if self.research.current == Some(r) {
+                self.research.current = None;
+            }
         }
+        self.research.done[r as usize] = true;
+        self.boost();
+    }
+
+    /// The levels done of repeatable research `r` (S2): 0 for other research.
+    fn level(&self, r: usize) -> u32 {
+        let def = &self.tables.research[r];
+        match def.repeat {
+            Some(_) => Repeat::level(def.units, self.research.units[r]).0,
+            None => 0,
+        }
+    }
+
+    /// Work out what repeatable research adds, after a level or a load.
+    fn boost(&mut self) {
+        let mut boost = [0.0; 3];
+        for r in 0..self.tables.research.len() {
+            if let Some(rep) = self.tables.research[r].repeat {
+                let k = match rep.bonus {
+                    Bonus::Mining => 0,
+                    Bonus::Crafting => 1,
+                    Bonus::Research => 2,
+                };
+                boost[k] += rep.per_level * self.level(r) as f32;
+            }
+        }
+        self.research.boost = boost;
+    }
+
+    /// Ticks a drill takes per ore, with research's boost.
+    fn mine_ticks(&self, ticks: u32) -> u32 {
+        ((ticks as f32 / (1.0 + self.research.boost[0])).round() as u32).max(1)
     }
 
     fn open(&self, lock: Option<u16>) -> bool {
@@ -266,8 +339,19 @@ impl Sim {
 
     /// Mine the map generated from `seed`, the same one the player sees.
     pub fn set_world(&mut self, seed: u64) {
+        self.set_world_gen(seed, mofact_world::Preset::Standard);
+    }
+
+    /// Mine the map generated from `seed` under `preset` (S4).
+    pub fn set_world_gen(&mut self, seed: u64, preset: mofact_world::Preset) {
         let n = self.tables.ores.len() as u8;
-        self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n));
+        self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n).with_preset(preset));
+    }
+
+    /// The seed and preset of the map, if there is one. A loaded save
+    /// brings its own, so the player finds the same map again.
+    pub fn world_seed(&self) -> Option<(u64, mofact_world::Preset)> {
+        self.world.map(|w| (w.seed, w.preset))
     }
 
     /// Dig one ore from under `pos`; the tile is mined out when it runs dry.
@@ -688,8 +772,12 @@ impl Sim {
                             .ok_or(CommandError::UnknownContent)?;
                         let def = &self.tables.research[r as usize];
                         let ready = def.requires.iter().all(|&q| self.research.done[q as usize]);
-                        if self.research.done[r as usize] || !ready {
+                        let again = def.repeat.is_some();
+                        if (self.research.done[r as usize] && !again) || !ready {
                             return Err(CommandError::Locked);
+                        }
+                        if self.gated(r) {
+                            return Err(CommandError::FullGame);
                         }
                         Some(r)
                     }
@@ -785,6 +873,10 @@ impl Sim {
                 })
             }
             Role::Lab { .. } => State::Lab(Lab::default()),
+            Role::Mega { stages, .. } => State::Mega {
+                stage: 0,
+                have: vec![0; stages.first().map_or(0, Vec::len)],
+            },
             Role::Pole { .. } => State::Pole,
             Role::Generator { .. } => State::Generator,
             Role::Splitter => State::Splitter {
@@ -1017,7 +1109,8 @@ impl Sim {
             | State::PipeTunnel(_)
             | State::Rail
             | State::Stop { .. }
-            | State::Train(_) => {}
+            | State::Train(_)
+            | State::Mega { .. } => {}
             State::Pump => {
                 let Role::Pump { per_tick } = self.tables.buildings[e.kind as usize].role else {
                     return;
@@ -1113,6 +1206,7 @@ impl Sim {
                 let Role::Miner { ticks } = self.tables.buildings[e.kind as usize].role else {
                     return;
                 };
+                let ticks = self.mine_ticks(ticks);
                 if out.is_none() {
                     *waiting = 0;
                     *prog += u32::from(go);
@@ -1133,16 +1227,21 @@ impl Sim {
                 let speed = match &self.tables.buildings[e.kind as usize].role {
                     Role::Crafter { speed, .. } => *speed,
                     _ => 1.0,
-                };
+                } * (1.0 + self.research.boost[1]);
                 let t = &self.tables;
-                // Fluid outputs leave by the front, then the right, then the
-                // left; fluid inputs come in by any other side.
+                // A recipe's first output leaves by the front, a by-product
+                // by the right, a third by the left; fluid inputs come in by
+                // any side no fluid leaves by.
                 let sides = [e.dir, e.dir.rotate_cw(), e.dir.opposite().rotate_cw()];
-                let fluid_outs = c.recipe.map_or(0, |r| {
-                    let outs = &t.recipes[r as usize].outputs;
-                    outs.iter().filter(|o| t.fluid[o.0 as usize]).count()
-                });
-                let used = &sides[..fluid_outs.min(sides.len())];
+                let mut used = Vec::new();
+                if let Some(r) = c.recipe {
+                    for (k, o) in t.recipes[r as usize].outputs.iter().enumerate() {
+                        if t.fluid[o.0 as usize] {
+                            used.push(sides[k.min(sides.len() - 1)]);
+                        }
+                    }
+                }
+                let used = &used[..];
                 // Any one full output stops the machine: a refinery whose tar
                 // backs up stops making light oil too.
                 let mut full = c
@@ -1211,16 +1310,15 @@ impl Sim {
                     c.idle += 1;
                 }
                 c.blocked = if full { c.blocked + 1 } else { 0 };
-                // Fluids go out their own sides, so they can't run back into
-                // an input line that has run dry. One solid leaves per tick,
-                // the first output first.
-                let mut rank = 0;
-                let mut pushed = false;
+                // Each output goes out its own side, so a by-product can't
+                // run back into an input line or onto the product's belt. One
+                // solid leaves each side per tick, onto any tile along it.
+                let mut pushed = [false; 3];
                 for k in 0..c.outs.len() {
                     let (item, n) = c.outs[k];
+                    let at = k.min(sides.len() - 1);
+                    let side = sides[at];
                     if self.tables.fluid[item as usize] {
-                        let side = sides[rank.min(sides.len() - 1)];
-                        rank += 1;
                         if n > 0 {
                             let got = self.fluids.fill(
                                 &self.entities,
@@ -1231,9 +1329,15 @@ impl Sim {
                             );
                             c.outs[k].1 -= got as u32;
                         }
-                    } else if n > 0 && !pushed && self.push(front, item, e.dir) {
-                        c.outs[k].1 -= 1;
-                        pushed = true;
+                    } else if n > 0 && !pushed[at] {
+                        let out = fluids::edges(e)
+                            .filter(|&(d, _)| d == side)
+                            .map(|(_, n)| n)
+                            .find(|&n| self.push(n, item, side));
+                        if out.is_some() {
+                            c.outs[k].1 -= 1;
+                            pushed[at] = true;
+                        }
                     }
                 }
                 let empty = c.outs.iter().all(|o| o.1 == 0);
@@ -1247,7 +1351,7 @@ impl Sim {
                 let speed = match self.tables.buildings[e.kind as usize].role {
                     Role::Lab { speed } => speed,
                     _ => 1.0,
-                };
+                } * (1.0 + self.research.boost[2]);
                 if lab.unit.is_none() {
                     if let Some(r) = self.research.current {
                         let cost = &self.tables.research[r as usize].cost;
@@ -1271,7 +1375,16 @@ impl Sim {
                         if *prog >= ticks(def.seconds / speed) {
                             let r = *r as usize;
                             lab.unit = None;
-                            if !self.research.done[r] {
+                            let def = &self.tables.research[r];
+                            if def.repeat.is_some() {
+                                self.research.units[r] += 1;
+                                let (_, (into, _)) =
+                                    Repeat::level(def.units, self.research.units[r]);
+                                if into == 0 {
+                                    self.research.done[r] = true;
+                                    self.boost();
+                                }
+                            } else if !self.research.done[r] {
                                 self.research.units[r] += 1;
                                 if self.research.units[r] >= self.tables.research[r].units {
                                     self.finish_research(r as u16);
@@ -1280,6 +1393,32 @@ impl Sim {
                         }
                     }
                     None => lab.idle += 1,
+                }
+                self.share_packs(e, lab);
+            }
+        }
+    }
+
+    /// A lab hands packs to the labs beside it, one at a time to whichever
+    /// holds fewer, so a row of labs pools the belts brought to its sides:
+    /// research needing more pack types than a lab has sides still runs.
+    fn share_packs(&mut self, e: &Entity, lab: &mut Lab) {
+        for d in Dir::ALL {
+            let Some(id) = self.entities.at(e.pos.step(d)) else {
+                continue;
+            };
+            let Some(State::Lab(next)) = self.states[id.0 as usize].as_mut() else {
+                continue;
+            };
+            for p in lab.packs.iter_mut() {
+                let theirs = next.packs.iter().position(|q| q.0 == p.0);
+                let has = theirs.map_or(0, |k| next.packs[k].1);
+                if p.1 > has + 1 && has < LAB_CAP {
+                    p.1 -= 1;
+                    match theirs {
+                        Some(k) => next.packs[k].1 += 1,
+                        None => next.packs.push((p.0, 1)),
+                    }
                 }
             }
         }
@@ -1421,6 +1560,28 @@ impl Sim {
                 t.items.push((item, 0));
                 true
             }
+            State::Mega { stage, have } => {
+                let Role::Mega { stages, .. } = &self.tables.buildings[target.kind as usize].role
+                else {
+                    return false;
+                };
+                let Some(needs) = stages.get(*stage as usize) else {
+                    return false; // built: it takes nothing more
+                };
+                let Some(k) = needs.iter().position(|&(i, _)| i == item) else {
+                    return false;
+                };
+                if have[k] >= needs[k].1 {
+                    return false;
+                }
+                have[k] += 1;
+                // A stage is in when all it needs is: the next one starts.
+                if have.iter().zip(needs).all(|(h, n)| *h >= n.1) {
+                    *stage += 1;
+                    *have = vec![0; stages.get(*stage as usize).map_or(0, Vec::len)];
+                }
+                true
+            }
             State::Lab(lab) => {
                 if !self.tables.packs.contains(&item) {
                     return false;
@@ -1503,6 +1664,25 @@ impl Sim {
                 snap.trains.push(self.train_view(id, b, t, *capacity));
                 continue;
             }
+            if let (Some(State::Mega { stage, have }), Role::Mega { stages, names }, None) =
+                (self.states[slot].as_ref(), &b.role, &snap.mega)
+            {
+                let needs = stages.get(*stage as usize);
+                snap.mega = Some(mofact_core::snapshot::MegaView {
+                    id,
+                    stage: *stage,
+                    stages: stages.len() as u32,
+                    name: names.get(*stage as usize).cloned().unwrap_or_default(),
+                    needs: needs.map_or(Vec::new(), |n| {
+                        n.iter()
+                            .zip(have)
+                            .map(|(&(i, want), &h)| {
+                                (self.tables.items[i as usize].clone(), h, want)
+                            })
+                            .collect()
+                    }),
+                });
+            }
             let (state, progress, recipe) = match self.states[id.0 as usize].as_ref() {
                 Some(State::Splitter {
                     held: Some(item), ..
@@ -1548,6 +1728,7 @@ impl Sim {
                     let Role::Miner { ticks } = b.role else {
                         unreachable!()
                     };
+                    let ticks = self.mine_ticks(ticks);
                     let st = if out.is_some() && *waiting > BLOCKED_AFTER {
                         MachineState::Blocked
                     } else if out.is_none() && !self.ore.contains_key(&e.pos) {
@@ -1572,7 +1753,7 @@ impl Sim {
                         let speed = match b.role {
                             Role::Crafter { speed, .. } => speed,
                             _ => 1.0,
-                        };
+                        } * (1.0 + self.research.boost[1]);
                         c.prog as f32
                             / ticks(self.tables.recipes[r as usize].seconds / speed) as f32
                     });
@@ -1582,11 +1763,25 @@ impl Sim {
                         c.recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
                     )
                 }
+                Some(State::Mega { stage, have }) => {
+                    let (n, frac) = match &b.role {
+                        Role::Mega { stages, .. } => {
+                            let part = stages.get(*stage as usize).map_or(0.0, |needs| {
+                                let want: u32 = needs.iter().map(|x| x.1).sum();
+                                have.iter().sum::<u32>() as f32 / want.max(1) as f32
+                            });
+                            (stages.len().max(1) as f32, part)
+                        }
+                        _ => (1.0, 0.0),
+                    };
+                    let p = ((*stage as f32 + frac) / n).min(1.0);
+                    (MachineState::Working, p, None)
+                }
                 Some(State::Lab(lab)) => {
                     let speed = match b.role {
                         Role::Lab { speed } => speed,
                         _ => 1.0,
-                    };
+                    } * (1.0 + self.research.boost[2]);
                     match lab.unit {
                         Some((r, prog)) => {
                             let def = &self.tables.research[r as usize];
@@ -1678,14 +1873,20 @@ impl Sim {
                 .current
                 .map(|r| t.research[r as usize].id.clone()),
             progress: self.research.current.map_or((0, 0), |r| {
-                (
-                    self.research.units[r as usize],
-                    t.research[r as usize].units,
-                )
+                let def = &t.research[r as usize];
+                let units = self.research.units[r as usize];
+                match def.repeat {
+                    Some(_) => Repeat::level(def.units, units).1,
+                    None => (units, def.units),
+                }
             }),
             done: (0..t.research.len())
                 .filter(|&r| self.research.done[r])
                 .map(|r| t.research[r].id.clone())
+                .collect(),
+            levels: (0..t.research.len())
+                .filter(|&r| t.research[r].repeat.is_some() && self.research.units[r] > 0)
+                .map(|r| (t.research[r].id.clone(), self.level(r)))
                 .collect(),
         };
         snap.goal = self.goal_progress().map(|(have, need)| GoalView {

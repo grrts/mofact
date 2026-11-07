@@ -83,4 +83,17 @@
         cost: [(item: "silicon", count: 15), (item: "steel", count: 5), (item: "advanced-circuit", count: 5)]),
     (id: "precision-assembler", name: "Precision assembler", size: (2, 2), role: Crafter(categories: ["assembling"], speed: 3.0), power: 150.0,
         cost: [(item: "processor", count: 5), (item: "robot-frame", count: 2), (item: "steel", count: 10)]),
+    // Tier 6 (T56): a drill three times as fast, driven by an electric engine.
+    (id: "deep-drill", name: "Deep drill", size: (1, 1), role: Miner(seconds_per_ore: 0.4), power: 120.0,
+        cost: [(item: "titanium-plate", count: 10), (item: "electric-engine", count: 2), (item: "processor", count: 2)]),
+    // The megaproject (T54): belt in each stage's parts and the skyhook
+    // climbs out of sight. Finishing it wins the game.
+    (id: "skyhook", name: "Skyhook", size: (3, 3),
+        role: Megaproject(stages: [
+            (name: "Anchor", needs: [(item: "tether-segment", count: 100), (item: "steel", count: 400)]),
+            (name: "Tether", needs: [(item: "tether-segment", count: 300), (item: "superconductor", count: 200)]),
+            (name: "Climbers", needs: [(item: "climber", count: 20)]),
+            (name: "Beacon", needs: [(item: "orbital-beacon", count: 5)]),
+        ]),
+        cost: [(item: "steel", count: 200), (item: "titanium-plate", count: 100), (item: "ai-core", count: 10)]),
 ]

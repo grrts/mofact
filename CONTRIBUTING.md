@@ -31,3 +31,18 @@ side effect of lane work; open a contract task instead.
   on every platform. No wall-clock time, no unordered iteration that affects state,
   no randomness without a seed.
 - Systems cost almost nothing when nothing changes: segments and timers, not per-tile, per-tick work.
+
+## Releasing
+
+There is one version number, the workspace's in `Cargo.toml`. Android's
+`versionName` reads it, and `Info.plist` must match it (a test checks).
+Build numbers come from the CI run number.
+
+1. Move the entries under `## Unreleased` in `CHANGELOG.md` into a new
+   `## X.Y.Z` heading, and set `version = "X.Y.Z"` in `Cargo.toml` and
+   `CFBundleShortVersionString` in `platform/ios/Info.plist`.
+2. Merge that, then tag the merge commit `vX.Y.Z` and push the tag.
+3. The Builds workflow builds all three platforms. Its Release job checks the
+   tag against `Cargo.toml` and the changelog, then publishes a GitHub release
+   with the builds and that changelog entry. Store uploads join once the
+   signing keys exist (see `docs/decisions.md` and the platform READMEs).

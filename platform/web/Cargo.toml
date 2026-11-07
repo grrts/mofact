@@ -16,6 +16,7 @@ mofact-core.workspace = true
 mofact-sim.workspace = true
 mofact-input.workspace = true
 mofact-render.workspace = true
+mofact-ui.workspace = true
 mofact-audio.workspace = true
 wgpu = { workspace = true, features = ["webgl"] }
 wasm-bindgen = "0.2.100"
@@ -23,6 +24,7 @@ wasm-bindgen-futures = "0.4"
 js-sys = "0.3"
 web-sys = { version = "0.3", features = [
     "Window",
+    "MediaQueryList",
     "Document",
     "Element",
     "HtmlCanvasElement",
@@ -37,6 +39,8 @@ web-sys = { version = "0.3", features = [
     "KeyboardEvent",
     "Storage",
     "Location",
+    "Navigator",
+    "Clipboard",
     "VisibilityState",
     "AddEventListenerOptions",
     "Performance",

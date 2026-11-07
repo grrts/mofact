@@ -14,6 +14,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use mofact::game::{self, Game};
+use mofact::slots::Store;
 use mofact_input::{Pointer, MOUSE, MOUSE_PAN};
 use mofact_render::{Gpu, Target};
 use mofact_sim::Sim;
@@ -24,9 +25,27 @@ use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, PointerEvent, WheelEvent};
 
 const SAVE_KEY: &str = "mofact-save";
+/// Where the other save slots go, and which slot is played (T63).
+const SLOT_KEY: &str = "mofact-slot";
 /// Whether low-power mode is on: "1" or "0". A setting of this browser,
 /// not of the save.
 const LOW_POWER_KEY: &str = "mofact-low-power";
+const COLOUR_BLIND_KEY: &str = "mofact-colour-blind";
+const LARGE_TEXT_KEY: &str = "mofact-large-text";
+const REDUCE_MOTION_KEY: &str = "mofact-reduce-motion";
+const CRASH_KEY: &str = "mofact-crash";
+
+/// Crash reports kept in local storage, never sent (see `mofact::crash`).
+struct CrashKeep;
+
+impl mofact::crash::Keep for CrashKeep {
+    fn write(&self, report: &str) {
+        if let Some(Ok(Some(st))) = web_sys::window().map(|w| w.local_storage()) {
+            let _ = st.set_item(CRASH_KEY, report);
+        }
+    }
+}
+const LANGUAGE_KEY: &str = "mofact-language";
 /// Milliseconds between autosaves.
 const SAVE_EVERY: f64 = 30_000.0;
 
@@ -46,8 +65,12 @@ struct Shell {
     /// The page's `#safe` box, which CSS fits inside the screen's safe
     /// area: what is left round it is the notch and the home indicator.
     safe: Option<web_sys::Element>,
-    /// Low-power mode as last stored.
+    /// Low-power and colour-blind mode as last stored.
     low_power: bool,
+    colour_blind: bool,
+    large_text: bool,
+    reduce_motion: bool,
+    language: mofact_ui::i18n::Choice,
 }
 
 impl Shell {
@@ -71,13 +94,62 @@ impl Shell {
         }
         self.game.safe = self.safe_area(scale);
         self.game.frame(size, scale);
-        // Remember low-power mode for next time.
-        let low = self.game.low_power();
-        if low != self.low_power {
-            self.low_power = low;
+        if let Some(text) = self.game.clipboard.take() {
+            let _ = self.window.navigator().clipboard().write_text(&text);
+        }
+        // Phones' browsers buzz; the rest ignore it.
+        if let Some(feel) = self.game.haptic.take() {
+            use mofact::haptics::Haptic;
+            let ms = match feel {
+                Haptic::Tick => 8,
+                Haptic::Warning => 25,
+                Haptic::Success => 40,
+            };
+            let _ = self.window.navigator().vibrate_with_duration(ms);
+        }
+        // Remember the toggles in the menu for next time.
+        let g = &self.game;
+        let now = (
+            g.low_power(),
+            g.colour_blind(),
+            g.large_text(),
+            g.reduce_motion(),
+        );
+        let was = (
+            self.low_power,
+            self.colour_blind,
+            self.large_text,
+            self.reduce_motion,
+        );
+        if now != was {
+            (
+                self.low_power,
+                self.colour_blind,
+                self.large_text,
+                self.reduce_motion,
+            ) = now;
             if let Ok(Some(st)) = self.window.local_storage() {
-                let _ = st.set_item(LOW_POWER_KEY, if low { "1" } else { "0" });
+                let flag = |on: bool| if on { "1" } else { "0" };
+                let _ = st.set_item(LOW_POWER_KEY, flag(now.0));
+                let _ = st.set_item(COLOUR_BLIND_KEY, flag(now.1));
+                let _ = st.set_item(LARGE_TEXT_KEY, flag(now.2));
+                let _ = st.set_item(REDUCE_MOTION_KEY, flag(now.3));
             }
+        }
+        // And the language, when the player picks one.
+        let language = self.game.language();
+        if language != self.language {
+            self.language = language;
+            if let Ok(Some(st)) = self.window.local_storage() {
+                let _ = st.set_item(LANGUAGE_KEY, language.code());
+            }
+        }
+        if self.game.wants_slots() {
+            let mut store = Slots(self.window.local_storage().ok().flatten());
+            if let Err(e) = self.game.serve(&mut store) {
+                log(&format!("mofact: {e}"));
+            }
+            self.saved = self.now();
         }
         if self.now() - self.saved >= SAVE_EVERY {
             self.save();
@@ -125,10 +197,10 @@ impl Shell {
         let Ok(bytes) = self.game.sim.save().try_recv() else {
             return;
         };
-        if let Ok(Some(storage)) = self.window.local_storage() {
-            if storage.set_item(SAVE_KEY, &hex(&bytes)).is_err() {
-                log("mofact: the browser refused the save (storage full?)");
-            }
+        let mut store = Slots(self.window.local_storage().ok().flatten());
+        let slot = store.current();
+        if let Err(e) = store.write(slot, &bytes) {
+            log(&format!("mofact: {e}"));
         }
     }
 
@@ -193,14 +265,57 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// The save slots in the page's local storage, as hex text.
+struct Slots(Option<web_sys::Storage>);
+
+impl Slots {
+    fn key(slot: u8) -> String {
+        if slot == 0 {
+            SAVE_KEY.to_string()
+        } else {
+            format!("{SAVE_KEY}-{}", u32::from(slot) + 1)
+        }
+    }
+}
+
+impl Store for Slots {
+    fn read(&self, slot: u8) -> Option<Vec<u8>> {
+        unhex(&self.0.as_ref()?.get_item(&Self::key(slot)).ok()??)
+    }
+    fn write(&mut self, slot: u8, bytes: &[u8]) -> Result<(), String> {
+        let st = self.0.as_ref().ok_or("no local storage")?;
+        st.set_item(&Self::key(slot), &hex(bytes))
+            .map_err(|_| "the browser refused the save (storage full?)".to_string())
+    }
+    fn remove(&mut self, slot: u8) {
+        if let Some(st) = &self.0 {
+            let _ = st.remove_item(&Self::key(slot));
+        }
+    }
+    fn current(&self) -> u8 {
+        self.0
+            .as_ref()
+            .and_then(|st| st.get_item(SLOT_KEY).ok().flatten())
+            .and_then(|s| s.parse().ok())
+            .filter(|n| mofact::slots::valid(*n))
+            .unwrap_or(0)
+    }
+    fn set_current(&mut self, slot: u8) {
+        if let Some(st) = &self.0 {
+            let _ = st.set_item(SLOT_KEY, &slot.to_string());
+        }
+    }
+}
+
 /// The saved game, unless there is none, it is damaged, or the address asks for a new one.
 fn saved(window: &web_sys::Window, content: &mofact_core::content::Content) -> Option<Sim> {
     let search = window.location().search().unwrap_or_default();
     if search.contains("new") {
         return None;
     }
-    let text = window.local_storage().ok()??.get_item(SAVE_KEY).ok()??;
-    match Sim::load(content, &unhex(&text)?) {
+    let store = Slots(window.local_storage().ok()?);
+    let bytes = store.read(store.current())?;
+    match Sim::load(content, &bytes) {
         Ok((sim, warnings)) => {
             for w in warnings {
                 log(&format!("mofact: save: {w}"));
@@ -303,18 +418,87 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         sound: None,
         safe: window.document().and_then(|d| d.get_element_by_id("safe")),
         low_power: false,
+        colour_blind: false,
+        large_text: false,
+        reduce_motion: false,
+        language: mofact_ui::i18n::Choice::Device,
     }));
     {
         let mut s = shell.borrow_mut();
-        let stored = window
-            .local_storage()
-            .ok()
-            .flatten()
-            .and_then(|st| st.get_item(LOW_POWER_KEY).ok().flatten());
-        if stored.as_deref() == Some("1") {
+        let stored = |key: &str| {
+            window
+                .local_storage()
+                .ok()
+                .flatten()
+                .and_then(|st| st.get_item(key).ok().flatten())
+                .as_deref()
+                == Some("1")
+        };
+        if stored(LOW_POWER_KEY) {
             s.game.set_low_power(true);
             s.low_power = true;
         }
+        if stored(COLOUR_BLIND_KEY) {
+            s.game.set_colour_blind(true);
+            s.colour_blind = true;
+        }
+        if stored(LARGE_TEXT_KEY) {
+            s.game.set_large_text(true);
+            s.large_text = true;
+        }
+        // The browser's own "reduce motion" asks for it too, until the
+        // player says otherwise.
+        let asked = window
+            .match_media("(prefers-reduced-motion: reduce)")
+            .ok()
+            .flatten()
+            .is_some_and(|m| m.matches());
+        let motion = window
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|st| st.get_item(REDUCE_MOTION_KEY).ok().flatten());
+        if motion.map_or(asked, |v| v == "1") {
+            s.game.set_reduce_motion(true);
+            s.reduce_motion = true;
+        }
+        // The browser's languages, most preferred first; `?lang=ja` in the
+        // address stands in for them.
+        let nav = window.navigator();
+        let mut tags: Vec<String> = nav
+            .languages()
+            .iter()
+            .filter_map(|v| v.as_string())
+            .collect();
+        tags.extend(nav.language());
+        if let Some(tag) = window.location().search().ok().and_then(|q| {
+            q.split(['?', '&'])
+                .find_map(|p| p.strip_prefix("lang=").map(String::from))
+        }) {
+            tags.insert(0, tag);
+        }
+        s.game.set_device_lang(mofact_ui::i18n::Lang::for_device(
+            tags.iter().map(String::as_str),
+        ));
+        let language = window
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|st| st.get_item(LANGUAGE_KEY).ok().flatten())
+            .map_or(mofact_ui::i18n::Choice::Device, |c| {
+                mofact_ui::i18n::Choice::from_code(&c)
+            });
+        s.game.set_language(language);
+        s.language = language;
+        // The web link plays the full game until a store build is live
+        // (docs/decisions.md); then it becomes the demo with store links.
+        if let Ok(Some(st)) = window.local_storage() {
+            if let Ok(Some(report)) = st.get_item(CRASH_KEY) {
+                let _ = st.remove_item(CRASH_KEY);
+                s.game.set_crash_report(report);
+            }
+        }
+        mofact::crash::install(Box::new(CrashKeep));
         s.saved = s.now();
         match speaker(&mut s.game) {
             Ok(ctx) => s.sound = Some(ctx),

@@ -68,14 +68,37 @@ pub fn analyse(content: &Content) -> Report {
         .iter()
         .flat_map(|r| r.outputs.iter().map(|s| &s.item))
         .collect();
+    // A machine takes each input on a side of its own and puts each output
+    // out of another: a one-tile machine has four.
+    for r in &craftable {
+        let smallest = content
+            .buildings
+            .iter()
+            .filter_map(|b| match &b.role {
+                BuildingRole::Crafter { categories, .. } if categories.contains(&r.category) => {
+                    Some(u32::from(b.size.0) * u32::from(b.size.1))
+                }
+                _ => None,
+            })
+            .min();
+        if smallest == Some(1) && r.inputs.len() + r.outputs.len() > 4 {
+            report.problems.push(format!(
+                "{} has {} inputs and {} outputs: more than the four sides of a one-tile machine",
+                r.id,
+                r.inputs.len(),
+                r.outputs.len()
+            ));
+        }
+    }
     let has_miner = content
         .buildings
         .iter()
         .any(|b| matches!(b.role, BuildingRole::Miner { .. }));
 
-    // Raw resources: ores that no recipe makes, dug by miners.
+    // Raw resources: ores, dug by miners, even where a by-product gives
+    // some back.
     for i in &content.items {
-        if i.shape == IconShape::Ore && !made.contains(&i.id) && has_miner {
+        if i.shape == IconShape::Ore && has_miner {
             report.depth.insert(i.id.clone(), 0);
         }
     }
@@ -171,6 +194,17 @@ pub fn analyse(content: &Content) -> Report {
             BuildingRole::Engine { fluid, .. } => Some(fluid),
             _ => None,
         }))
+        // The megaproject takes the last parts.
+        .chain(content.buildings.iter().flat_map(|b| {
+            match &b.role {
+                BuildingRole::Megaproject { stages } => stages
+                    .iter()
+                    .flat_map(|s| &s.needs)
+                    .map(|s| &s.item)
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }))
         .collect();
     for r in &content.recipes {
         for s in r.outputs.iter().skip(1) {
@@ -257,15 +291,10 @@ fn makeable<'a>(
             _ => {}
         }
     }
-    let made: HashSet<&ItemId> = content
-        .recipes
-        .iter()
-        .flat_map(|r| r.outputs.iter().map(|s| &s.item))
-        .collect();
     let mut have: HashSet<&ItemId> = content
         .items
         .iter()
-        .filter(|i| miner && i.shape == IconShape::Ore && !made.contains(&i.id))
+        .filter(|i| miner && i.shape == IconShape::Ore)
         .map(|i| &i.id)
         .chain(pumped)
         .collect();
@@ -415,6 +444,10 @@ mod tests {
         assert_eq!(report.depth[&ItemId::from("engineering-pack")], 4);
         // Tier 5 (T53) runs deeper than anything before it.
         assert!(report.depth[&ItemId::from("precision-pack")] >= 7);
+        // The megaproject's last part is the deepest chain (R6).
+        let deepest = report.depth.values().max().copied().unwrap_or(0);
+        assert!(deepest >= 12, "deepest chain {deepest}");
+        assert_eq!(report.depth[&ItemId::from("orbital-beacon")], deepest);
         // Bricks go into labs; research takes the packs.
         assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
@@ -438,9 +471,74 @@ mod tests {
                 "silicon-processing",
                 "solar-energy",
                 "precision-engineering",
-                "precision-assembly"
+                "precision-assembly",
+                "titanium-smelting",
+                "aluminium-processing",
+                "rare-earth-processing",
+                "electric-engines",
+                "deep-mining",
+                "alternate-smelting",
+                "alternate-assembly",
+                "alternate-chemistry",
+                "alternate-silicon",
+                "alternate-alloys",
+                "superconductors",
+                "drones",
+                "fusion",
+                "satellites",
+                "skyhook",
+                // Repeatable (S2), open alongside the skyhook.
+                "deep-survey",
+                "lean-assembly",
+                "lab-automation",
             ]
         );
+    }
+
+    #[test]
+    fn every_alternate_recipe_changes_a_ratio() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let content = mofact_content::load_dir(&dir).expect("loads");
+        // What a recipe takes and gives, per one of its first output.
+        let per = |r: &RecipeDef| {
+            let n = r.outputs[0].count as f32;
+            let mut v: Vec<(String, i64)> = r
+                .inputs
+                .iter()
+                .map(|s| {
+                    (
+                        s.item.as_str().to_owned(),
+                        -(s.count as f32 / n * 1000.0) as i64,
+                    )
+                })
+                .chain(r.outputs.iter().skip(1).map(|s| {
+                    (
+                        s.item.as_str().to_owned(),
+                        (s.count as f32 / n * 1000.0) as i64,
+                    )
+                }))
+                .collect();
+            v.sort();
+            v
+        };
+        let mut alternates = 0;
+        for (k, r) in content.recipes.iter().enumerate() {
+            let Some(first) = content.recipes[..k]
+                .iter()
+                .find(|o| o.outputs[0].item == r.outputs[0].item)
+            else {
+                continue;
+            };
+            alternates += 1;
+            assert_ne!(
+                per(first),
+                per(r),
+                "`{}` has the same ratio as `{}`",
+                r.id,
+                first.id
+            );
+        }
+        assert!(alternates >= 20, "{alternates} alternate recipes");
     }
 
     #[test]

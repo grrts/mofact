@@ -7,13 +7,15 @@
 use crate::built::Built;
 use crate::guide::{Coach, Guide};
 use crate::ore::OreMap;
+use crate::shop::Purchase;
+use crate::slots::{Request, Store};
 use crate::sound::Sound;
 use mofact_core::content::Content;
 use mofact_core::geom::TilePos;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
-use mofact_ui::{Action, Hud, View};
+use mofact_ui::{tr, trf, Action, Hud, SlotView, StoreView, View};
 use web_time::{Duration, Instant};
 
 /// Frame pacing (T66): 60 fps while playing, 30 in low-power mode or once
@@ -42,6 +44,10 @@ pub struct Game {
     /// A letter key for each building the toolbar has no number for.
     hotkeys: Vec<(char, mofact_core::ids::BuildingId)>,
     content: Content,
+    /// The content with its names in the player's language, for the HUD,
+    /// and the language it is in.
+    shown: Content,
+    shown_lang: mofact_ui::i18n::Lang,
     ore: OreMap,
     pub controls: Controls,
     built: Built,
@@ -62,6 +68,21 @@ pub struct Game {
     /// pressed anything: frames are paced from these (T66).
     drawn: Option<Instant>,
     touched: Instant,
+    /// What the game menu asked of the save slots, for [`Game::serve`],
+    /// and the slots as it lists them.
+    requests: Vec<Request>,
+    slots: Vec<SlotView>,
+    /// The full game's purchase; none where nothing is sold, which plays
+    /// the full game (tests, tools).
+    purchase: Option<Purchase>,
+    store: StoreView,
+    /// What the phone should feel this frame, for the platform to play.
+    haptics: crate::haptics::Haptics,
+    pub haptic: Option<crate::haptics::Haptic>,
+    /// Last time's crash report, until the player copies it.
+    crash: Option<String>,
+    /// Text for the platform to put on the clipboard.
+    pub clipboard: Option<String>,
 }
 
 impl Game {
@@ -73,8 +94,15 @@ impl Game {
         ore: OreMap,
         camera: Camera,
     ) -> Self {
-        // Drills mine the same generated map the player sees.
-        sim.set_world(ore.seed());
+        // Drills mine the same generated map the player sees: a save's own
+        // map if it brought one, otherwise the one given.
+        let ore = match sim.world_seed() {
+            Some((seed, preset)) if (seed, preset) != (ore.seed(), ore.gen().preset) => {
+                ore.regen(&content, seed, preset)
+            }
+            _ => ore,
+        };
+        sim.set_world_gen(ore.seed(), ore.gen().preset);
         let look = Look::new(&content);
         let (w, h) = target.size();
         let mut controls = Controls::new(CameraControl::new(
@@ -120,11 +148,36 @@ impl Game {
             before_map: None,
             drawn: None,
             touched: Instant::now(),
+            requests: Vec::new(),
+            slots: Vec::new(),
+            purchase: None,
+            store: StoreView::default(),
+            haptics: Default::default(),
+            haptic: None,
+            crash: None,
+            clipboard: None,
+            shown: content.clone(),
+            shown_lang: mofact_ui::i18n::Lang::En,
             content,
             ore,
             controls,
             latest: (0, Instant::now()),
         }
+    }
+
+    /// The language the player chose (T65): the device's, or one of their own.
+    pub fn language(&self) -> mofact_ui::i18n::Choice {
+        self.hud.language()
+    }
+
+    /// Choose the language, as a saved setting does at start.
+    pub fn set_language(&mut self, choice: mofact_ui::i18n::Choice) {
+        self.hud.set_language(choice);
+    }
+
+    /// Tell the game the device's language, from its preferred locales.
+    pub fn set_device_lang(&mut self, lang: mofact_ui::i18n::Lang) {
+        self.hud.set_device_lang(lang);
     }
 
     /// Whether low-power mode is on (T66).
@@ -136,6 +189,63 @@ impl Game {
     pub fn set_low_power(&mut self, on: bool) {
         self.hud.set_low_power(on);
         self.scene.low_power = on;
+    }
+
+    /// Whether colour-blind mode is on (T58).
+    pub fn colour_blind(&self) -> bool {
+        self.hud.colour_blind()
+    }
+
+    /// Turn colour-blind mode on or off, as a platform does from a saved setting.
+    pub fn set_colour_blind(&mut self, on: bool) {
+        self.hud.set_colour_blind(on);
+        self.use_colour_blind(on);
+    }
+
+    /// Whether large text is on.
+    pub fn large_text(&self) -> bool {
+        self.hud.large_text()
+    }
+
+    /// Turn large text on or off, as a platform does from a saved setting.
+    pub fn set_large_text(&mut self, on: bool) {
+        self.hud.set_large_text(on);
+    }
+
+    /// Whether reduce motion is on.
+    pub fn reduce_motion(&self) -> bool {
+        self.hud.reduce_motion()
+    }
+
+    /// Turn reduce motion on or off, as a platform does from a saved setting.
+    pub fn set_reduce_motion(&mut self, on: bool) {
+        self.hud.set_reduce_motion(on);
+        self.scene.still = on;
+    }
+
+    /// Paint everything again in the colour-blind look, or the usual one.
+    /// The game crashed last time: say so, and offer the report in the menu.
+    pub fn set_crash_report(&mut self, report: String) {
+        self.crash = Some(report);
+        self.hud.toast(tr("toast.crashed"));
+    }
+
+    /// Sell the full game through `shop`: the demo's gate holds until it
+    /// is bought (T61).
+    pub fn set_shop(&mut self, shop: Box<dyn crate::shop::Shop>) {
+        let p = Purchase::new(shop);
+        self.sim.set_demo(p.demo());
+        self.store = p.view();
+        self.purchase = Some(p);
+    }
+
+    fn use_colour_blind(&mut self, on: bool) {
+        if self.look.colour_blind() == on {
+            return;
+        }
+        self.look = Look::with_colour_blind(&self.content, on);
+        self.renderer = Renderer::new(&self.gpu, self.look.atlases());
+        self.overlay = Overlay::new(&self.look);
     }
 
     /// The window was resized to `w` × `h` pixels.
@@ -156,9 +266,17 @@ impl Game {
             return Frame::Skipped;
         }
         self.drawn = Some(now);
+        if let Some(p) = &mut self.purchase {
+            if p.poll() {
+                self.sim.set_demo(None);
+                self.hud.toast(tr("toast.full_game_open"));
+            }
+            self.store = p.view();
+        }
         self.sim.pump();
         let results: Vec<_> = self.sim.results().collect();
         self.sound.results(&results);
+        self.haptic = self.haptics.frame(&results, &self.sim.latest());
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
@@ -167,17 +285,18 @@ impl Game {
                     self.hud.toast(&text);
                     continue;
                 }
-                self.hud.toast(match why {
-                    E::Blocked => "Something is in the way.",
-                    E::CannotAfford => "Not enough in stock.",
-                    E::Locked => "That isn't unlocked yet.",
-                    E::NoSuchEntity => "That's already gone.",
-                    E::UnknownContent => "That isn't in this game's data.",
-                    E::FluidsMix => "That would mix two fluids.",
-                    E::NoOre => "Drills only go on ore: tap a coloured ore tile.",
-                    E::Terrain => "Nothing can be built on water or cliffs.",
-                    E::Overgrown => "Trees in the way: drag over them with Remove to clear them.",
-                });
+                self.hud.toast(tr(match why {
+                    E::Blocked => "error.blocked",
+                    E::CannotAfford => "error.cannot_afford",
+                    E::Locked => "error.locked",
+                    E::NoSuchEntity => "error.no_such_entity",
+                    E::UnknownContent => "error.unknown_content",
+                    E::FluidsMix => "error.fluids_mix",
+                    E::NoOre => "error.no_ore",
+                    E::Terrain => "error.terrain",
+                    E::Overgrown => "error.overgrown",
+                    E::FullGame => "error.full_game",
+                }));
             }
         }
         for action in self.hud.poll(Instant::now()) {
@@ -206,6 +325,7 @@ impl Game {
             pixels_per_tile: self.controls.camera.pixels_per_tile,
         };
         let atlases = self.renderer.atlases();
+        self.scene.night = mofact_render::night_at(latest.tick);
         self.scene.build(
             &self.look,
             atlases,
@@ -322,6 +442,7 @@ impl Game {
             crate::worldmap::factory(
                 &mut self.overlay,
                 &self.content,
+                &self.look,
                 &camera,
                 target.size(),
                 scale,
@@ -369,11 +490,15 @@ impl Game {
             scale,
             t,
         );
+        if self.shown_lang != mofact_ui::i18n::lang() {
+            self.shown_lang = mofact_ui::i18n::lang();
+            self.shown = mofact_ui::i18n::localize(&self.content);
+        }
         let builder = &self.controls.builder;
         let view = View {
             size: target.size(),
             scale,
-            content: &self.content,
+            content: &self.shown,
             look: &self.look,
             snapshot: &latest,
             tool: &builder.tool,
@@ -383,6 +508,9 @@ impl Game {
             history: self.sim.history(),
             safe: self.safe,
             nudge,
+            slots: &self.slots,
+            store: &self.store,
+            crash: self.crash.is_some(),
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -445,10 +573,10 @@ impl Game {
         let id = match &self.controls.builder.tool {
             Tool::Place(b) => b.clone(),
             Tool::Belt => self.controls.builder.belt.clone(),
-            _ => return "Not enough in stock.".into(),
+            _ => return tr("error.cannot_afford").into(),
         };
-        let Some(def) = self.content.buildings.iter().find(|b| b.id == id) else {
-            return "Not enough in stock.".into();
+        let Some(def) = self.shown.buildings.iter().find(|b| b.id == id) else {
+            return tr("error.cannot_afford").into();
         };
         let latest = self.sim.latest();
         let have = |item: &mofact_core::ids::ItemId| {
@@ -464,18 +592,22 @@ impl Game {
             .filter(|c| have(&c.item) < c.count)
             .map(|c| {
                 let name = self
-                    .content
+                    .shown
                     .items
                     .iter()
                     .find(|i| i.id == c.item)
                     .map_or(c.item.as_str(), |i| i.name.as_str());
-                format!("{} {name}", c.count - have(&c.item))
+                trf("error.short_item", &[&(c.count - have(&c.item)), &name])
             })
             .collect();
         if missing.is_empty() {
-            return "Not enough in stock.".into();
+            return tr("error.cannot_afford").into();
         }
-        format!("{} needs {} more.", def.name, missing.join(", "))
+        let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
+        trf(
+            "error.short_of",
+            &[&def.name, &mofact_ui::i18n::join(&missing)],
+        )
     }
 
     fn act(&mut self, action: Action) {
@@ -486,7 +618,31 @@ impl Game {
             Action::Belt(belt) => self.controls.builder.belt = belt,
             Action::Send(command) => self.sim.send(command),
             Action::Undo => self.sim.undo(),
+            Action::MenuOpened => self.requests.push(Request::Refresh),
+            // The slots' words are in the language they were listed in.
+            Action::Language(_) => self.requests.push(Request::Refresh),
+            Action::LoadSlot(n) => self.requests.push(Request::Load(n)),
+            Action::DeleteSlot(n) => self.requests.push(Request::Delete(n)),
+            Action::NewGame { slot, seed, preset } => {
+                self.requests.push(Request::New { slot, seed, preset })
+            }
             Action::Redo => self.sim.redo(),
+            Action::CopyCrash => {
+                if let Some(r) = self.crash.take() {
+                    self.clipboard = Some(r);
+                    self.hud.toast(tr("toast.crash_copied"));
+                }
+            }
+            Action::Buy => {
+                if let Some(p) = &mut self.purchase {
+                    p.buy();
+                }
+            }
+            Action::Restore => {
+                if let Some(p) = &mut self.purchase {
+                    p.restore();
+                }
+            }
             // With the hand, a tap inspects what's there or closes the sheet.
             // With a building in hand, a tap on something already built
             // inspects it instead of trying to build on top of it.
@@ -521,7 +677,7 @@ impl Game {
                             });
                             self.hud.stop_picked();
                         }
-                        _ => self.hud.toast("Tap a train stop to add it"),
+                        _ => self.hud.toast(tr("toast.tap_stop")),
                     }
                     return;
                 }
@@ -550,6 +706,9 @@ impl Game {
             // inspect sheet (opened by the HUD) says what's wrong.
             Action::Mute(muted) => self.sound.set_muted(muted),
             Action::LowPower(on) => self.scene.low_power = on,
+            Action::ColourBlind(on) => self.use_colour_blind(on),
+            Action::LargeText(_) => {}
+            Action::ReduceMotion(on) => self.scene.still = on,
             Action::Map(open) => {
                 let cam = &mut self.controls.camera;
                 let scale = cam.scale();
@@ -612,6 +771,96 @@ impl Game {
             // Everything one gesture builds is one undo step.
             self.sim.send_all(self.controls.handle(p, &self.built));
         }
+    }
+}
+
+impl Game {
+    /// Whether the game menu has asked anything of the save slots.
+    pub fn wants_slots(&self) -> bool {
+        !self.requests.is_empty()
+    }
+
+    /// The bytes of the game being played, waiting at most two seconds.
+    pub fn save_bytes(&self) -> Result<Vec<u8>, String> {
+        let rx = self.sim.save();
+        // The browser's simulation answers at once; a thread may take a tick.
+        rx.try_recv()
+            .or_else(|_| rx.recv_timeout(std::time::Duration::from_secs(2)))
+            .map_err(|_| "the simulation did not answer the save".to_string())
+    }
+
+    /// Do what the game menu asked of the slots in `store`: each switch
+    /// saves the game being played first, so nothing is lost.
+    pub fn serve(&mut self, store: &mut dyn Store) -> Result<(), String> {
+        for request in std::mem::take(&mut self.requests) {
+            let current = store.current();
+            match request {
+                Request::Refresh => store.write(current, &self.save_bytes()?)?,
+                Request::Delete(n) => {
+                    if n != current && crate::slots::valid(n) {
+                        store.remove(n);
+                    }
+                }
+                Request::Load(n) => {
+                    if n == current || !crate::slots::valid(n) {
+                        continue;
+                    }
+                    let Some(bytes) = store.read(n) else {
+                        continue;
+                    };
+                    let (sim, _) = Sim::load(&self.content, &bytes).map_err(|e| e.to_string())?;
+                    store.write(current, &self.save_bytes()?)?;
+                    self.switch(sim);
+                    store.set_current(n);
+                    self.hud.toast(trf("toast.slot_loaded", &[&(n + 1)]));
+                }
+                Request::New { slot, seed, preset } => {
+                    if !crate::slots::valid(slot) {
+                        continue;
+                    }
+                    let (mut sim, _) = new_game(&self.content, seed)?;
+                    sim.set_world_gen(seed, mofact_world::Preset::from_u8(preset));
+                    if slot != current {
+                        store.write(current, &self.save_bytes()?)?;
+                    }
+                    store.write(slot, &sim.save())?;
+                    self.switch(sim);
+                    store.set_current(slot);
+                    self.hud.toast(trf("menu.new_game_in_slot", &[&(slot + 1)]));
+                }
+            }
+        }
+        self.list_slots(store);
+        Ok(())
+    }
+
+    /// List the slots in `store` for the game menu.
+    pub fn list_slots(&mut self, store: &dyn Store) {
+        let current = store.current();
+        self.slots = (0..mofact_ui::SLOTS)
+            .map(|n| crate::slots::summary(&self.content, store.read(n).as_deref(), n == current))
+            .collect();
+    }
+
+    /// Play `sim` instead: its own map, a fresh look at it, and the hand.
+    fn switch(&mut self, mut sim: Sim) {
+        let (seed, preset) = sim
+            .world_seed()
+            .unwrap_or((42, mofact_world::Preset::Standard));
+        self.ore = self.ore.regen(&self.content, seed, preset);
+        sim.set_world_gen(seed, preset);
+        let camera = framing(&self.content, &sim);
+        sim.set_demo(self.purchase.as_ref().and_then(Purchase::demo));
+        self.sim = SimHandle::spawn(sim);
+        self.built = Built::new(&self.content);
+        self.built.world = Some(self.ore.gen());
+        self.scene.forget_terrain();
+        self.controls.camera.center = camera.center;
+        self.controls.builder.set_tool(Tool::Hand);
+        self.hud.select(None);
+        self.guide = Guide::default();
+        self.before_map = None;
+        self.latest = (0, Instant::now());
     }
 }
 
@@ -811,7 +1060,7 @@ fn power_marks(
         }
         if e.state == mofact_core::snapshot::MachineState::NoPower && ppt >= 14.0 * scale {
             let px = 11.0 * scale;
-            let text = "No power";
+            let text = tr("state.no_power");
             let (pad, ch) = (6.0 * scale, 18.0 * scale);
             let tw = o.measure(text, px) + 2.0 * pad;
             let c = mid(e, 0.0);

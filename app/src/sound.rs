@@ -127,38 +127,54 @@ impl Sound {
         let half = [size.0 as f32 / 2.0 / ppt, size.1 as f32 / 2.0 / ppt];
         // Zoomed out, the factory is further away and each machine counts less.
         let zoom = (ppt / 32.0).clamp(0.3, 1.0);
-        let moving: HashSet<TilePos> = snap.belt_items.iter().map(|i| i.tile).collect();
-        let machines = snap.entities.iter().filter_map(|e| {
-            let &(hum, (w, h)) = self.kinds.get(&e.building)?;
-            let cx = e.pos.x as f32 + f32::from(w) / 2.0;
-            let cy = e.pos.y as f32 + f32::from(h) / 2.0;
-            let nx = (cx - camera.center[0]) / half[0].max(0.5);
-            let ny = (cy - camera.center[1]) / half[1].max(0.5);
-            let near = (1.25 - nx.abs().max(ny.abs())).clamp(0.0, 1.0) * zoom;
-            let state = if hum == Some(Hum::Belt) {
-                // A belt works while it carries something.
-                if moving.contains(&e.pos) {
-                    State::Working
+        // Only what is near the view can be heard: on a big factory most
+        // of it is far away, so skip that before anything costs (T65).
+        let reach = [half[0].max(0.5) * 1.25 + 4.0, half[1].max(0.5) * 1.25 + 4.0];
+        let near = |t: TilePos| {
+            (t.x as f32 - camera.center[0]).abs() < reach[0]
+                && (t.y as f32 - camera.center[1]).abs() < reach[1]
+        };
+        let moving: HashSet<TilePos> = snap
+            .belt_items
+            .iter()
+            .map(|i| i.tile)
+            .filter(|t| near(*t))
+            .collect();
+        let machines = snap
+            .entities
+            .iter()
+            .filter(|e| near(e.pos))
+            .filter_map(|e| {
+                let &(hum, (w, h)) = self.kinds.get(&e.building)?;
+                let cx = e.pos.x as f32 + f32::from(w) / 2.0;
+                let cy = e.pos.y as f32 + f32::from(h) / 2.0;
+                let nx = (cx - camera.center[0]) / half[0].max(0.5);
+                let ny = (cy - camera.center[1]) / half[1].max(0.5);
+                let near = (1.25 - nx.abs().max(ny.abs())).clamp(0.0, 1.0) * zoom;
+                let state = if hum == Some(Hum::Belt) {
+                    // A belt works while it carries something.
+                    if moving.contains(&e.pos) {
+                        State::Working
+                    } else {
+                        State::Idle
+                    }
                 } else {
-                    State::Idle
-                }
-            } else {
-                match e.state {
-                    MachineState::Idle => State::Idle,
-                    MachineState::Working => State::Working,
-                    MachineState::Starved => State::Starved,
-                    MachineState::Blocked => State::Blocked,
-                    MachineState::NoPower => State::NoPower,
-                }
-            };
-            Some(Machine {
-                id: e.id.0,
-                hum,
-                state,
-                pan: nx.clamp(-1.0, 1.0),
-                near,
-            })
-        });
+                    match e.state {
+                        MachineState::Idle => State::Idle,
+                        MachineState::Working => State::Working,
+                        MachineState::Starved => State::Starved,
+                        MachineState::Blocked => State::Blocked,
+                        MachineState::NoPower => State::NoPower,
+                    }
+                };
+                Some(Machine {
+                    id: e.id.0,
+                    hum,
+                    state,
+                    pan: nx.clamp(-1.0, 1.0),
+                    near,
+                })
+            });
         let mut synth = self.audio.lock();
         self.scape.update(&mut synth, dt, machines);
 

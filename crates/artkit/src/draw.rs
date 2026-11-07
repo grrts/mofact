@@ -25,6 +25,9 @@ pub enum Shape {
     Wafer,
     Chip,
     Frame,
+    Magnet,
+    Satellite,
+    Nozzle,
 }
 
 /// The four directions, as `(dx, dy)` steps, in the core's `Dir` order.
@@ -85,6 +88,45 @@ fn gear_points(n: usize, inner: f32, outer: f32) -> Vec<(f32, f32)> {
             (a.cos() * r, a.sin() * r)
         })
         .collect()
+}
+
+/// How many different [`mark`]s there are, not counting none.
+pub const MARKS: u8 = 7;
+
+/// A small sign on the lower right of an item icon `s` pixels across,
+/// centred on (`x`, `y`), that tells it from others of the same shape
+/// without its colour (T58): `k` from 1 to [`MARKS`] is a dot, a bar, a
+/// ring, a cross, a triangle, two dots or a square; 0 is none.
+pub fn mark(c: &mut Canvas, k: u8, x: f32, y: f32, s: f32) {
+    if k == 0 {
+        return;
+    }
+    let r = (s * 0.2).max(2.0);
+    let (cx, cy) = (x + s * 0.5 - r, y + s * 0.5 - r);
+    c.fill_circle(cx, cy, r, pal::GROUND);
+    let ink = pal::WHITE;
+    let g = r * 0.62;
+    let w = (r * 0.3).max(1.0);
+    match (k - 1) % MARKS {
+        0 => c.fill_circle(cx, cy, g * 0.55, ink),
+        1 => c.fill_rect(cx - g, cy - w / 2.0, 2.0 * g, w, ink),
+        2 => c.stroke_circle(cx, cy, g * 0.75, ink, w),
+        3 => {
+            c.fill_rect(cx - g, cy - w / 2.0, 2.0 * g, w, ink);
+            c.fill_rect(cx - w / 2.0, cy - g, w, 2.0 * g, ink);
+        }
+        4 => {
+            let t = [(0.0, -1.0), (0.9, 0.7), (-0.9, 0.7)];
+            if let Some(p) = poly(&t, cx, cy, g * 2.0 * 0.5) {
+                c.fill(&p, ink);
+            }
+        }
+        5 => {
+            c.fill_circle(cx - g * 0.5, cy, g * 0.38, ink);
+            c.fill_circle(cx + g * 0.5, cy, g * 0.38, ink);
+        }
+        _ => c.fill_rect(cx - g * 0.6, cy - g * 0.6, g * 1.2, g * 1.2, ink),
+    }
 }
 
 /// An item icon `s` pixels across, centred on (`x`, `y`). `flat` leaves out
@@ -362,6 +404,77 @@ pub fn item(c: &mut Canvas, shape: Shape, color: Rgba, x: f32, y: f32, s: f32, f
             );
             if detail {
                 c.fill_circle(x - s * 0.28, y - s * 0.28, s * 0.04, lo);
+            }
+        }
+        Shape::Magnet => {
+            // A horseshoe magnet, its two poles tipped in steel.
+            let w = s * 0.26;
+            let (cy, r) = (y - s * 0.02, s * 0.3);
+            c.stroke_arc((x, cy), r, (0.0, PI), lo, w * 1.25);
+            c.stroke_arc((x, cy), r, (0.0, PI), color, w);
+            for side in [-1.0, 1.0] {
+                let px = x + side * r - w / 2.0;
+                c.fill_rect(px, y - s * 0.46, w, s * 0.44, color);
+                c.fill_rect(px, y - s * 0.5, w, s * 0.14, pal::DRILL_BIT);
+            }
+            if detail {
+                c.stroke_arc(
+                    (x, cy),
+                    r + w * 0.3,
+                    (PI * 0.6, PI * 0.9),
+                    hi,
+                    (s * 0.05).max(1.0),
+                );
+            }
+        }
+        Shape::Satellite => {
+            // A body between two wings of solar cells, struts between.
+            let w = (s * 0.06).max(1.0);
+            c.line(&[(x - s * 0.3, y), (x + s * 0.3, y)], pal::PIPE_HI, w);
+            for side in [-1.0, 1.0] {
+                let wx = x + side * s * 0.34 - s * 0.16;
+                fill(
+                    c,
+                    rr(wx, y - s * 0.3, s * 0.32, s * 0.6, s * 0.03),
+                    pal::SOLAR,
+                );
+                if detail {
+                    let lw = (s * 0.03).max(1.0);
+                    c.line(
+                        &[(wx + s * 0.16, y - s * 0.3), (wx + s * 0.16, y + s * 0.3)],
+                        shade(pal::SOLAR, 0.3),
+                        lw,
+                    );
+                    c.line(&[(wx, y), (wx + s * 0.32, y)], shade(pal::SOLAR, 0.3), lw);
+                }
+            }
+            fill(
+                c,
+                rr(x - s * 0.14, y - s * 0.2, s * 0.28, s * 0.4, s * 0.06),
+                color,
+            );
+            c.fill_circle(x, y - s * 0.04, s * 0.07, hi);
+            if detail {
+                c.fill_rect(x - s * 0.1, y + s * 0.1, s * 0.2, s * 0.04, lo);
+            }
+        }
+        Shape::Nozzle => {
+            // A bell opening downwards under its chamber, glowing inside.
+            fill(
+                c,
+                rr(x - s * 0.16, y - s * 0.5, s * 0.32, s * 0.26, s * 0.08),
+                lo,
+            );
+            let bell = [(-0.14, -0.26), (0.14, -0.26), (0.42, 0.46), (-0.42, 0.46)];
+            fill(c, poly(&bell, x, y, s), color);
+            fill(
+                c,
+                ellipse(x, y + s * 0.44, s * 0.36, s * 0.07),
+                pal::FLAME[0],
+            );
+            if detail {
+                let light = [(-0.14, -0.26), (-0.04, -0.26), (-0.22, 0.42), (-0.36, 0.42)];
+                fill(c, poly(&light, x, y, s), hi);
             }
         }
         Shape::Frame => {
@@ -713,10 +826,16 @@ pub fn assembler(c: &mut Canvas, z: f32, product: Option<(Shape, Rgba)>, fine: b
 
 /// The badge over a stalled machine, a disc of radius `r` centred in a
 /// `2r`-pixel square: "!" when it waits for input, "=" when its output is full.
-pub fn badge(c: &mut Canvas, r: f32, starved: bool) {
+/// With `safe`, in the colour-blind set (T58).
+pub fn badge(c: &mut Canvas, r: f32, starved: bool, safe: bool) {
     let (cx, cy) = (r, r);
     let r = (r - 0.5).max(1.0);
-    let color = if starved { pal::STARVE } else { pal::ACCENT };
+    let status = if starved {
+        pal::Status::Starved
+    } else {
+        pal::Status::Blocked
+    };
+    let color = pal::status(status, safe);
     c.fill_circle(cx, cy, r, color);
     if starved {
         c.fill_rect(cx - r * 0.14, cy - r * 0.6, r * 0.28, r * 0.7, pal::GROUND);
@@ -787,25 +906,16 @@ pub fn turbine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
     c.restore();
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// A splitter facing east: a short belt stub from the west into a housing
 /// that sends items out north and south, shown by arrows on both sides.
 pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
     let s = z;
-    let sh = z * 0.07;
     // The intake: the belt's western half.
     c.fill_rect(0.0, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
     c.fill_rect(0.0, s * 0.1, s * 0.5, s * 0.08, pal::BELT_RAIL);
     c.fill_rect(0.0, s * 0.82, s * 0.5, s * 0.08, pal::BELT_RAIL);
-    shadow(
-        c,
-        rr(
-            s * 0.3 + sh,
-            s * 0.06 + sh * 1.3,
-            s * 0.62,
-            s * 0.88,
-            s * 0.12,
-        ),
-    );
     fill(
         c,
         rr(s * 0.3, s * 0.06, s * 0.62, s * 0.88, s * 0.12),
@@ -831,21 +941,18 @@ pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
     }
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// One end of an underground belt facing east. An entrance takes the belt
 /// in from the west and dives under a hood on its eastern half; an exit
 /// is the same turned around, the belt coming out to the east.
 pub fn underground(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
     let s = z;
-    let sh = z * 0.07;
     let (belt_x, hood_x) = if exit { (s * 0.5, 0.0) } else { (0.0, s * 0.5) };
     c.fill_rect(belt_x, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
     c.fill_rect(belt_x, s * 0.1, s * 0.5, s * 0.08, pal::BELT_RAIL);
     c.fill_rect(belt_x, s * 0.82, s * 0.5, s * 0.08, pal::BELT_RAIL);
     arrow(c, belt_x + s * 0.22, s * 0.5, 0, s * 0.4, pal::CHEVRON);
-    shadow(
-        c,
-        rr(hood_x + sh, s * 0.06 + sh * 1.3, s * 0.5, s * 0.88, s * 0.1),
-    );
     fill(
         c,
         rr(hood_x, s * 0.06, s * 0.5, s * 0.88, s * 0.1),
@@ -907,7 +1014,6 @@ const CHANNEL: f32 = 0.18;
 /// west 4, north 8): a steel run with a dark channel down its middle. An
 /// empty pipe shows the channel dark; [`pipe_fluid`] fills it.
 pub fn pipe(c: &mut Canvas, z: f32, fine: bool, links: u8) {
-    let h = z * 0.5;
     let sh = z * 0.06;
     c.save();
     c.translate(sh, sh * 1.3);
@@ -915,6 +1021,13 @@ pub fn pipe(c: &mut Canvas, z: f32, fine: bool, links: u8) {
         arm(c, z, d, 0.5, pal::SHADOW);
     }
     c.restore();
+    pipe_body(c, z, fine, links);
+}
+
+/// [`pipe`] without its shadow, for parts that are turned when drawn and so
+/// have theirs cast by the renderer.
+fn pipe_body(c: &mut Canvas, z: f32, fine: bool, links: u8) {
+    let h = z * 0.5;
     for d in arms(links) {
         arm(c, z, d, 0.5, pal::MACHINE_EDGE);
     }
@@ -1036,22 +1149,13 @@ pub fn tank_fluid(c: &mut Canvas, z: f32) {
     c.fill_circle(s / 2.0, s / 2.0, s * TANK_WINDOW, pal::WHITE);
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// A pump facing east: a pipe through a motor housing, with an arrow for
 /// the way it pushes.
 pub fn pump(c: &mut Canvas, z: f32, fine: bool) {
-    pipe(c, z, fine, 5);
+    pipe_body(c, z, fine, 5);
     let s = z;
-    let sh = z * 0.07;
-    shadow(
-        c,
-        rr(
-            s * 0.2 + sh,
-            s * 0.14 + sh * 1.3,
-            s * 0.6,
-            s * 0.72,
-            s * 0.12,
-        ),
-    );
     fill(
         c,
         rr(s * 0.2, s * 0.14, s * 0.6, s * 0.72, s * 0.12),
@@ -1072,15 +1176,15 @@ pub fn pump(c: &mut Canvas, z: f32, fine: bool) {
     }
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// One end of an underground pipe facing east. An entrance takes the pipe
 /// in from the west and goes down under a cap on its eastern half; an exit
 /// is the same turned around.
 pub fn underground_pipe(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
-    pipe(c, z, fine, if exit { 1 } else { 4 });
+    pipe_body(c, z, fine, if exit { 1 } else { 4 });
     let s = z;
-    let sh = z * 0.07;
     let cx = if exit { s * 0.38 } else { s * 0.62 };
-    shadow(c, ellipse(cx + sh, s * 0.5 + sh * 1.3, s * 0.32, s * 0.32));
     c.fill_circle(cx, s * 0.5, s * 0.32, pal::MACHINE_EDGE);
     c.fill_circle(cx, s * 0.5, s * 0.28, pal::MACHINE);
     c.fill_circle(cx, s * 0.5, s * 0.16, pal::MACHINE_EDGE);
@@ -1453,7 +1557,34 @@ pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: 
             );
         }
     }
-    // The paddle across the vat, on its hub.
+    paddle(c, s, pose);
+    if fine {
+        for &(bx, by) in &corners {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+    notch(c, z, pose);
+}
+
+/// A chemical plant's vat in white, to be tinted with what it makes.
+pub fn chemical_vat(c: &mut Canvas, z: f32) {
+    let (vx, vy) = (z * 0.5, z * 0.5);
+    c.fill_circle(vx, vy, z * 0.22, shade(pal::WHITE, -0.3));
+    c.fill_circle(vx - z * 0.03, vy - z * 0.03, z * 0.17, pal::WHITE);
+}
+
+/// A chemical plant's paddle and hub alone, facing east, to draw over its vat.
+pub fn chemical_paddle(c: &mut Canvas, z: f32) {
+    let pose = Pose {
+        t: 1.0 / 11.0,
+        ..Pose::default()
+    };
+    paddle(c, z, &pose);
+}
+
+/// The paddle across a chemical plant's vat, on its hub.
+fn paddle(c: &mut Canvas, s: f32, pose: &Pose) {
+    let (vx, vy) = (s * 0.5, s * 0.5);
     let a = pose.t * 3.0 + f32::from(pose.dir) * FRAC_PI_2;
     let (dx, dy) = (a.cos() * s * 0.2, a.sin() * s * 0.2);
     c.line(
@@ -1468,12 +1599,6 @@ pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: 
     );
     c.fill_circle(vx, vy, s * 0.06, pal::MACHINE_EDGE);
     c.fill_circle(vx, vy, s * 0.035, pal::ACCENT);
-    if fine {
-        for &(bx, by) in &corners {
-            bolt(c, bx * s, by * s, s * 0.025);
-        }
-    }
-    notch(c, z, pose);
 }
 
 /// A soft white dot filling a `s`-pixel square, for smoke, dust and
@@ -2052,4 +2177,157 @@ pub fn stripe(c: &mut Canvas, z: f32, fine: bool, octagon: bool) {
 /// The faster assembler's inner octagon, for its stripe.
 fn octagon_points() -> [(f32, f32); 8] {
     octagon(0.2, 0.07)
+}
+
+/// A deep drill: an octagonal housing in its tier's stripes over a wide
+/// four-bladed bit, ringed in what it mines, with a motor housing behind.
+pub fn deep_drill(c: &mut Canvas, z: f32, ore: Rgba, fine: bool, pose: &Pose, trim: Rgba) {
+    let (s, sh) = (z, z * 0.07);
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let outer = octagon(0.2, 0.04);
+    let inner = octagon(0.18, 0.08);
+    shape_at(c, &outer, sh, sh * 1.3, s, pal::SHADOW);
+    shape_at(c, &outer, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    shape_at(c, &inner, 0.0, 0.0, s, pal::MACHINE);
+    // The tier's stripes on all four flat sides.
+    let w = (s * 0.05).max(1.0);
+    for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7)] {
+        let p = |i: usize| (inner[i].0 * s, inner[i].1 * s);
+        c.line(&[p(a), p(b)], trim, w);
+    }
+    // The motor behind the bit.
+    let (mx, my) = pose.local(z, -0.27, 0.0);
+    c.fill_circle(mx, my, s * 0.11, pal::MACHINE_EDGE);
+    c.fill_circle(mx, my, s * 0.08, pal::item("electric-engine"));
+    c.fill_circle(cx, cy, s * 0.3, shade(ore, -0.45));
+    c.fill_circle(cx, cy, s * 0.25, ore);
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(if pose.working { pose.t * 9.0 } else { 0.4 });
+    for _ in 0..4 {
+        c.rotate(TAU / 4.0);
+        let blade = [(-0.045, 0.0), (0.045, 0.0), (0.025, -0.23), (-0.06, -0.19)];
+        fill(c, poly(&blade, 0.0, 0.0, s), pal::DRILL_BIT);
+    }
+    c.fill_circle(0.0, 0.0, s * 0.07, pal::MACHINE_EDGE);
+    c.fill_circle(0.0, 0.0, s * 0.035, trim);
+    c.restore();
+    if fine {
+        for (bx, by) in [(0.2, 0.2), (0.8, 0.2), (0.2, 0.8), (0.8, 0.8)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+    notch(c, z, pose);
+}
+
+/// A furnace's ring in white, to be tinted with what it smelts: round the
+/// hearth of a fire furnace, or the crucible of an electric one.
+pub fn furnace_ring(c: &mut Canvas, z: f32, fine: bool, electric: bool) {
+    let s = z;
+    let lw = (s * 0.05).max(1.0);
+    if electric {
+        c.stroke_circle(s / 2.0, s * 0.55, s * 0.3, pal::WHITE, (s * 0.03).max(1.0));
+    } else if fine {
+        c.stroke_circle(s / 2.0, s / 2.0, s * 0.41, pal::WHITE, lw);
+    } else {
+        c.stroke_circle(s / 2.0, s / 2.0, s * 0.34, pal::WHITE, lw * 1.4);
+    }
+}
+
+/// A machine's output arrow alone, facing east, to draw over its ring.
+pub fn notch_east(c: &mut Canvas, z: f32) {
+    notch(c, z, &Pose::default());
+}
+
+/// The megaproject's anchor, `tiles` across: a round platform on a pad in
+/// hazard stripes, ringed with lamps, three pylons holding the tether's
+/// hub at its middle, where the cable climbs out of sight.
+pub fn skyhook(c: &mut Canvas, z: f32, fine: bool, tiles: f32) {
+    let s = z * tiles;
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let sh = z * 0.1;
+    shadow(
+        c,
+        rr(
+            s * 0.03 + sh,
+            s * 0.03 + sh * 1.3,
+            s * 0.94,
+            s * 0.94,
+            s * 0.06,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.03, s * 0.03, s * 0.94, s * 0.94, s * 0.06),
+        pal::PAD,
+    );
+    // Hazard stripes round the pad's edge.
+    let band = s * 0.05;
+    c.save();
+    if let Some(p) = rr(s * 0.05, s * 0.05, s * 0.9, s * 0.9, s * 0.04) {
+        c.clip(&p);
+    }
+    let n = if fine { 28 } else { 14 };
+    for k in 0..n {
+        let t = k as f32 / n as f32 * 4.0;
+        let (x, y) = match t as u32 {
+            0 => (s * 0.05 + t.fract() * s * 0.9, s * 0.05),
+            1 => (s * 0.95 - band, s * 0.05 + t.fract() * s * 0.9),
+            2 => (s * 0.95 - t.fract() * s * 0.9, s * 0.95 - band),
+            _ => (s * 0.05, s * 0.95 - t.fract() * s * 0.9),
+        };
+        let col = if k % 2 == 0 {
+            pal::ACCENT
+        } else {
+            pal::HAZARD_DARK
+        };
+        c.fill_rect(x - band * 0.5, y, band * 1.6, band, col);
+        c.fill_rect(x, y - band * 0.5, band, band * 1.6, col);
+    }
+    c.restore();
+    fill(
+        c,
+        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.8, s * 0.04),
+        pal::PAD,
+    );
+    // The platform.
+    c.fill_circle(cx, cy, s * 0.42, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.39, pal::MACHINE);
+    c.stroke_circle(
+        cx,
+        cy,
+        s * 0.3,
+        shade(pal::MACHINE, 0.12),
+        (s * 0.012).max(1.0),
+    );
+    // Lamps round the rim.
+    let lamps = if fine { 16 } else { 8 };
+    for k in 0..lamps {
+        let a = k as f32 / lamps as f32 * TAU;
+        let (x, y) = (cx + a.cos() * s * 0.355, cy + a.sin() * s * 0.355);
+        c.fill_circle(x, y, s * 0.018, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, s * 0.012, pal::ACCENT);
+    }
+    // Three pylons from the rim to the hub.
+    let w = (s * 0.035).max(1.5);
+    for k in 0..3 {
+        let a = k as f32 / 3.0 * TAU - FRAC_PI_2;
+        let (x, y) = (cx + a.cos() * s * 0.33, cy + a.sin() * s * 0.33);
+        let (hx, hy) = (cx + a.cos() * s * 0.1, cy + a.sin() * s * 0.1);
+        c.line(&[(x, y), (hx, hy)], pal::MACHINE_EDGE, w * 1.5);
+        c.line(&[(x, y), (hx, hy)], pal::PIPE, w);
+        c.fill_circle(x, y, s * 0.04, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, s * 0.028, pal::PIPE_HI);
+    }
+    // The tether's hub, and the cable rising from it.
+    let glow = pal::TIER[1];
+    c.fill_circle(cx, cy, s * 0.14, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.11, shade(glow, -0.3));
+    c.fill_circle(cx, cy, s * 0.075, glow);
+    c.fill_circle(cx, cy, s * 0.035, pal::WHITE);
+    if fine {
+        for (bx, by) in [(0.15, 0.15), (0.85, 0.15), (0.15, 0.85), (0.85, 0.85)] {
+            bolt(c, bx * s, by * s, s * 0.012);
+        }
+    }
 }

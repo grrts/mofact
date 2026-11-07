@@ -10,6 +10,7 @@ use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId};
 use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot, TrainView};
 use std::collections::{HashMap, HashSet};
+use std::f32::consts::TAU;
 
 /// What the screen shows: the world point at its centre and how many screen
 /// pixels one tile covers. Pan and pinch arrive with T15.
@@ -65,7 +66,11 @@ pub struct Scene {
     pub time: f32,
     /// Low-power mode (T66): the ground keeps still and skips its fine
     /// close-up detail.
+    /// How far into the night it is (S9): 0 by day, 1 at its darkest.
+    pub night: f32,
     pub low_power: bool,
+    /// Reduce motion: trees and water hold still, at full detail.
+    pub still: bool,
     /// The tiles buildings stand on, from the last [`Scene::build`]: no
     /// decorations are drawn there.
     occupied: HashSet<TilePos>,
@@ -91,6 +96,24 @@ pub struct TerrainMap {
 
 /// What a tile with no terrain yet shows: plain grass.
 pub const UNKNOWN_TERRAIN: (u8, u8) = (3, 128);
+
+/// Where the shadow of a sprite that is turned when drawn falls, in tiles:
+/// always down and to the right on screen, whichever way the sprite faces.
+/// Sprites painted per direction carry their own; these are painted facing
+/// east with none, and cast it here from their outline.
+const BELT_SHADOW: [f32; 2] = [0.03, 0.05];
+const MACHINE_SHADOW: [f32; 2] = [0.07, 0.09];
+const TRAIN_SHADOW: [f32; 2] = [0.06, 0.08];
+const PLATFORM_SHADOW: [f32; 2] = [0.03, 0.03];
+
+/// The shadow `of` casts `by` tiles away: its outline, dark and see-through.
+fn shadow(of: &Instance, by: [f32; 2]) -> Instance {
+    Instance {
+        pos: [of.pos[0] + by[0], of.pos[1] + by[1]],
+        tint: [0, 0, 0, palette::SHADOW[3]],
+        ..*of
+    }
+}
 
 fn turns(dir: Dir) -> u32 {
     match dir {
@@ -221,9 +244,17 @@ impl Scene {
         let seen = |x: f32, y: f32, w: f32, h: f32| {
             x + w >= lo[0] && y + h >= lo[1] && x <= hi[0] && y <= hi[1]
         };
+        // A big factory has far more outside the view than in it (T65): a
+        // cheap test on the tile skips the rest, with room for the biggest
+        // building and the neighbours a belt joins to.
+        let reach = f32::from(look.largest()) + 1.0;
+        let near = |t: TilePos| {
+            let (x, y) = (t.x as f32, t.y as f32);
+            x + reach >= lo[0] && y + reach >= lo[1] && x - 1.0 <= hi[0] && y - 1.0 <= hi[1]
+        };
 
         let mut carriers = Carriers::default();
-        for e in &latest.entities {
+        for e in latest.entities.iter().filter(|e| near(e.pos)) {
             if let Some(c) = look.conveyor(&e.building) {
                 carriers.0.insert(e.pos, (c, e.dir, e.exit));
             }
@@ -236,11 +267,15 @@ impl Scene {
         let mut bends = HashMap::new();
         let mut belt_dirs = HashMap::new();
         let mut machines = Vec::new();
+        // Shadows go under everything of their layer: belts' under belts,
+        // machines' over belts and items but under machines.
+        let mut belt_shadows = Vec::new();
+        let mut machine_shadows = Vec::new();
         self.occupied.clear();
         let mut badges = Vec::new();
         // Badges keep a readable size on screen when zoomed out, as in the prototype.
         let badge = (7.0 / camera.pixels_per_tile).max(0.2) * 2.0;
-        for e in &latest.entities {
+        for e in latest.entities.iter().filter(|e| near(e.pos)) {
             let Some((w, h)) = look.size(&e.building) else {
                 continue;
             };
@@ -282,11 +317,15 @@ impl Scene {
                 let (bend, joins) = carriers.shape(e.pos, e.dir);
                 let speed = look.belt_speed(&e.building).unwrap_or(1.0);
                 let phase = (seconds * 2.0 * f64::from(speed)).fract() as f32;
-                let (surface, frame) = look.belt_layers(&e.building, bend, joins, phase);
-                self.instances.push(Instance {
+                let (surface, frame, turns) =
+                    look.belt_layers(&e.building, bend, joins, phase, instance.turns);
+                let instance = Instance { turns, ..instance };
+                let surface = Instance {
                     uv: uv(surface),
                     ..instance
-                });
+                };
+                belt_shadows.push(shadow(&surface, BELT_SHADOW));
+                self.instances.push(surface);
                 self.instances.push(Instance {
                     uv: uv(frame),
                     ..instance
@@ -296,6 +335,9 @@ impl Scene {
                 }
                 continue;
             }
+            if turned {
+                machine_shadows.push(shadow(&instance, MACHINE_SHADOW));
+            }
             machines.push(instance);
             for l in look.layers(&e.building, e.recipe.as_ref().map(|r| r.as_str())) {
                 machines.push(Instance {
@@ -303,15 +345,17 @@ impl Scene {
                     size: l.size,
                     uv: uv(l.sprite),
                     tint: l.tint,
-                    turns: 0,
+                    turns: if l.turned { turns(e.dir) } else { 0 },
                 });
             }
             if let Some(platform) = look.platform(&e.building) {
-                machines.push(Instance {
+                let platform = Instance {
                     uv: uv(platform),
                     turns: turns(e.dir),
                     ..instance
-                });
+                };
+                machine_shadows.push(shadow(&platform, PLATFORM_SHADOW));
+                machines.push(platform);
             }
             // What a pipe or tank holds shows in its channel or window: the
             // fluid's colour, fading in a pipe and shrinking in a tank as it
@@ -355,16 +399,21 @@ impl Scene {
         }
 
         let mut before: HashMap<_, Vec<f32>> = HashMap::new();
-        for item in &prev.belt_items {
+        for item in prev.belt_items.iter().filter(|i| near(i.tile)) {
             before.entry(item.tile).or_default().push(item.along);
         }
         let mut index: HashMap<_, usize> = HashMap::new();
-        let counts = latest.belt_items.iter().fold(HashMap::new(), |mut m, i| {
-            *m.entry(i.tile).or_insert(0usize) += 1;
-            m
-        });
+        let counts =
+            latest
+                .belt_items
+                .iter()
+                .filter(|i| near(i.tile))
+                .fold(HashMap::new(), |mut m, i| {
+                    *m.entry(i.tile).or_insert(0usize) += 1;
+                    m
+                });
         let size = ITEM_TILES;
-        for item in &latest.belt_items {
+        for item in latest.belt_items.iter().filter(|i| near(i.tile)) {
             let n = index.entry(item.tile).or_insert(0);
             let k = *n;
             *n += 1;
@@ -398,6 +447,8 @@ impl Scene {
                 turns: 0,
             });
         }
+        self.instances.splice(0..0, belt_shadows);
+        self.instances.append(&mut machine_shadows);
         self.instances.append(&mut machines);
         // Trains ride over the track, smoothed between ticks as items are.
         let at = |t: &TrainView| {
@@ -423,13 +474,15 @@ impl Scene {
             if !seen(p[0], p[1], 1.0, 1.0) {
                 continue;
             }
-            self.instances.push(Instance {
+            let train = Instance {
                 pos: p,
                 size: [1.0, 1.0],
                 uv: uv(sprite),
                 tint: palette::WHITE,
                 turns: turns(t.dir),
-            });
+            };
+            self.instances.push(shadow(&train, TRAIN_SHADOW));
+            self.instances.push(train);
         }
         self.instances.append(&mut badges);
     }
@@ -553,8 +606,18 @@ impl Scene {
                 _ => 0.9,
             };
             let size = base * (1.0 + 0.25 * jitter(0));
+            // Trees and bushes sway in the wind (S8): a slow lean and a
+            // breath of the canopy, each on its own beat, the wind's gusts
+            // rolling across the land. Still in low-power mode.
+            let sway = if self.low_power || self.still || !matches!(kind, 1..=3) {
+                0.0
+            } else {
+                let gust = 0.6 + 0.4 * (self.time * 0.35 - tile.x as f32 * 0.07).sin();
+                gust * (self.time * 1.3 + jitter(24) * TAU).sin()
+            };
+            let size = size * (1.0 + 0.02 * sway);
             let (x, y) = (
-                tile.x as f32 + 0.5 + 0.3 * jitter(8) - size / 2.0,
+                tile.x as f32 + 0.5 + 0.3 * jitter(8) - size / 2.0 + 0.035 * sway,
                 tile.y as f32 + 0.5 + 0.3 * jitter(16) - size / 2.0,
             );
             self.ore.push(Instance {
@@ -573,6 +636,12 @@ impl Scene {
     /// close that is one tile; zoomed far out it is a few, see
     /// [`map_stride`]. `version` is the map's: it is only read again when
     /// that or the view changes.
+    /// Forget the terrain drawn so far, as when another map is loaded:
+    /// the next [`terrain`](Self::terrain) call makes it afresh.
+    pub fn forget_terrain(&mut self) {
+        self.terrain.made_from = None;
+    }
+
     pub fn terrain(
         &mut self,
         camera: &Camera,
@@ -620,6 +689,18 @@ pub fn map_stride(pixels_per_tile: f32) -> i32 {
 }
 
 /// The atlases for every band, painted with the placeholder sprites.
+/// How far into the night it is at `tick` (S9): a day lasts ten minutes,
+/// dusk and dawn ease in and out, and the dark part is about a fifth of it.
+/// Drawing only: nothing in the factory runs differently at night.
+pub fn night_at(tick: u64) -> f32 {
+    const DAY: u64 = 10 * 60 * mofact_core::TICKS_PER_SECOND as u64;
+    // Start at mid-morning, so a new game opens in daylight.
+    let phase = ((tick + DAY / 8) % DAY) as f32 / DAY as f32;
+    let sun = (phase * std::f32::consts::TAU).cos();
+    // Below the horizon from a quarter of the way down.
+    ((-sun - 0.3) / 0.5).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -705,10 +786,10 @@ mod tests {
             );
             assert_eq!(
                 scene.instances.len(),
-                9,
-                "four belts in two layers, and an item"
+                13,
+                "four belts in two layers over their shadows, and an item"
             );
-            scene.instances[8].pos[0] + ITEM_TILES / 2.0
+            scene.instances[12].pos[0] + ITEM_TILES / 2.0
         };
         let xs: Vec<f32> = [0.0, 0.5, 1.0]
             .iter()
@@ -717,6 +798,87 @@ mod tests {
         for (x, want) in xs.iter().zip([1.2, 1.4, 1.6]) {
             assert!((x - want).abs() < 1e-5, "{xs:?}");
         }
+    }
+
+    #[test]
+    fn far_away_things_change_nothing_on_screen_but_edge_ones_still_draw() {
+        // Culling by tile before anything else (T65) must draw the same: a
+        // big assembler poking in from just off the left edge still shows,
+        // and a thousand belts and items far away add nothing.
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
+        let (lo, _) = CAMERA.visible(640, 360);
+        let mut near = snap(0.5);
+        let mut edge = belt(0);
+        edge.building = "hub".into();
+        edge.id = EntityId(500);
+        edge.pos = TilePos::new(lo[0].floor() as i32 - 2, 0);
+        near.entities.push(edge);
+        scene.build(&look, &atlases, &CAMERA, (640, 360), &near, &near, 1.0);
+        let alone = scene.instances.clone();
+        assert!(
+            alone.iter().any(|i| i.pos[0] < lo[0]),
+            "the assembler on the edge is drawn"
+        );
+        let mut crowded = near.clone();
+        for k in 0..1000 {
+            let mut b = belt(0);
+            b.id = EntityId(1000 + k);
+            b.pos = TilePos::new(300 + k as i32 % 40, 300 + k as i32 / 40);
+            crowded.belt_items.push(BeltItemView {
+                item: "iron-plate".into(),
+                tile: b.pos,
+                along: 0.5,
+            });
+            crowded.entities.push(b);
+        }
+        scene.build(
+            &look,
+            &atlases,
+            &CAMERA,
+            (640, 360),
+            &crowded,
+            &crowded,
+            1.0,
+        );
+        assert_eq!(scene.instances, alone);
+    }
+
+    #[test]
+    fn trees_sway_in_the_wind_but_stones_low_power_and_reduce_motion_stay_still() {
+        let look = Look::new(&content());
+        let atlases = look.atlases();
+        let at_with = |time: f32, low_power: bool, still: bool| {
+            let mut scene = Scene {
+                time,
+                low_power,
+                still,
+                ..Scene::default()
+            };
+            let decor = [(TilePos::new(1, 0), 1u8), (TilePos::new(3, 0), 4u8)];
+            scene.decor(&atlases, &CAMERA, (640, 360), decor);
+            scene
+                .ore
+                .iter()
+                .map(|i| (i.pos, i.size))
+                .collect::<Vec<_>>()
+        };
+        let at = |time: f32, low_power: bool| at_with(time, low_power, false);
+        let (a, b) = (at(0.0, false), at(0.7, false));
+        assert_ne!(a[0], b[0], "the tree moves");
+        assert_eq!(a[1], b[1], "the stone does not");
+        assert_eq!(
+            at(0.0, true),
+            at(0.7, true),
+            "nothing moves in low-power mode"
+        );
+        assert_eq!(
+            at_with(0.0, false, true),
+            at_with(0.7, false, true),
+            "nor with reduce motion"
+        );
+        // A sway, not a walk: it stays within a few hundredths of a tile.
+        assert!((a[0].0[0] - b[0].0[0]).abs() < 0.1);
     }
 
     #[test]
@@ -781,14 +943,18 @@ mod tests {
         };
         let uv = |name: &str| atlases[1].get(name).unwrap();
         let working = frame(MachineState::Working);
-        assert_eq!(working.len(), 1, "no badge while working");
-        assert_eq!(working[0].uv, uv("furnace:copper-plate:lit:1"));
+        // The body, then its ring in copper and the arrow over it.
+        assert_eq!(working.len(), 3, "no badge while working");
+        assert_eq!(working[0].uv, uv("furnace:none:lit:1"));
+        assert_eq!(working[1].uv, uv("furnace:ring"));
+        assert_eq!(working[1].tint, palette::item("copper"));
+        assert_eq!(working[2].turns, 1, "the arrow faces south");
         let starved = frame(MachineState::Starved);
-        assert_eq!(starved.len(), 2);
-        assert_eq!(starved[0].uv, uv("furnace:copper-plate:cold:1"));
-        assert_eq!(starved[1].uv, uv(look::STARVED));
-        assert!(starved[1].pos[0] > 2.5, "on the machine's right");
-        assert_eq!(frame(MachineState::Blocked)[1].uv, uv(look::BLOCKED));
+        assert_eq!(starved.len(), 4);
+        assert_eq!(starved[0].uv, uv("furnace:none:cold:1"));
+        assert_eq!(starved[3].uv, uv(look::STARVED));
+        assert!(starved[3].pos[0] > 2.5, "on the machine's right");
+        assert_eq!(frame(MachineState::Blocked)[3].uv, uv(look::BLOCKED));
     }
 
     #[test]
@@ -1017,7 +1183,55 @@ mod tests {
         );
     }
 
-    /// The CPU side of 15,000 sprites (5,000 belts in two layers, each with
+    /// A belt or splitter turned any way casts its shadow the same way on
+    /// screen: down and to the right, not turned with it.
+    #[test]
+    fn shadows_fall_the_same_way_whichever_way_a_sprite_faces() {
+        let look = Look::new(&content());
+        let atlases = look.atlases();
+        for building in ["belt", "splitter"] {
+            let mut snapshot = Snapshot::default();
+            for (i, dir) in Dir::ALL.into_iter().enumerate() {
+                let mut e = belt(i as i32 * 3);
+                e.building = building.into();
+                e.dir = dir;
+                snapshot.entities.push(e);
+            }
+            let mut scene = Scene::default();
+            scene.build(
+                &look,
+                &atlases,
+                &CAMERA,
+                (640, 360),
+                &snapshot,
+                &snapshot,
+                0.0,
+            );
+            let dark = |i: &&Instance| i.tint[..3] == [0, 0, 0];
+            let shadows: Vec<_> = scene.instances.iter().filter(dark).collect();
+            assert_eq!(shadows.len(), 4, "{building}: one shadow each");
+            let by = if building == "belt" {
+                BELT_SHADOW
+            } else {
+                MACHINE_SHADOW
+            };
+            for s in shadows {
+                let body = scene
+                    .instances
+                    .iter()
+                    .find(|i| !dark(i) && i.uv == s.uv && i.turns == s.turns)
+                    .expect("the sprite that casts it");
+                let off = [s.pos[0] - body.pos[0], s.pos[1] - body.pos[1]];
+                assert!(
+                    (off[0] - by[0]).abs() < 1e-6 && (off[1] - by[1]).abs() < 1e-6,
+                    "{building} turned {}: shadow off by {off:?}",
+                    s.turns
+                );
+            }
+        }
+    }
+
+    /// The CPU side of 20,000 sprites (5,000 belts in two layers over a shadow, each with
     /// an item); prints the time per frame.
     #[test]
     fn ten_thousand_sprites() {
@@ -1051,7 +1265,7 @@ mod tests {
                 0.5,
             );
         }
-        assert_eq!(scene.instances.len(), 15_000);
-        println!("15k sprites: {:?} per frame", start.elapsed() / 10);
+        assert_eq!(scene.instances.len(), 20_000);
+        println!("20k sprites: {:?} per frame", start.elapsed() / 10);
     }
 }

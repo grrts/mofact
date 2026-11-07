@@ -26,3 +26,6 @@ raw-window-handle.workspace = true
 
 [lints]
 workspace = true
+
+[dev-dependencies]
+mofact-bench.workspace = true

@@ -96,6 +96,28 @@ pub struct Snapshot {
     /// Trains, which ride on rail tiles rather than standing on their own.
     #[serde(default)]
     pub trains: Vec<TrainView>,
+    /// The first megaproject built, and how far along it is.
+    #[serde(default)]
+    pub mega: Option<MegaView>,
+}
+
+/// A megaproject's progress: its stage, and what that stage still takes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct MegaView {
+    pub id: EntityId,
+    /// Stages done so far, out of `stages`; all done means the game is won.
+    pub stage: u32,
+    pub stages: u32,
+    /// The current stage's name, empty once all are done.
+    pub name: String,
+    /// What the current stage takes: item, how many it has, how many it needs.
+    pub needs: Vec<(ItemId, u32, u32)>,
+}
+
+impl MegaView {
+    pub fn done(&self) -> bool {
+        self.stage >= self.stages
+    }
 }
 
 /// What a train is doing.
@@ -163,4 +185,7 @@ pub struct ResearchView {
     pub progress: (u32, u32),
     /// Finished research, in content order.
     pub done: Vec<ResearchId>,
+    /// The levels done of each repeatable research begun (S2).
+    #[serde(default)]
+    pub levels: Vec<(ResearchId, u32)>,
 }

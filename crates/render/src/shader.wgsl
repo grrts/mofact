@@ -9,6 +9,7 @@ struct Globals {
     ground: vec4<f32>,
     // Tiles per terrain texel (x): 1 up close, more on the world map.
     // Low-power mode (y): 1 keeps the ground still and plain.
+    // Night (z): 0 by day, 1 at the dead of night (S9).
     map: vec4<f32>,
 };
 
@@ -30,6 +31,11 @@ struct Out {
     @location(1) tint: vec4<f32>,
 };
 
+// The light at night: dim and blue, but the factory still reads.
+fn night_light() -> vec3<f32> {
+    return mix(vec3<f32>(1.0), vec3<f32>(0.42, 0.5, 0.72), globals.map.z);
+}
+
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
 }
@@ -47,10 +53,16 @@ fn vs(@builtin(vertex_index) vi: u32, s: Sprite) -> Out {
     for (var i = 0u; i < s.turns % 4u; i = i + 1u) {
         t = vec2<f32>(t.y, 1.0 - t.x);
     }
+    // MIRROR: flipped across the way it runs, as painted, before turning.
+    if (s.turns & 4u) != 0u {
+        t.y = 1.0 - t.y;
+    }
     var out: Out;
     out.clip = vec4<f32>(world * globals.xf.xy + globals.xf.zw, 0.0, 1.0);
     out.uv = s.uv.xy + t * s.uv.zw;
-    out.tint = vec4<f32>(srgb_to_linear(s.tint.rgb), s.tint.a);
+    // Lights (LIT) shine the same by night; everything else dims.
+    let light = select(night_light(), vec3<f32>(1.0), (s.turns & 8u) != 0u);
+    out.tint = vec4<f32>(srgb_to_linear(s.tint.rgb * light), s.tint.a);
     return out;
 }
 
@@ -166,6 +178,41 @@ fn water_depth(t: vec2<f32>) -> vec2<f32> {
     return vec2<f32>(select(0.0, 1.0, t.x <= 1.0), select(0.0, 1.0, t.x == 0.0));
 }
 
+// The ground in low-power mode: land colour `c` with flat water and lava
+// and the grid, and no noise.
+fn cheap_ground(
+    land_colour: vec3<f32>,
+    world: vec2<f32>,
+    ppt: f32,
+    fl: vec2<f32>,
+    t00: vec2<f32>,
+    t10: vec2<f32>,
+    t01: vec2<f32>,
+    t11: vec2<f32>,
+) -> vec3<f32> {
+    var c = land_colour;
+    let w = mix(
+        mix(water_depth(t00), water_depth(t10), fl.x),
+        mix(water_depth(t01), water_depth(t11), fl.x),
+        fl.y,
+    );
+    let wet = smoothstep(0.45, 0.55, w.x);
+    let water = mix(vec3<f32>(0.110, 0.271, 0.353), vec3<f32>(0.071, 0.173, 0.251), smoothstep(0.3, 0.9, w.y));
+    let rim = 1.0 - smoothstep(0.5, 0.62, w.x);
+    c = mix(c, mix(water, vec3<f32>(0.42, 0.55, 0.58), rim * 0.55), wet);
+    let lv = mix(
+        mix(select(0.0, 1.0, t00.x == 13.0), select(0.0, 1.0, t10.x == 13.0), fl.x),
+        mix(select(0.0, 1.0, t01.x == 13.0), select(0.0, 1.0, t11.x == 13.0), fl.x),
+        fl.y,
+    );
+    let molten = smoothstep(0.45, 0.55, lv);
+    c = mix(c, vec3<f32>(0.85, 0.32, 0.10), molten);
+    let gedge = min(fract(world), 1.0 - fract(world)) * ppt;
+    let line = 1.0 - smoothstep(0.0, 1.0, min(gedge.x, gedge.y));
+    c = c * (1.0 - 0.12 * line * smoothstep(10.0, 16.0, ppt) * (1.0 - wet));
+    return c * mix(night_light(), vec3<f32>(1.0), molten);
+}
+
 @fragment
 fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let ppt = globals.view.x;
@@ -178,8 +225,15 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     // Wobble where the pixel reads the map from, so borders curve. On the
     // world map a texel spans several tiles, so this works in texels.
     let texel = world / max(globals.map.x, 1.0);
-    let wobble = vec2<f32>(patches(texel * 0.35) - 0.5, patches(texel * 0.35 + 31.7) - 0.5)
-        + 0.5 * vec2<f32>(patches(texel * 1.1 + 7.3) - 0.5, patches(texel * 1.1 + 3.1) - 0.5);
+    // Low-power mode draws the cheap ground: the same land and water, with
+    // straight borders and none of the noise, which is most of the frame's
+    // work on a budget phone's GPU.
+    let cheap = globals.map.y > 0.5;
+    var wobble = vec2<f32>(0.0);
+    if !cheap {
+        wobble = vec2<f32>(patches(texel * 0.35) - 0.5, patches(texel * 0.35 + 31.7) - 0.5)
+            + 0.5 * vec2<f32>(patches(texel * 1.1 + 7.3) - 0.5, patches(texel * 1.1 + 3.1) - 0.5);
+    }
     let q = texel + wobble * 1.1 - 0.5;
     let i = floor(q);
     // Straight blends for the shoreline, so it runs on the diagonal instead of
@@ -196,6 +250,9 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
         mix(land(t01.x, t01.y), land(t11.x, t11.y), f.x),
         f.y,
     );
+    if cheap {
+        return vec4<f32>(srgb_to_linear(cheap_ground(c, world, ppt, fl, t00, t10, t01, t11)), 1.0);
+    }
     // Texture: soft mottling, then fine grain once tiles are big enough to show it.
     c = c * (0.93 + 0.14 * patches(world * 1.3));
     let grain = hash(floor(world * 8.0)) - 0.5;
@@ -274,5 +331,7 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let gedge = min(fract(world), 1.0 - fract(world)) * ppt;
     let line = 1.0 - smoothstep(0.0, 1.0, min(gedge.x, gedge.y));
     c = c * (1.0 - 0.12 * line * smoothstep(10.0, 16.0, ppt) * (1.0 - wet));
+    // Lava keeps its glow at night.
+    c = c * mix(night_light(), vec3<f32>(1.0), molten);
     return vec4<f32>(srgb_to_linear(c), 1.0);
 }
