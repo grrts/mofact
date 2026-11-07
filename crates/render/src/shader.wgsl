@@ -108,7 +108,7 @@ fn land(kind: f32, shade: f32) -> vec3<f32> {
     } else if kind == 7.0 {
         c = vec3<f32>(0.141, 0.129, 0.122); // cliff face
     } else if kind == 8.0 {
-        c = vec3<f32>(0.431, 0.353, 0.227); // dune
+        c = vec3<f32>(0.612, 0.486, 0.298); // dune
     } else if kind == 9.0 {
         c = vec3<f32>(0.604, 0.647, 0.675); // snow
     } else if kind == 10.0 {
@@ -119,6 +119,43 @@ fn land(kind: f32, shade: f32) -> vec3<f32> {
         c = vec3<f32>(0.165, 0.165, 0.180); // basalt, also the crust round lava
     }
     return c * (0.9 + 0.2 * shade);
+}
+
+// How much of the pixel is terrain `kind`, blended straight across the four
+// tiles round it.
+fn share(kind: f32, a: f32, b: f32, c: f32, d: f32, fl: vec2<f32>) -> f32 {
+    return mix(
+        mix(select(0.0, 1.0, a == kind), select(0.0, 1.0, b == kind), fl.x),
+        mix(select(0.0, 1.0, c == kind), select(0.0, 1.0, d == kind), fl.x),
+        fl.y,
+    );
+}
+
+// Thin bright lines where cells of a jittered grid meet, like cracks in ice.
+// `px` is one screen pixel in cell units, for a smooth edge without fwidth,
+// so callers can skip it on pixels that show no ice or lava.
+fn cracks(p: vec2<f32>, px: f32) -> f32 {
+    let i = floor(p);
+    let f = fract(p);
+    var near = 9.0;
+    var next = 9.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let o = vec2<f32>(f32(x), f32(y));
+            let cell = i + o;
+            let at = o + vec2<f32>(hash(cell), hash(cell + 17.0)) - f;
+            let d = dot(at, at);
+            if d < near {
+                next = near;
+                near = d;
+            } else if d < next {
+                next = d;
+            }
+        }
+    }
+    let gap = sqrt(next) - sqrt(near);
+    let w = max(px, 0.01);
+    return 1.0 - smoothstep(0.0, w * 1.5, gap - 0.02);
 }
 
 fn water_depth(t: vec2<f32>) -> vec2<f32> {
@@ -157,6 +194,26 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let grain = hash(floor(world * 8.0)) - 0.5;
     c = c * (1.0 + 0.07 * grain * smoothstep(20.0, 48.0, ppt));
 
+    // Close-up detail on each biome's ground, fading in as tiles grow.
+    let near = smoothstep(14.0, 28.0, ppt);
+    // Sand and dunes: wind ripples running across the slope.
+    let sandy = share(2.0, t00.x, t10.x, t01.x, t11.x, f) + share(8.0, t00.x, t10.x, t01.x, t11.x, f);
+    let ripple = sin(world.x * 2.6 + world.y * 1.1 + patches(world * 0.25) * 9.0);
+    c = c * (1.0 + 0.07 * ripple * sandy * near);
+    // Snow: sparse glints that twinkle.
+    let snow = share(9.0, t00.x, t10.x, t01.x, t11.x, f);
+    let glint = step(0.985, hash(floor(world * 6.0))) * (0.5 + 0.5 * sin(time * 2.0 + hash(floor(world * 6.0) + 3.0) * 30.0));
+    c = c + vec3<f32>(0.25) * glint * snow * near;
+    // Ice: pale cracks over a cold sheen.
+    let ice = share(10.0, t00.x, t10.x, t01.x, t11.x, f);
+    c = mix(c, c * 1.1 + vec3<f32>(0.04, 0.06, 0.07) * patches(world * 0.6 + time * 0.02), ice);
+    if ice > 0.0 && ppt > 8.0 {
+        c = mix(c, vec3<f32>(0.80, 0.88, 0.92), cracks(world * 0.9, 0.9 / ppt) * ice * 0.4 * smoothstep(8.0, 18.0, ppt));
+    }
+    // Ash: drifting darker streaks.
+    let ash = share(11.0, t00.x, t10.x, t01.x, t11.x, f);
+    c = c * (1.0 - 0.12 * ash * smoothstep(0.55, 0.8, patches(world * vec2<f32>(0.5, 2.0))));
+
     // Water: how much of the pixel is lake, and how deep.
     let w = mix(
         mix(water_depth(t00), water_depth(t10), fl.x),
@@ -174,8 +231,12 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let r = sin(world.x * 1.7 + time * 0.9 + patches(world * 0.3) * 6.0)
         * sin(world.y * 2.3 - time * 0.7 + patches(world * 0.4 + 9.0) * 5.0);
     water = water + vec3<f32>(0.05, 0.07, 0.08) * smoothstep(0.55, 0.95, r) * smoothstep(8.0, 20.0, ppt);
-    // A pale rim along the shore.
-    water = mix(water, vec3<f32>(0.42, 0.55, 0.58), (1.0 - smoothstep(0.5, 0.62, w.x)) * 0.55);
+    // A pale rim along the shore, and foam that laps in and out.
+    let rim = 1.0 - smoothstep(0.5, 0.62, w.x);
+    water = mix(water, vec3<f32>(0.42, 0.55, 0.58), rim * 0.55);
+    let lap = sin(w.x * 38.0 - time * 1.6 + patches(world * 0.7) * 6.0);
+    let foam = smoothstep(0.6, 0.95, lap) * (1.0 - smoothstep(0.5, 0.8, w.x)) * smoothstep(10.0, 20.0, ppt);
+    water = mix(water, vec3<f32>(0.78, 0.86, 0.88), foam * 0.6);
     c = mix(c, water, wet);
 
     // Lava: a glowing flow under a cracked dark crust, pulsing slowly.
@@ -185,11 +246,21 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
         fl.y,
     );
     let ledge = max(fwidth(lv), 0.02);
-    let molten = smoothstep(0.5 - ledge, 0.5 + ledge, lv);
     let flow = patches(world * 0.8 + vec2<f32>(time * 0.15, time * 0.05));
-    let crust = smoothstep(0.35, 0.65, patches(world * 2.2 - vec2<f32>(time * 0.05, 0.0)));
-    var lava = mix(vec3<f32>(0.769, 0.278, 0.110), vec3<f32>(1.0, 0.62, 0.22), flow);
-    lava = mix(lava, vec3<f32>(0.25, 0.09, 0.05), crust * 0.6);
+    let molten = smoothstep(0.5 - ledge, 0.5 + ledge, lv);
+    // Plates of crust drift over it; the molten rock glows through the seams.
+    let drift = world * 0.7 + vec2<f32>(time * 0.04, time * 0.015);
+    var seams = 0.0;
+    if molten > 0.0 {
+        seams = max(cracks(drift, 0.7 / ppt), cracks(drift * 1.9 + 5.0, 1.33 / ppt) * 0.6);
+    }
+    let crust = mix(vec3<f32>(0.26, 0.08, 0.04), vec3<f32>(0.52, 0.16, 0.06), flow);
+    let glow = mix(vec3<f32>(0.85, 0.32, 0.10), vec3<f32>(1.0, 0.66, 0.24), flow);
+    let lava = mix(crust, glow, max(seams, 0.25 * flow));
+    // Ground near lava glows, and cools to black crust further off.
+    let heat = smoothstep(0.05, 0.5, lv) * (1.0 - molten);
+    c = mix(c, vec3<f32>(0.10, 0.08, 0.08), heat * 0.5);
+    c = c + vec3<f32>(0.45, 0.12, 0.03) * heat * (0.6 + 0.4 * sin(time * 1.3 + patches(world) * 6.0));
     c = mix(c, lava, molten);
 
     // A faint grid on land, one pixel wide, fading out below 16 px a tile.

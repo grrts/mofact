@@ -596,6 +596,22 @@ mod tests {
         }
     }
 
+    #[test]
+    fn ground_shader_uses_the_palette_terrain_colours() {
+        // The shader spells the land colours out; keep them in step with the
+        // palette, which the map and the tests read.
+        let shader = include_str!("shader.wgsl");
+        for kind in 2..=12 {
+            let [r, g, b, _] = palette::TERRAIN[kind];
+            let f = |v: u8| format!("{:.3}", f32::from(v) / 255.0);
+            let want = format!("vec3<f32>({}, {}, {})", f(r), f(g), f(b));
+            assert!(
+                shader.contains(&want),
+                "terrain {kind}: {want} not in the shader"
+            );
+        }
+    }
+
     fn belt(x: i32) -> EntityView {
         EntityView {
             id: EntityId(x as u32),
