@@ -1516,6 +1516,74 @@ fn a_tap_on_the_tool_tip_builds_nothing_under_it() {
 }
 
 #[test]
+fn a_build_sheet_too_big_for_the_screen_pages_through_every_building() {
+    let mut f = Fixture::new();
+    // A phone held sideways: the sheet has room for one row.
+    let size = (2532, 1170);
+    f.draw(size, 3.0, &Tool::Hand);
+    let more = f.find(&Hit::Tool(MORE));
+    f.tap(centre(more));
+    let mut seen = std::collections::HashSet::new();
+    let mut pages = 0;
+    loop {
+        f.draw(size, 3.0, &Tool::Hand);
+        pages += 1;
+        for (_, h) in &f.hud.hits {
+            if let Hit::Build(b) = h {
+                seen.insert(b.clone());
+            }
+        }
+        let Some(next) = f.hud.hits.iter().find(|(_, h)| *h == Hit::Page(true)) else {
+            break;
+        };
+        let next = centre(next.0);
+        assert_eq!(f.tap(next), (true, vec![]));
+        assert!(pages < 50, "the pages never end");
+    }
+    assert!(pages > 1, "it needed more than one page");
+    // Every building open now can be picked from some page.
+    for b in ["lab", "pole", "wind-turbine", "radar"] {
+        assert!(seen.contains(&BuildingId::from(b)), "{b} on no page");
+    }
+    // And back to the first.
+    for _ in 1..pages {
+        let back = centre(f.find(&Hit::Page(false)));
+        f.tap(back);
+        f.draw(size, 3.0, &Tool::Hand);
+    }
+    f.find(&Hit::Build("lab".into()));
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == Hit::Page(false)));
+    assert!(f.overlay.has_glyph('‹') && f.overlay.has_glyph('›'));
+}
+
+#[test]
+fn the_research_sheet_pages_too() {
+    let mut f = Fixture::new();
+    let size = (2532, 1170);
+    f.hud.research = true;
+    f.draw(size, 3.0, &Tool::Hand);
+    let next = centre(f.find(&Hit::Page(true)));
+    let first: Vec<_> = f
+        .hud
+        .hits
+        .iter()
+        .filter(|(_, h)| matches!(h, Hit::Study(_)))
+        .cloned()
+        .collect();
+    f.tap(next);
+    f.draw(size, 3.0, &Tool::Hand);
+    let second: Vec<_> = f
+        .hud
+        .hits
+        .iter()
+        .filter(|(_, h)| matches!(h, Hit::Study(_)))
+        .cloned()
+        .collect();
+    assert_ne!(first, second, "the next page shows other research");
+    f.find(&Hit::Page(false));
+}
+
+#[test]
 fn the_select_tool_offers_what_to_do_with_a_selection_and_the_library() {
     let mut f = Fixture::new();
     let size = (1170, 2532);

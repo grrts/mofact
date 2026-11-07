@@ -333,6 +333,8 @@ enum Hit {
     Item(ItemId),
     /// The ratio calculator's rate buttons: up or down a step.
     Rate(bool),
+    /// A sheet's page arrows: back or on a page.
+    Page(bool),
     Close,
     /// Undo and redo buttons.
     Undo,
@@ -496,6 +498,9 @@ pub struct Hud {
     unlock: bool,
     /// Whether the build sheet is open.
     more: bool,
+    /// The page the build or research sheet shows, when it has more rows
+    /// than fit on the screen (a phone held sideways fits one row).
+    page: usize,
     /// Whether the problems list is open.
     problems: bool,
     /// Whether the blueprint library is open, and the blueprint asked to
@@ -837,6 +842,7 @@ impl Hud {
         match hit {
             Hit::Tool(MORE) => {
                 self.more = !self.more;
+                self.page = 0;
                 self.research = false;
                 self.problems = false;
                 self.selected = None;
@@ -883,6 +889,7 @@ impl Hud {
             }
             Hit::Research => {
                 self.research = !self.research;
+                self.page = 0;
                 self.more = false;
                 self.problems = false;
                 self.selected = None;
@@ -923,6 +930,15 @@ impl Hud {
                 self.more = false;
                 self.radial = None;
                 self.browse = None;
+                Vec::new()
+            }
+            Hit::Page(on) => {
+                // Drawing the sheet keeps the page in range.
+                self.page = if on {
+                    self.page + 1
+                } else {
+                    self.page.saturating_sub(1)
+                };
                 Vec::new()
             }
             Hit::StockMore => {
@@ -2916,7 +2932,11 @@ impl Hud {
             .floor()
             .max(1.0) as usize;
         let rows = list.len().div_ceil(cols).clamp(1, fits);
-        let shown = &list[..list.len().min(rows * cols)];
+        // What doesn't fit goes on further pages.
+        let per = rows * cols;
+        let pages = list.len().div_ceil(per).max(1);
+        self.page = self.page.min(pages - 1);
+        let shown = &list[self.page * per..list.len().min((self.page + 1) * per)];
         let height = pad + title + rows as f32 * (ch + gap) - gap + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
@@ -2941,6 +2961,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
+        self.pager(o, c, pages);
 
         let holding = match view.tool {
             Tool::Place(b) => Some(b),
@@ -3001,6 +3022,49 @@ impl Hud {
         }
     }
 
+    /// A sheet's page arrows and "2/3", left of its close button `c`, when
+    /// it has more than one page.
+    fn pager(&mut self, o: &mut Overlay, c: [f32; 4], pages: usize) {
+        if pages < 2 {
+            return;
+        }
+        let u = self.unit;
+        let size = c[3];
+        let gap = 8.0 * u;
+        let px = 15.0 * u;
+        let label = format!("{}/{}", self.page + 1, pages);
+        let lw = o.measure(&label, px);
+        let next = [c[0] - gap - size, c[1], size, size];
+        let lx = next[0] - gap - lw;
+        let back = [lx - gap - size, c[1], size, size];
+        o.text(
+            &label,
+            [lx, c[1] + size * 0.5 + o.cap_height(px) / 2.0],
+            px,
+            MUTED,
+        );
+        for (b, on, glyph) in [(back, false, "‹"), (next, true, "›")] {
+            let live = if on {
+                self.page + 1 < pages
+            } else {
+                self.page > 0
+            };
+            o.panel([b[0], b[1]], [size, size], size / 2.0, RAISED);
+            let gpx = 24.0 * u;
+            let gw = o.measure(glyph, gpx);
+            let ink = if live { TEXT } else { MUTED };
+            o.text(
+                glyph,
+                [b[0] + (size - gw) / 2.0, b[1] + size * 0.74],
+                gpx,
+                ink,
+            );
+            if live {
+                self.hits.push((b, Hit::Page(on)));
+            }
+        }
+    }
+
     /// The research sheet, bottom-left at `at`, at most `room` tall: one row
     /// per research with its cost and state. Tapping one that is ready
     /// sets the labs on it; tapping the current one stops them.
@@ -3032,8 +3096,16 @@ impl Hud {
                 2
             }
         });
-        shown.truncate(fits);
-        let height = pad + title + shown.len() as f32 * row - 6.0 * u + pad;
+        // What doesn't fit goes on further pages, every page as tall.
+        let pages = shown.len().div_ceil(fits).max(1);
+        self.page = self.page.min(pages - 1);
+        let rows = shown.len().min(fits);
+        let shown: Vec<&ResearchDef> = shown
+            .into_iter()
+            .skip(self.page * fits)
+            .take(fits)
+            .collect();
+        let height = pad + title + rows as f32 * row - 6.0 * u + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
@@ -3058,6 +3130,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
+        self.pager(o, c, pages);
         y += title;
 
         for d in shown {

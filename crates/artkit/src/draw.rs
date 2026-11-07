@@ -2336,6 +2336,12 @@ pub fn skyhook(c: &mut Canvas, z: f32, fine: bool, tiles: f32) {
 /// dish on it looking out to the north-east, with its feed horn and a
 /// lamp that shows it is charting.
 pub fn radar(c: &mut Canvas, z: f32, fine: bool) {
+    radar_turned(c, z, fine, -PI / 4.0);
+}
+
+/// A radar with its dish turned `angle` radians clockwise from facing up
+/// (the feed horn points that way): the frames of its sweep.
+pub fn radar_turned(c: &mut Canvas, z: f32, fine: bool, angle: f32) {
     let s = z * 2.0;
     let sh = z * 0.08;
     shadow(
@@ -2384,11 +2390,14 @@ pub fn radar(c: &mut Canvas, z: f32, fine: bool) {
     }
     c.save();
     c.translate(cx, cy);
-    c.rotate(-PI / 4.0);
-    // The dish: a deep bowl, its rim lit and its inside in shade.
+    c.rotate(angle);
+    // The dish: a deep bowl, its rim lit and its inside in shade. Its
+    // shadow falls down and right on the ground whichever way it faces.
+    let (sx, sy) = (sh * 0.6, sh * 0.9);
+    let (sin, cos) = angle.sin_cos();
     fill(
         c,
-        ellipse(sh * 0.6, sh * 0.9, s * 0.3, s * 0.17),
+        ellipse(sx * cos + sy * sin, -sx * sin + sy * cos, s * 0.3, s * 0.17),
         pal::SHADOW,
     );
     fill(c, ellipse(0.0, 0.0, s * 0.3, s * 0.17), pal::MACHINE_EDGE);
