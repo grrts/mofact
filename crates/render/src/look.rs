@@ -1255,6 +1255,28 @@ pub(crate) mod tests {
         assert!(Look::with_colour_blind(&content, true).colour_blind());
     }
 
+    #[test]
+    fn in_colour_blind_mode_every_ore_on_the_ground_stays_apart() {
+        // Ore lies on the ground as nothing but its colour, so every ore,
+        // including any added later, needs a colour-blind colour of its own.
+        let content = content();
+        let look = Look::with_colour_blind(&content, true);
+        let ores: Vec<_> = content
+            .items
+            .iter()
+            .filter(|i| i.shape == IconShape::Ore)
+            .map(|i| (i.id.as_str(), look.item_color(&i.id).unwrap()))
+            .collect();
+        for cvd in [None].into_iter().chain(palette::CVDS.map(Some)) {
+            for (n, (a, ca)) in ores.iter().enumerate() {
+                for (b, cb) in &ores[n + 1..] {
+                    let d = palette::difference(*ca, *cb, cvd);
+                    assert!(d >= 20.0, "{a} and {b} are {d:.1} apart under {cvd:?}");
+                }
+            }
+        }
+    }
+
     pub(crate) fn content() -> Content {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
         let read = |f: &str| std::fs::read_to_string(dir.join(f)).unwrap();
