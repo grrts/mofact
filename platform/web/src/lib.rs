@@ -77,6 +77,16 @@ impl Shell {
         }
         self.game.safe = self.safe_area(scale);
         self.game.frame(size, scale);
+        // Phones' browsers buzz; the rest ignore it.
+        if let Some(feel) = self.game.haptic.take() {
+            use mofact::haptics::Haptic;
+            let ms = match feel {
+                Haptic::Tick => 8,
+                Haptic::Warning => 25,
+                Haptic::Success => 40,
+            };
+            let _ = self.window.navigator().vibrate_with_duration(ms);
+        }
         // Remember low-power mode for next time.
         let (low, safe) = (self.game.low_power(), self.game.colour_blind());
         if (low, safe) != (self.low_power, self.colour_blind) {

@@ -23,6 +23,7 @@ mod built;
 mod bundled;
 pub mod game;
 mod guide;
+pub mod haptics;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod ore;
@@ -40,4 +41,4 @@ mod worldmap;
 pub use bundled::content;
 pub use game::Game;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{main, run, run_with, MakeShop};
+pub use native::{main, run, run_with, MakeShop, Platform};

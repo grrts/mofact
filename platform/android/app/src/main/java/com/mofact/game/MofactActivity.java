@@ -13,6 +13,8 @@ import com.revenuecat.purchases.interfaces.PurchaseCallback;
 import com.revenuecat.purchases.interfaces.ReceiveCustomerInfoCallback;
 import com.revenuecat.purchases.interfaces.ReceiveOfferingsCallback;
 import com.revenuecat.purchases.models.StoreTransaction;
+import android.os.Build;
+import android.view.HapticFeedbackConstants;
 import org.libsdl.app.SDLActivity;
 
 /**
@@ -40,6 +42,24 @@ public class MofactActivity extends SDLActivity {
     @Override
     protected String[] getLibraries() {
         return new String[] { "main" };
+    }
+
+    /**
+     * Play one of the game's feels (mofact::haptics::Haptic): 0 a tick, 1 a
+     * warning, 2 a success. The phone's touch-feedback setting decides.
+     */
+    public boolean haptic(int feel) {
+        final int effect;
+        boolean modern = Build.VERSION.SDK_INT >= Build.VERSION_CODES.R;
+        if (feel == 1) {
+            effect = modern ? HapticFeedbackConstants.REJECT : HapticFeedbackConstants.LONG_PRESS;
+        } else if (feel == 2) {
+            effect = modern ? HapticFeedbackConstants.CONFIRM : HapticFeedbackConstants.LONG_PRESS;
+        } else {
+            effect = HapticFeedbackConstants.CLOCK_TICK;
+        }
+        runOnUiThread(() -> getWindow().getDecorView().performHapticFeedback(effect));
+        return true;
     }
 
     private static boolean owns(CustomerInfo info) {

@@ -692,6 +692,7 @@ name = "mofact-ios"
 version = "0.1.0"
 dependencies = [
  "mofact",
+ "objc2",
  "sdl3-main",
 ]
 

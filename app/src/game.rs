@@ -72,6 +72,9 @@ pub struct Game {
     /// the full game (tests, tools).
     purchase: Option<Purchase>,
     store: StoreView,
+    /// What the phone should feel this frame, for the platform to play.
+    haptics: crate::haptics::Haptics,
+    pub haptic: Option<crate::haptics::Haptic>,
 }
 
 impl Game {
@@ -141,6 +144,8 @@ impl Game {
             slots: Vec::new(),
             purchase: None,
             store: StoreView::default(),
+            haptics: Default::default(),
+            haptic: None,
             content,
             ore,
             controls,
@@ -217,6 +222,7 @@ impl Game {
         self.sim.pump();
         let results: Vec<_> = self.sim.results().collect();
         self.sound.results(&results);
+        self.haptic = self.haptics.frame(&results, &self.sim.latest());
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;

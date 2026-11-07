@@ -283,16 +283,26 @@ pub fn main() -> ExitCode {
 
 /// Run the game, reporting why it could not start or stopped early.
 pub fn run() -> Result<(), String> {
-    run_with(None)
+    run_with(Platform::default())
 }
 
 /// Makes the platform's [`Shop`](crate::shop::Shop) from whether the full
 /// game is remembered as bought, and a way to remember it.
 pub type MakeShop = Box<dyn FnOnce(bool, Box<dyn FnMut(bool)>) -> Box<dyn crate::shop::Shop>>;
 
-/// [`run`], selling the full game through the platform's own store; with
-/// none, through the [`Sandbox`](crate::shop::Sandbox).
-pub fn run_with(shop: Option<MakeShop>) -> Result<(), String> {
+/// What a phone brings to [`run_with`] that SDL doesn't give.
+#[derive(Default)]
+pub struct Platform {
+    /// Its store for the full game; with none, the
+    /// [`Sandbox`](crate::shop::Sandbox).
+    pub shop: Option<MakeShop>,
+    /// Plays a feel on the device.
+    pub haptic: Option<fn(crate::haptics::Haptic)>,
+}
+
+/// [`run`], with what the platform brings.
+pub fn run_with(platform: Platform) -> Result<(), String> {
+    let Platform { shop, haptic } = platform;
     let args = args()?;
     let content = match &args.data {
         Some(dir) => mofact_content::load_dir(Path::new(dir)).map_err(|e| e.to_string())?,
@@ -439,7 +449,11 @@ pub fn run_with(shop: Option<MakeShop>) -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
-        match app.draw() {
+        let frame = app.draw();
+        if let (Some(play), Some(feel)) = (haptic, app.game.haptic.take()) {
+            play(feel);
+        }
+        match frame {
             Frame::Presented => {
                 presented += 1;
                 second.1 += 1;
