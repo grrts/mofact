@@ -18,8 +18,8 @@
   #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
             color: #d8dee6; font: 600 16px system-ui, sans-serif; text-align: center; padding: 24px;
             pointer-events: none; }
-  /* Which build is running, always, small in the top-right corner. */
-  #build { position: fixed; right: calc(6px + env(safe-area-inset-right)); top: calc(3px + env(safe-area-inset-top));
+  /* Which build is running, always, small at the top centre, clear of the sound button. */
+  #build { position: fixed; left: 50%; transform: translateX(-50%); top: calc(3px + env(safe-area-inset-top));
            color: #ffffff66; font: 10px ui-monospace, monospace; pointer-events: none; }
   #update { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top)); transform: translateX(-50%);
             display: none; min-height: 44px; padding: 0 20px; border: 0; border-radius: 22px;
