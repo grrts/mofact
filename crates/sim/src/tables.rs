@@ -91,6 +91,16 @@ pub enum Role {
         reach: i32,
         every: u32,
     },
+    /// A drone port: its drones, and the tiles round it they cover (T49).
+    Port {
+        drones: u8,
+        reach: u8,
+    },
+    /// A provider or requester chest, holding at most `capacity` items.
+    Chest {
+        capacity: u32,
+        requester: bool,
+    },
 }
 
 impl Role {
@@ -252,6 +262,18 @@ impl Tables {
                 } => Role::Radar {
                     reach: (*reach as i32 + mofact_core::FOG_CELL - 1) / mofact_core::FOG_CELL,
                     every: ticks(*seconds_per_patch).max(1),
+                },
+                BuildingRole::DronePort { drones, reach } => Role::Port {
+                    drones: *drones,
+                    reach: *reach,
+                },
+                BuildingRole::ProviderChest { capacity } => Role::Chest {
+                    capacity: *capacity,
+                    requester: false,
+                },
+                BuildingRole::RequesterChest { capacity } => Role::Chest {
+                    capacity: *capacity,
+                    requester: true,
                 },
                 BuildingRole::Megaproject { stages } => Role::Mega {
                     stages: stages.iter().map(|st| stacks(&t, &st.needs)).collect(),

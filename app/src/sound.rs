@@ -258,6 +258,7 @@ mod tests {
 
     fn drill(id: u32, x: i32, state: MachineState) -> EntityView {
         EntityView {
+            request: None,
             id: EntityId(id),
             building: "drill".into(),
             pos: TilePos::new(x, 0),

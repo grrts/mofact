@@ -314,6 +314,8 @@ enum Hit {
     Recipe(Option<RecipeId>),
     Belt(BuildingId),
     SetRecipe(EntityId, Option<RecipeId>),
+    /// What a requester chest asks drones for (T49).
+    SetRequest(EntityId, Option<(mofact_core::ids::ItemId, u32)>),
     Turn(EntityId, Dir),
     Remove(EntityId),
     /// The research button: opens or closes the research sheet.
@@ -865,6 +867,9 @@ impl Hud {
             Hit::Rotate => vec![Action::Rotate],
             Hit::Recipe(r) => vec![Action::Recipe(r)],
             Hit::Belt(b) => vec![Action::Belt(b)],
+            Hit::SetRequest(entity, request) => {
+                vec![Action::Send(Command::SetRequest { entity, request })]
+            }
             Hit::SetRecipe(entity, recipe) => {
                 vec![Action::Send(Command::SetRecipe { entity, recipe })]
             }
@@ -3389,6 +3394,78 @@ impl Hud {
         rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
     }
 
+    /// A requester chest's pills (T49): nothing, or one of the solid items
+    /// in stock (most first), and then how many to keep. Returns the rows.
+    #[allow(clippy::too_many_arguments)]
+    fn request_picker(
+        &mut self,
+        o: &mut Overlay,
+        view: &View,
+        e: &EntityView,
+        at: [f32; 2],
+        width: f32,
+        draw: bool,
+    ) -> usize {
+        let current = e.request.clone();
+        let count = current.as_ref().map_or(REQUEST_COUNTS[1], |r| r.1);
+        let solid = |i: &mofact_core::ids::ItemId| {
+            view.content
+                .items
+                .iter()
+                .any(|d| &d.id == i && d.kind == mofact_core::content::ItemKind::Solid)
+        };
+        let mut items: Vec<(&mofact_core::ids::ItemId, u32)> = view
+            .snapshot
+            .stock
+            .iter()
+            .filter(|(i, n)| *n > 0 && solid(i))
+            .map(|(i, n)| (i, *n))
+            .collect();
+        items.sort_by_key(|p| std::cmp::Reverse(p.1));
+        items.truncate(REQUEST_ITEMS);
+        if let Some((i, _)) = &current {
+            if !items.iter().any(|(j, _)| *j == i) {
+                items.push((i, 0));
+            }
+        }
+        let none = (
+            tr("request.none"),
+            None,
+            current.is_none(),
+            Hit::SetRequest(e.id, None),
+        );
+        let list: Vec<Pill> = std::iter::once(none)
+            .chain(items.iter().map(|(i, _)| {
+                let on = current.as_ref().is_some_and(|c| &c.0 == *i);
+                (
+                    "",
+                    view.look.item(i),
+                    on,
+                    Hit::SetRequest(e.id, Some(((*i).clone(), count))),
+                )
+            }))
+            .collect();
+        let mut rows = 0;
+        if let Some((item, n)) = &current {
+            let labels: Vec<String> = REQUEST_COUNTS.iter().map(|c| c.to_string()).collect();
+            let counts: Vec<Pill> = REQUEST_COUNTS
+                .iter()
+                .zip(&labels)
+                .map(|(c, label)| {
+                    (
+                        label.as_str(),
+                        None,
+                        c == n,
+                        Hit::SetRequest(e.id, Some((item.clone(), *c))),
+                    )
+                })
+                .collect();
+            rows = self.pills(o, counts, at, width, draw);
+        }
+        let pitch = 46.0 * self.unit;
+        rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
+    }
+
     /// The inspect sheet for `e`, bottom-left at `at`.
     fn sheet(&mut self, view: &View, o: &mut Overlay, e: &EntityView, at: [f32; 2], width: f32) {
         let u = self.unit;
@@ -3460,6 +3537,12 @@ impl Hud {
                 false,
             ) as f32
         });
+        let requester = def.is_some_and(|d| matches!(d.role, BuildingRole::RequesterChest { .. }));
+        let pill_rows = if requester {
+            self.request_picker(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
+        } else {
+            pill_rows
+        };
         let height = pad
             + 30.0 * u // title
             + if belt { 0.0 } else { row + 8.0 * u + 6.0 * u } // recipe line and progress
@@ -3667,6 +3750,19 @@ impl Hud {
             y += band;
         }
 
+        if requester {
+            let band = pill_rows * 46.0 * u;
+            self.request_picker(
+                o,
+                view,
+                e,
+                [left, y + band - 6.0 * u],
+                r[2] - 2.0 * pad,
+                true,
+            );
+            y += band;
+        }
+
         // Rotate and remove.
         if !hub {
             let bh = 40.0 * u;
@@ -3725,6 +3821,10 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
 /// A pill: its label, icon, whether it is the one chosen, and what a tap does.
 type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
 
+/// The items a requester chest's sheet offers, and the counts.
+const REQUEST_ITEMS: usize = 11;
+const REQUEST_COUNTS: [u32; 4] = [10, 50, 100, 200];
+
 /// One line on what a building does, for the inspect sheet, when it has no
 /// recipe, fluid or power figures to show instead.
 fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
@@ -3760,6 +3860,14 @@ fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
         Some(BuildingRole::RailSignal) => tr("inspect.signal").into(),
         Some(BuildingRole::TrainStop) => tr("inspect.train_stop").into(),
         Some(BuildingRole::Locomotive { .. }) => tr("inspect.locomotive").into(),
+        Some(BuildingRole::DronePort { drones, reach }) => {
+            trf("inspect.port", &[drones, &(u32::from(*reach) * 2)])
+        }
+        Some(BuildingRole::ProviderChest { .. }) => tr("inspect.provider").into(),
+        Some(BuildingRole::RequesterChest { .. }) => match &e.request {
+            Some((item, n)) => trf("inspect.requests", &[n, &name(item)]),
+            None => tr("inspect.requester").into(),
+        },
         _ => String::new(),
     }
 }
@@ -3798,6 +3906,9 @@ fn tip(tool: &Tool) -> &'static str {
             "tank-train" => "tip.tank_train",
             "wind-turbine" => "tip.wind_turbine",
             "radar" => "tip.radar",
+            "drone-port" => "tip.drone_port",
+            "provider-chest" => "tip.provider_chest",
+            "requester-chest" => "tip.requester_chest",
             _ => "tip.place",
         },
     })

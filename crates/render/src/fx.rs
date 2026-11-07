@@ -226,6 +226,7 @@ mod tests {
         progress: f32,
     ) -> EntityView {
         EntityView {
+            request: None,
             id: EntityId(id),
             building: building.into(),
             pos: TilePos::new(x, y),

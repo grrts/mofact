@@ -50,6 +50,9 @@ pub struct EntityView {
     pub state: MachineState,
     /// Craft progress, 0.0 to 1.0.
     pub progress: f32,
+    /// For a requester chest, what it asks for and how many (T49).
+    #[serde(default)]
+    pub request: Option<(ItemId, u32)>,
 }
 
 /// The fluid in a pipe segment.
@@ -103,6 +106,39 @@ pub struct Snapshot {
     /// fog of war. Shared like `cleared`.
     #[serde(default)]
     pub explored: std::sync::Arc<Vec<crate::geom::FogCell>>,
+    /// Drones in the air (T49); drones resting in a port aren't listed.
+    #[serde(default)]
+    pub drones: Vec<DroneView>,
+    /// Ghosts waiting for construction drones (T50), and what is marked
+    /// for them to take down.
+    #[serde(default)]
+    pub ghosts: Vec<GhostView>,
+    #[serde(default)]
+    pub marked: Vec<EntityId>,
+}
+
+/// A drone in flight.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct DroneView {
+    /// Where it is, in tiles, and where it is going.
+    pub at: [f32; 2],
+    pub to: [f32; 2],
+    /// What it carries: an item, or the building it is taking to a ghost.
+    pub cargo: Option<ItemId>,
+    pub building: Option<BuildingId>,
+    /// Its battery, 0.0 to 1.0.
+    pub battery: f32,
+}
+
+/// A building planned for construction drones.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct GhostView {
+    pub building: BuildingId,
+    pub pos: TilePos,
+    pub dir: Dir,
+    pub recipe: Option<RecipeId>,
+    /// A drone is on its way with it.
+    pub coming: bool,
 }
 
 /// A megaproject's progress: its stage, and what that stage still takes.
