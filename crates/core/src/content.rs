@@ -23,6 +23,16 @@ pub enum IconShape {
     Droplet,
     /// A research pack, consumed by labs.
     Pack,
+    /// A heap of powder, such as sulfur.
+    Powder,
+    /// A battery cell.
+    Cell,
+    /// A thin round wafer.
+    Wafer,
+    /// A square chip with pins on every side.
+    Chip,
+    /// An open frame of struts around a core.
+    Frame,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

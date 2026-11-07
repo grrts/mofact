@@ -2181,7 +2181,7 @@ const RESERVED_KEYS: [char; 4] = ['m', 'r', 't', 'x'];
 
 /// One key for every building but the hub and belts (which have number
 /// keys): the first letter of its name that is free, in content order,
-/// then 8, 9 and 0.
+/// then 8, 9 and 0, then the punctuation keys beside them.
 pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
     let mut out: Vec<(char, BuildingId)> = Vec::new();
     for b in &content.buildings {
@@ -2194,8 +2194,9 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
             .chars()
             .filter(char::is_ascii_lowercase)
             .chain('a'..='z')
-            // Once the letters run out, the number keys the toolbar leaves.
-            .chain(['8', '9', '0'])
+            // Once the letters run out, the number keys the toolbar leaves,
+            // then the keys beside them on the top two rows.
+            .chain(['8', '9', '0', '-', '=', '[', ']', ';', ',', '.', '/'])
             .find(|c| !RESERVED_KEYS.contains(c) && !out.iter().any(|(k, _)| k == c));
         if let Some(k) = key {
             out.push((k, b.id.clone()));

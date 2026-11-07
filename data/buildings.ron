@@ -75,4 +75,12 @@
         cost: [(item: "steel", count: 5), (item: "circuit", count: 5), (item: "brick", count: 5)]),
     (id: "locomotive", name: "Locomotive", size: (1, 1), role: Locomotive(tiles_per_second: 8.0, capacity: 200),
         cost: [(item: "steel", count: 20), (item: "motor", count: 10), (item: "circuit", count: 10)]),
+    // Tier 4-5 (T53, T57): a furnace that smelts with power instead of fire,
+    // solar panels that need no fuel, and an assembler three times as fast.
+    (id: "electric-furnace", name: "Electric furnace", size: (1, 1), role: Crafter(categories: ["smelting"], speed: 2.0), power: 180.0,
+        cost: [(item: "steel", count: 10), (item: "advanced-circuit", count: 5), (item: "brick", count: 10)]),
+    (id: "solar-panel", name: "Solar panel", size: (2, 2), role: Generator(kw: 300.0),
+        cost: [(item: "silicon", count: 15), (item: "steel", count: 5), (item: "advanced-circuit", count: 5)]),
+    (id: "precision-assembler", name: "Precision assembler", size: (2, 2), role: Crafter(categories: ["assembling"], speed: 3.0), power: 150.0,
+        cost: [(item: "processor", count: 5), (item: "robot-frame", count: 2), (item: "steel", count: 10)]),
 ]

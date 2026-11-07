@@ -75,6 +75,8 @@ enum Art {
     Turbine,
     /// The turbine with its blades turned to frame `0` of [`ROTOR_FRAMES`].
     TurbineSpin(u8),
+    /// A generator bigger than a tile: a solar panel.
+    Solar,
     Splitter,
     Underground {
         exit: bool,
@@ -123,12 +125,21 @@ enum Art {
     Furnace {
         ring: Option<Rgba>,
         pose: Pose,
+        /// A faster tier's colour: an electric furnace.
+        trim: Option<Rgba>,
+    },
+    /// An assembler's stripe in white, to tint with its product's colour:
+    /// an octagon's band for the faster kind.
+    Stripe {
+        octagon: bool,
     },
     Assembler {
         product: Option<(Shape, Rgba)>,
         pose: Pose,
         /// A faster tier's colour.
         trim: Option<Rgba>,
+        /// Bigger than a tile: a precision assembler.
+        big: bool,
     },
     Item {
         shape: Shape,
@@ -209,6 +220,31 @@ struct BuildingLook {
     settings: Vec<String>,
     /// Its first sprite in the catalogue.
     base: usize,
+    /// What is drawn over it for its recipe, if it is not baked in.
+    layers: Option<Layers>,
+}
+
+/// How an assembler shows its recipe: its stripe tinted the product's
+/// colour, and the product's icon over its window. Baking a sprite per
+/// recipe would fill the atlas many times over.
+#[derive(Clone, Copy, Debug)]
+struct Layers {
+    /// The white stripe sprite, if it has one.
+    stripe: Option<usize>,
+    /// Where the icon's centre is, in tiles from the top-left.
+    centre: [f32; 2],
+    /// The item sprite's side, in tiles.
+    icon: f32,
+}
+
+/// A sprite drawn over a machine: where, how big, and its tint.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Layer<'a> {
+    pub sprite: &'a str,
+    /// From the machine's top-left corner, in tiles.
+    pub offset: [f32; 2],
+    pub size: [f32; 2],
+    pub tint: Rgba,
 }
 
 /// One sprite: its name, its size in tiles, and what it shows.
@@ -226,6 +262,8 @@ pub struct Look {
     sprites: Vec<Sprite>,
     buildings: HashMap<BuildingId, BuildingLook>,
     items: HashMap<ItemId, (usize, Rgba)>,
+    /// What each recipe makes first, for the icon over an assembler.
+    products: HashMap<String, ItemId>,
     /// The first of the sixteen pipe-fluid sprites, one per set of sides.
     pipe_fluid: usize,
     /// The first belt surface sprite: [`belt::FRAMES`] per bend.
@@ -258,6 +296,11 @@ fn shape(s: IconShape) -> Shape {
         IconShape::Circuit => Shape::Circuit,
         IconShape::Droplet => Shape::Droplet,
         IconShape::Pack => Shape::Pack,
+        IconShape::Powder => Shape::Powder,
+        IconShape::Cell => Shape::Cell,
+        IconShape::Wafer => Shape::Wafer,
+        IconShape::Chip => Shape::Chip,
+        IconShape::Frame => Shape::Frame,
     }
 }
 
@@ -268,6 +311,12 @@ fn dir_index(d: Dir) -> usize {
 impl Look {
     pub fn new(content: &Content) -> Self {
         let mut look = Look::default();
+        for r in &content.recipes {
+            if let Some(out) = r.outputs.first() {
+                look.products
+                    .insert(r.id.as_str().to_owned(), out.item.clone());
+            }
+        }
         let item_look = |id: &ItemId| {
             content
                 .items
@@ -430,6 +479,7 @@ impl Look {
             };
             let base = look.sprites.len();
             let id = b.id.as_str();
+            let mut layers = None;
             // A crafter faster than the first kind wears its tier's colour.
             let trim = match b.role {
                 BuildingRole::Crafter { speed, .. } if speed > 1.0 => {
@@ -450,14 +500,18 @@ impl Look {
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
                 Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
                 Kind::Generator => {
-                    push(&mut look, id.to_owned(), b.size, Art::Turbine);
-                    for k in 0..ROTOR_FRAMES {
-                        push(
-                            &mut look,
-                            format!("{id}:spin:{k}"),
-                            b.size,
-                            Art::TurbineSpin(k),
-                        );
+                    if b.size.0 > 1 {
+                        push(&mut look, id.to_owned(), b.size, Art::Solar);
+                    } else {
+                        push(&mut look, id.to_owned(), b.size, Art::Turbine);
+                        for k in 0..ROTOR_FRAMES {
+                            push(
+                                &mut look,
+                                format!("{id}:spin:{k}"),
+                                b.size,
+                                Art::TurbineSpin(k),
+                            );
+                        }
                     }
                 }
                 Kind::Splitter => push(&mut look, id.to_owned(), b.size, Art::Splitter),
@@ -519,9 +573,14 @@ impl Look {
                 }
                 _ => {
                     let none = std::iter::once(None);
-                    let choices: Vec<Option<&str>> = none
-                        .chain(recipes.iter().map(|r| Some(r.as_str())))
-                        .collect();
+                    // Assemblers draw their recipe as layers over the body.
+                    let baked = if kind == Kind::Assembler {
+                        &[][..]
+                    } else {
+                        &recipes[..]
+                    };
+                    let choices: Vec<Option<&str>> =
+                        none.chain(baked.iter().map(|r| Some(r.as_str()))).collect();
                     for setting in &choices {
                         let def = setting
                             .and_then(|r| content.recipes.iter().find(|d| d.id.as_str() == r));
@@ -561,6 +620,7 @@ impl Look {
                                     Kind::Furnace => Art::Furnace {
                                         ring: product.map(|p| p.1),
                                         pose,
+                                        trim,
                                     },
                                     Kind::Boiler => Art::Boiler { pose },
                                     Kind::Refinery => Art::Refinery {
@@ -583,6 +643,7 @@ impl Look {
                                             ..pose
                                         },
                                         trim,
+                                        big: b.size.0 > 1,
                                     },
                                 };
                                 let r = setting.unwrap_or("none");
@@ -593,6 +654,29 @@ impl Look {
                     }
                 }
             }
+            if kind == Kind::Assembler {
+                let big = b.size.0 > 1;
+                let stripe = (!big).then(|| {
+                    let at = look.sprites.len();
+                    let art = Art::Stripe {
+                        octagon: trim.is_some(),
+                    };
+                    push(&mut look, format!("{id}:stripe"), b.size, art);
+                    at
+                });
+                // Where each body draws its product, and how big: the item
+                // sprite is drawn 0.64 of its side across.
+                let (centre, across) = match (big, trim.is_some()) {
+                    (true, _) => ([1.0, 1.12], 0.32),
+                    (false, true) => ([0.5, 0.54], 0.26),
+                    (false, false) => ([0.5, 0.52], 0.3),
+                };
+                layers = Some(Layers {
+                    stripe,
+                    centre,
+                    icon: across / 0.64,
+                });
+            }
             look.buildings.insert(
                 b.id.clone(),
                 BuildingLook {
@@ -600,6 +684,7 @@ impl Look {
                     size: b.size,
                     settings: recipes,
                     base,
+                    layers,
                 },
             );
         }
@@ -747,7 +832,7 @@ impl Look {
     /// `t` seconds; `None` for anything that doesn't spin.
     pub fn spinning(&self, building: &BuildingId, t: f64) -> Option<&str> {
         let b = self.buildings.get(building)?;
-        if b.kind != Kind::Generator {
+        if b.kind != Kind::Generator || b.size.0 > 1 {
             return None;
         }
         let frame = ((t / ROTOR_SECONDS).fract() * f64::from(ROTOR_FRAMES)) as usize;
@@ -806,6 +891,7 @@ impl Look {
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
+            Kind::Assembler => b.base + dir_index(dir),
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -821,6 +907,35 @@ impl Look {
             }
         };
         self.sprites.get(at).map(|s| s.name.as_str())
+    }
+
+    /// What is drawn over `building` to show its `recipe`, in order.
+    pub fn layers(&self, building: &BuildingId, recipe: Option<&str>) -> Vec<Layer<'_>> {
+        let (Some(b), Some(item)) = (
+            self.buildings.get(building),
+            recipe.and_then(|r| self.products.get(r)),
+        ) else {
+            return Vec::new();
+        };
+        let (Some(l), Some(&(icon, color))) = (b.layers, self.items.get(item)) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        if let Some(stripe) = l.stripe {
+            out.push(Layer {
+                sprite: &self.sprites[stripe].name,
+                offset: [0.0, 0.0],
+                size: [f32::from(b.size.0), f32::from(b.size.1)],
+                tint: color,
+            });
+        }
+        out.push(Layer {
+            sprite: &self.sprites[icon].name,
+            offset: [l.centre[0] - l.icon / 2.0, l.centre[1] - l.icon / 2.0],
+            size: [l.icon, l.icon],
+            tint: palette::WHITE,
+        });
+        out
     }
 
     /// The sprite and tint that draw `item`, for icons and belts.
@@ -934,6 +1049,8 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             let turn = f32::from(k) / f32::from(ROTOR_FRAMES) * std::f32::consts::TAU / 3.0;
             draw::turbine(&mut c, z, fine, 0.3 + turn / 2.0)
         }
+        Art::Solar => draw::solar(&mut c, z, fine),
+        Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Splitter => draw::splitter(&mut c, z, fine),
         Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
         Art::Pipe { links } => draw::pipe(&mut c, z, fine, links),
@@ -956,17 +1073,34 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             draw::chemical_plant(&mut c, z, fine, pose, product)
         }
         Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
-        Art::Furnace { ring, ref pose } => draw::furnace(&mut c, z, ring, fine, pose),
+        Art::Furnace {
+            ring,
+            ref pose,
+            trim: None,
+        } => draw::furnace(&mut c, z, ring, fine, pose),
+        Art::Furnace {
+            ring,
+            ref pose,
+            trim: Some(trim),
+        } => draw::electric_furnace(&mut c, z, ring, fine, pose, trim),
         Art::Assembler {
             product,
             ref pose,
             trim: None,
+            ..
         } => draw::assembler(&mut c, z, product, fine, pose),
         Art::Assembler {
             product,
             ref pose,
             trim: Some(trim),
+            big: false,
         } => draw::fast_assembler(&mut c, z, product, fine, pose, trim),
+        Art::Assembler {
+            product,
+            ref pose,
+            trim: Some(trim),
+            big: true,
+        } => draw::precision_assembler(&mut c, z, product, fine, pose, trim),
         Art::Item { shape, color } => {
             // On a belt, the prototype draws items 0.32 of a tile across.
             let s = w as f32;
@@ -1017,9 +1151,16 @@ pub(crate) mod tests {
         let asm = BuildingId::from("assembler");
         assert_eq!(
             look.sprite(&asm, Dir::North, Some(gear), true),
-            Some("assembler:gear:cold:3"),
-            "assemblers look the same working"
+            Some("assembler:none:cold:3"),
+            "assemblers look the same working, and draw their recipe on top"
         );
+        let layers = look.layers(&asm, Some(gear));
+        assert_eq!(layers.len(), 2, "a stripe and an icon");
+        assert_eq!(layers[0].sprite, "assembler:stripe");
+        assert_eq!(layers[0].tint, palette::item("iron"));
+        assert_eq!(layers[1].sprite, "item:gear");
+        assert!(look.layers(&asm, None).is_empty());
+        assert!(look.layers(&furnace, Some(iron)).is_empty());
         assert_eq!(
             look.sprite(&asm, Dir::West, None, false),
             Some("assembler:none:cold:2")

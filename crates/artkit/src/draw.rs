@@ -20,6 +20,11 @@ pub enum Shape {
     Circuit,
     Droplet,
     Pack,
+    Powder,
+    Cell,
+    Wafer,
+    Chip,
+    Frame,
 }
 
 /// The four directions, as `(dx, dy)` steps, in the core's `Dir` order.
@@ -252,6 +257,134 @@ pub fn item(c: &mut Canvas, shape: Shape, color: Rgba, x: f32, y: f32, s: f32, f
             if detail {
                 c.fill_circle(x - s * 0.12, y + s * 0.02, s * 0.07, hi);
                 c.stroke_circle(x, y + s * 0.14, s * 0.36, lo, (s * 0.04).max(1.0));
+            }
+        }
+        Shape::Powder => {
+            // A heap of powder: a low mound with a lit crown and loose grains.
+            fill(c, ellipse(x, y + s * 0.22, s * 0.5, s * 0.24), lo);
+            let mound = [
+                (-0.5, 0.24),
+                (-0.3, -0.08),
+                (-0.08, -0.3),
+                (0.12, -0.3),
+                (0.32, -0.06),
+                (0.5, 0.24),
+            ];
+            fill(c, poly(&mound, x, y, s), color);
+            fill(
+                c,
+                ellipse(x - s * 0.02, y - s * 0.14, s * 0.18, s * 0.1),
+                hi,
+            );
+            if detail {
+                for (gx, gy) in [(-0.36, 0.34), (0.3, 0.38), (0.42, 0.3)] {
+                    c.fill_circle(x + gx * s, y + gy * s, s * 0.04, color);
+                }
+            }
+        }
+        Shape::Cell => {
+            // A battery standing up: a terminal, a coloured wrap, a dark base.
+            fill(
+                c,
+                rr(x - s * 0.1, y - s * 0.5, s * 0.2, s * 0.1, s * 0.03),
+                pal::MACHINE_HI,
+            );
+            fill(
+                c,
+                rr(x - s * 0.28, y - s * 0.42, s * 0.56, s * 0.9, s * 0.1),
+                pal::MACHINE_EDGE,
+            );
+            fill(
+                c,
+                rr(x - s * 0.24, y - s * 0.38, s * 0.48, s * 0.56, s * 0.07),
+                color,
+            );
+            c.fill_rect(x - s * 0.24, y + s * 0.22, s * 0.48, s * 0.06, pal::ACCENT);
+            if detail {
+                c.fill_rect(x - s * 0.18, y - s * 0.32, s * 0.08, s * 0.44, hi);
+                let w = (s * 0.06).max(1.0);
+                c.line(
+                    &[(x - s * 0.1, y - s * 0.1), (x + s * 0.1, y - s * 0.1)],
+                    pal::WHITE,
+                    w,
+                );
+                c.line(&[(x, y - s * 0.2), (x, y)], pal::WHITE, w);
+            }
+        }
+        Shape::Wafer => {
+            // A round wafer with a flat cut on one side and a grid of dies.
+            let r = s * 0.48;
+            c.save();
+            if let Some(p) = rr(x - r, y - r, r * 2.0, r * 1.82, 0.0) {
+                c.clip(&p);
+            }
+            c.fill_circle(x, y, r, lo);
+            c.fill_circle(x, y - s * 0.03, r * 0.94, color);
+            if detail {
+                let w = (s * 0.03).max(1.0);
+                for k in [-0.2, 0.0, 0.2] {
+                    c.line(&[(x + k * s, y - r), (x + k * s, y + r)], lo, w);
+                    c.line(&[(x - r, y + k * s), (x + r, y + k * s)], lo, w);
+                }
+            }
+            c.restore();
+            c.stroke_arc(
+                (x, y - s * 0.03),
+                r * 0.78,
+                (PI * 1.05, PI * 1.45),
+                hi,
+                (s * 0.07).max(1.0),
+            );
+        }
+        Shape::Chip => {
+            // A square package with pins on all four sides and a bright die.
+            if detail {
+                let w = s * 0.08;
+                for k in -1..=1 {
+                    let o = k as f32 * s * 0.22 - w / 2.0;
+                    c.fill_rect(x + o, y - s * 0.5, w, s * 0.1, pal::PIN);
+                    c.fill_rect(x + o, y + s * 0.4, w, s * 0.1, pal::PIN);
+                    c.fill_rect(x - s * 0.5, y + o, s * 0.1, w, pal::PIN);
+                    c.fill_rect(x + s * 0.4, y + o, s * 0.1, w, pal::PIN);
+                }
+            } else {
+                fill(c, rr(x - s * 0.5, y - s * 0.5, s, s, s * 0.08), pal::PIN);
+            }
+            fill(
+                c,
+                rr(x - s * 0.4, y - s * 0.4, s * 0.8, s * 0.8, s * 0.08),
+                color,
+            );
+            fill(
+                c,
+                rr(x - s * 0.2, y - s * 0.2, s * 0.4, s * 0.4, s * 0.04),
+                hi,
+            );
+            if detail {
+                c.fill_circle(x - s * 0.28, y - s * 0.28, s * 0.04, lo);
+            }
+        }
+        Shape::Frame => {
+            // An open square of struts, braced corner to corner, round a core.
+            let w = (s * 0.13).max(1.0);
+            let k = s * 0.4;
+            let ring = [
+                (x - k, y - k),
+                (x + k, y - k),
+                (x + k, y + k),
+                (x - k, y + k),
+                (x - k, y - k),
+            ];
+            c.line(&ring, lo, w * 1.4);
+            c.line(&ring, color, w);
+            c.line(&[(x - k, y - k), (x + k, y + k)], color, w * 0.7);
+            c.line(&[(x + k, y - k), (x - k, y + k)], color, w * 0.7);
+            c.fill_circle(x, y, s * 0.17, pal::MACHINE_EDGE);
+            c.fill_circle(x, y, s * 0.11, pal::ACCENT);
+            if detail {
+                for (cx, cy) in [(-k, -k), (k, -k), (k, k), (-k, k)] {
+                    c.fill_circle(x + cx, y + cy, s * 0.06, hi);
+                }
             }
         }
     }
@@ -1655,4 +1788,268 @@ pub fn pumpjack(c: &mut Canvas, z: f32, fine: bool, oil: Rgba, t: f32) {
             );
         }
     }
+}
+
+/// Tier stripes: `n` short slanted bars in the tier's colour along a
+/// machine's front edge, `w` pixels wide in all, from (`x`, `y`).
+fn stripes(c: &mut Canvas, x: f32, y: f32, w: f32, h: f32, n: usize, trim: Rgba) {
+    c.fill_rect(x, y, w, h, pal::HAZARD_DARK);
+    let step = w / n as f32;
+    for k in 0..n {
+        let x0 = x + k as f32 * step;
+        let bar = [
+            (x0 + step * 0.15, y + h),
+            (x0 + step * 0.45, y),
+            (x0 + step * 0.85, y),
+            (x0 + step * 0.55, y + h),
+        ];
+        fill(c, poly(&bar, 0.0, 0.0, 1.0), trim);
+    }
+}
+
+/// An electric furnace: a square cabinet, no firebrick, round a crucible
+/// wound with a copper coil that glows white hot while it works. `ring` is
+/// what it smelts and `trim` its tier.
+pub fn electric_furnace(
+    c: &mut Canvas,
+    z: f32,
+    ring: Option<Rgba>,
+    fine: bool,
+    pose: &Pose,
+    trim: Rgba,
+) {
+    let (s, sh) = (z, z * 0.07);
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    shadow(
+        c,
+        rr(
+            s * 0.06 + sh,
+            s * 0.06 + sh * 1.3,
+            s * 0.88,
+            s * 0.88,
+            s * 0.12,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.12),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.09, s * 0.09, s * 0.82, s * 0.82, s * 0.1),
+        pal::MACHINE,
+    );
+    // Cooling fins down both sides.
+    if fine {
+        let w = (s * 0.025).max(1.0);
+        for k in 0..4 {
+            let y = s * (0.3 + k as f32 * 0.12);
+            c.line(&[(s * 0.12, y), (s * 0.2, y)], pal::MACHINE_HI, w);
+            c.line(&[(s * 0.8, y), (s * 0.88, y)], pal::MACHINE_HI, w);
+        }
+    }
+    stripes(c, s * 0.2, s * 0.12, s * 0.6, s * 0.08, 4, trim);
+    let ring = ring.unwrap_or(pal::MACHINE_HI);
+    c.fill_circle(cx, cy + s * 0.05, s * 0.3, pal::MACHINE_EDGE);
+    // The coil: copper turns round the crucible.
+    let coil = pal::item("copper");
+    let w = (s * 0.04).max(1.0);
+    c.stroke_circle(cx, cy + s * 0.05, s * 0.26, coil, w);
+    if fine {
+        c.stroke_circle(cx, cy + s * 0.05, s * 0.21, shade(coil, -0.3), w);
+    }
+    c.stroke_circle(cx, cy + s * 0.05, s * 0.3, ring, (s * 0.03).max(1.0));
+    if pose.working {
+        let fl = 0.85 + 0.15 * (pose.t * 7.0).sin();
+        c.fill_circle(cx, cy + s * 0.05, s * 0.17, pal::FLAME[1]);
+        c.fill_circle(cx, cy + s * 0.05, s * 0.11 * fl, pal::FLAME[2]);
+        c.fill_circle(cx, cy + s * 0.05, s * 0.05 * fl, pal::WHITE);
+    } else {
+        c.fill_circle(cx, cy + s * 0.05, s * 0.17, pal::HEARTH);
+        if fine {
+            c.fill_circle(cx - s * 0.05, cy, s * 0.04, pal::SOOT);
+        }
+    }
+    notch(c, z, pose);
+}
+
+/// A 2×2 solar panel: four tilted panes of dark blue cells in a steel
+/// frame, with a little inverter box between them.
+pub fn solar(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.04 + sh,
+            s * 0.04 + sh * 1.3,
+            s * 0.92,
+            s * 0.92,
+            s * 0.04,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.04, s * 0.04, s * 0.92, s * 0.92, s * 0.04),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.03),
+        pal::PIPE,
+    );
+    let cell = pal::SOLAR;
+    let line = shade(cell, 0.25);
+    for (px, py) in [(0.08, 0.08), (0.52, 0.08), (0.08, 0.52), (0.52, 0.52)] {
+        let (x, y, w) = (s * px, s * py, s * 0.4);
+        fill(c, rr(x, y, w, w, s * 0.015), cell);
+        if fine {
+            let lw = (s * 0.006).max(1.0);
+            for k in 1..4 {
+                let o = w * k as f32 / 4.0;
+                c.line(&[(x + o, y), (x + o, y + w)], line, lw);
+                c.line(&[(x, y + o), (x + w, y + o)], line, lw);
+            }
+        } else {
+            c.line(
+                &[(x + w / 2.0, y), (x + w / 2.0, y + w)],
+                line,
+                (s * 0.01).max(1.0),
+            );
+        }
+        // The sky's sheen across each pane.
+        let sheen = [(0.0, 0.62), (0.62, 0.0), (0.82, 0.0), (0.0, 0.82)];
+        c.save();
+        c.set_alpha(c.alpha() * 0.18);
+        fill(c, poly(&sheen, x, y, w), pal::WHITE);
+        c.restore();
+    }
+    // The inverter where the panes meet.
+    fill(
+        c,
+        rr(s * 0.42, s * 0.42, s * 0.16, s * 0.16, s * 0.03),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.44, s * 0.44, s * 0.12, s * 0.12, s * 0.02),
+        pal::MACHINE,
+    );
+    c.fill_circle(s * 0.5, s * 0.5, s * 0.025, pal::GO);
+}
+
+/// A 2×2 precision assembler: a cabinet in its tier's stripes, round a
+/// glass work cell where a robot arm builds `product`.
+pub fn precision_assembler(
+    c: &mut Canvas,
+    z: f32,
+    product: Option<(Shape, Rgba)>,
+    fine: bool,
+    pose: &Pose,
+    trim: Rgba,
+) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let outer = octagon(0.18, 0.04);
+    let inner = octagon(0.16, 0.07);
+    shape_at(c, &outer, sh, sh * 1.3, s, pal::SHADOW);
+    shape_at(c, &outer, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    shape_at(c, &inner, 0.0, 0.0, s, pal::MACHINE);
+    stripes(c, s * 0.24, s * 0.08, s * 0.52, s * 0.07, 6, trim);
+    stripes(c, s * 0.24, s * 0.85, s * 0.52, s * 0.07, 6, trim);
+    // Four feeder hatches, one on each side.
+    for (hx, hy) in [(0.14, 0.5), (0.86, 0.5)] {
+        fill(
+            c,
+            rr(
+                s * hx - s * 0.04,
+                s * hy - s * 0.1,
+                s * 0.08,
+                s * 0.2,
+                s * 0.02,
+            ),
+            pal::WINDOW,
+        );
+    }
+    // The work cell.
+    c.fill_circle(cx, cy, s * 0.29, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.26, pal::WINDOW);
+    c.stroke_circle(cx, cy, s * 0.27, trim, (s * 0.012).max(1.0));
+    if let Some((shape, color)) = product {
+        item(c, shape, color, cx, cy + s * 0.06, s * 0.16, !fine);
+    }
+    // The arm, from its base at the back of the cell to the work.
+    let a = if pose.working {
+        (pose.t * 2.0).sin() * 0.6
+    } else {
+        0.0
+    };
+    let (bx, by) = (cx - s * 0.13, cy - s * 0.12);
+    let (ex, ey) = (
+        bx + s * 0.14 * (0.4 + a).cos(),
+        by + s * 0.14 * (0.4 + a).sin(),
+    );
+    let (tx, ty) = (cx + s * 0.02, cy + s * 0.02);
+    let w = (s * 0.035).max(1.0);
+    c.line(&[(bx, by), (ex, ey), (tx, ty)], pal::MACHINE_EDGE, w * 1.5);
+    c.line(&[(bx, by), (ex, ey), (tx, ty)], pal::ACCENT, w);
+    c.fill_circle(bx, by, s * 0.04, pal::MACHINE_HI);
+    c.fill_circle(ex, ey, s * 0.022, pal::MACHINE_EDGE);
+    if fine {
+        c.fill_circle(tx, ty, s * 0.018, pal::WHITE);
+        for (x, y) in [(0.2, 0.2), (0.8, 0.2), (0.2, 0.8), (0.8, 0.8)] {
+            bolt(c, s * x, s * y, s * 0.015);
+        }
+    }
+    // Progress, under the cell.
+    c.fill_rect(s * 0.36, s * 0.79, s * 0.28, s * 0.03, pal::WINDOW);
+    if pose.working {
+        let w = s * 0.28 * pose.progress.clamp(0.0, 1.0);
+        c.fill_rect(s * 0.36, s * 0.79, w, s * 0.03, trim);
+    }
+    let (nx, ny) = pose.local(s, 0.42, 0.0);
+    arrow(c, nx, ny, pose.dir % 4, s * 0.16, pal::ACCENT);
+}
+
+/// An assembler's stripe in white, to be tinted with what it makes: the
+/// first kind's band across its top, or the faster kind's band clipped to
+/// its octagon. Hatching shows as the darker lines.
+pub fn stripe(c: &mut Canvas, z: f32, fine: bool, octagon: bool) {
+    let s = z;
+    let white = pal::WHITE;
+    let hatch = shade(white, -0.35);
+    c.save();
+    let (y0, h) = if octagon {
+        if let Some(p) = poly(&octagon_points(), 0.0, 0.0, s) {
+            c.clip(&p);
+        }
+        (0.07, 0.12)
+    } else {
+        if let Some(p) = rect(s * 0.08, s * 0.08, s * 0.84, s * 0.12) {
+            c.clip(&p);
+        }
+        (0.08, 0.12)
+    };
+    c.fill_rect(0.0, s * y0, s, s * h, white);
+    if fine {
+        for k in 0..8 {
+            let k = k as f32;
+            c.line(
+                &[
+                    (s * (0.1 + k * 0.12), s * (y0 + h)),
+                    (s * (0.16 + k * 0.12), s * y0),
+                ],
+                hatch,
+                s * 0.04,
+            );
+        }
+    }
+    c.restore();
+}
+
+/// The faster assembler's inner octagon, for its stripe.
+fn octagon_points() -> [(f32, f32); 8] {
+    octagon(0.2, 0.07)
 }
