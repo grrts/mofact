@@ -280,6 +280,11 @@ impl Game {
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
+                if why == E::CannotAfford {
+                    let text = self.short_of();
+                    self.hud.toast(&text);
+                    continue;
+                }
                 self.hud.toast(tr(match why {
                     E::Blocked => "error.blocked",
                     E::CannotAfford => "error.cannot_afford",
@@ -469,9 +474,19 @@ impl Game {
             self.overlay
                 .panel([x, y], [ppt, ppt], ppt * 0.3, [0xff, 0x5d, 0x5d, 0x70]);
         }
+        power_marks(
+            &mut self.overlay,
+            &self.content,
+            &latest,
+            &camera,
+            target.size(),
+            scale,
+        );
+        let panels = self.hud.panels();
         let nudge = coach_marks(
             &mut self.overlay,
             coach.as_ref(),
+            &panels,
             &camera,
             target.size(),
             scale,
@@ -554,6 +569,49 @@ impl Game {
     }
 
     /// Do what the HUD asks.
+    /// What the building in hand still needs, for a refusal that says so:
+    /// "A Lab needs 10 Brick, 5 Circuit more."
+    fn short_of(&self) -> String {
+        let id = match &self.controls.builder.tool {
+            Tool::Place(b) => b.clone(),
+            Tool::Belt => self.controls.builder.belt.clone(),
+            _ => return tr("error.cannot_afford").into(),
+        };
+        let Some(def) = self.shown.buildings.iter().find(|b| b.id == id) else {
+            return tr("error.cannot_afford").into();
+        };
+        let latest = self.sim.latest();
+        let have = |item: &mofact_core::ids::ItemId| {
+            latest
+                .stock
+                .iter()
+                .find(|(i, _)| i == item)
+                .map_or(0, |(_, n)| *n)
+        };
+        let missing: Vec<String> = def
+            .cost
+            .iter()
+            .filter(|c| have(&c.item) < c.count)
+            .map(|c| {
+                let name = self
+                    .shown
+                    .items
+                    .iter()
+                    .find(|i| i.id == c.item)
+                    .map_or(c.item.as_str(), |i| i.name.as_str());
+                trf("error.short_item", &[&(c.count - have(&c.item)), &name])
+            })
+            .collect();
+        if missing.is_empty() {
+            return tr("error.cannot_afford").into();
+        }
+        let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
+        trf(
+            "error.short_of",
+            &[&def.name, &mofact_ui::i18n::join(&missing)],
+        )
+    }
+
     fn act(&mut self, action: Action) {
         match action {
             Action::Tool(tool) => self.controls.builder.set_tool(tool),
@@ -857,6 +915,7 @@ pub fn ore_for(content: &Content, scenario: &mofact_headless::Scenario, seed: u6
 fn coach_marks(
     o: &mut Overlay,
     coach: Option<&Coach>,
+    panels: &[[f32; 4]],
     camera: &Camera,
     (sw, sh): (u32, u32),
     scale: f32,
@@ -870,15 +929,46 @@ fn coach_marks(
         ]
     };
     let px = 13.0 * scale;
-    // A label centred on `mid`, its bottom edge at `y` (or top edge, `below`).
-    let label = |o: &mut Overlay, text: &str, mid: f32, y: f32, below: bool, ink: [u8; 4]| {
-        let (pad, h) = (8.0 * scale, 24.0 * scale);
-        let w = o.measure(text, px) + 2.0 * pad;
-        let x = (mid - w / 2.0).clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
-        let top = if below { y } else { y - h };
-        o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
-        o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
-    };
+    // A label centred on `mid`, above the span `ys` (top and bottom on
+    // screen), or below it when `below`. Where the HUD's cards or a label
+    // already drawn cover that spot (a goal card over the hub on a phone
+    // held sideways), it tries the other side, then each side slid clear
+    // along the row, and keeps its first spot if nothing is clear.
+    let mut taken: Vec<[f32; 4]> = panels.to_vec();
+    let mut label =
+        |o: &mut Overlay, text: &str, mid: f32, ys: [f32; 2], below: bool, ink: [u8; 4]| {
+            let (pad, h, gap) = (8.0 * scale, 24.0 * scale, 4.0 * scale);
+            let w = o.measure(text, px) + 2.0 * pad;
+            let fit = |x: f32| x.clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
+            let x0 = fit(mid - w / 2.0);
+            let top_of = |below: bool| if below { ys[1] + gap } else { ys[0] - gap - h };
+            let over = |x: f32, top: f32, r: &[f32; 4]| {
+                x < r[0] + r[2] && x + w > r[0] && top < r[1] + r[3] && top + h > r[1]
+            };
+            let clear = |x: f32, top: f32| {
+                top >= 0.0 && top + h <= sh as f32 && !taken.iter().any(|r| over(x, top, r))
+            };
+            let mut spot = None;
+            'find: for side in [below, !below] {
+                let top = top_of(side);
+                let mut xs = vec![x0];
+                for r in taken.iter().filter(|r| over(x0, top, r)) {
+                    xs.push(fit(r[0] - w - gap));
+                    xs.push(fit(r[0] + r[2] + gap));
+                }
+                for x in xs {
+                    // Not so far along that it stops pointing at its building.
+                    if (x - x0).abs() <= w * 0.75 && clear(x, top) {
+                        spot = Some((x, top));
+                        break 'find;
+                    }
+                }
+            }
+            let (x, top) = spot.unwrap_or((x0, top_of(below)));
+            taken.push([x, top, w, h]);
+            o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
+            o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
+        };
     let accent = [0xff, 0xd1, 0x66, 0xff];
     match coach? {
         Coach::Labels(labels) => {
@@ -889,12 +979,8 @@ fn coach_marks(
             for (pos, (w, h), text, below) in labels {
                 let p = at(*pos);
                 let mid = p[0] + f32::from(*w) * ppt / 2.0;
-                let y = if *below {
-                    p[1] + f32::from(*h) * ppt + 4.0 * scale
-                } else {
-                    p[1] - 4.0 * scale
-                };
-                label(o, text, mid, y, *below, [0xe9, 0xed, 0xf0, 0xff]);
+                let ys = [p[1], p[1] + f32::from(*h) * ppt];
+                label(o, text, mid, ys, *below, [0xe9, 0xed, 0xf0, 0xff]);
             }
             None
         }
@@ -915,13 +1001,111 @@ fn coach_marks(
             let first = at(step.tiles[0]);
             let last = at(*step.tiles.last().unwrap_or(&step.tiles[0]));
             let mid = (first[0] + last[0]) / 2.0 + ppt / 2.0;
-            let y = if *below {
-                first[1].max(last[1]) + ppt + 6.0 * scale
-            } else {
-                first[1].min(last[1]) - 6.0 * scale
-            };
-            label(o, step.say(), mid, y, *below, accent);
+            let ys = [
+                first[1].min(last[1]) - 2.0 * scale,
+                first[1].max(last[1]) + ppt + 2.0 * scale,
+            ];
+            label(o, step.say(), mid, ys, *below, accent);
             Some(step.tool())
+        }
+    }
+}
+
+/// Power made visible on the map: wires between poles in reach of each
+/// other and from each pole to what it powers (as the sim joins them: the
+/// first pole whose supply square covers it), and a "No power" tag on
+/// anything that needs power and has none.
+fn power_marks(
+    o: &mut Overlay,
+    content: &Content,
+    snap: &mofact_core::snapshot::Snapshot,
+    camera: &Camera,
+    (sw, sh): (u32, u32),
+    scale: f32,
+) {
+    use mofact_core::content::BuildingRole as R;
+    let ppt = camera.pixels_per_tile;
+    let def = |e: &mofact_core::snapshot::EntityView| {
+        content.buildings.iter().find(|b| b.id == e.building)
+    };
+    // The middle of an entity on screen, a little up for a pole's top.
+    let mid = |e: &mofact_core::snapshot::EntityView, lift: f32| {
+        let (w, h) = def(e).map_or((1, 1), |d| d.size);
+        [
+            (e.pos.x as f32 + f32::from(w) / 2.0 - camera.center[0]) * ppt + sw as f32 / 2.0,
+            (e.pos.y as f32 + f32::from(h) / 2.0 - lift - camera.center[1]) * ppt + sh as f32 / 2.0,
+        ]
+    };
+    let poles: Vec<_> = snap
+        .entities
+        .iter()
+        .filter_map(|e| match def(e)?.role {
+            R::Pole { wire, supply } => Some((e, wire, supply)),
+            _ => None,
+        })
+        .collect();
+    let thick = (2.0 * scale).max(ppt * 0.06);
+    let wire = |o: &mut Overlay, a: [f32; 2], b: [f32; 2], ink: [u8; 4]| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len = dx.hypot(dy);
+        // Off screen both ends: nothing to draw.
+        let out = |p: [f32; 2]| p[0] < 0.0 || p[1] < 0.0 || p[0] > sw as f32 || p[1] > sh as f32;
+        if out(a) && out(b) && len < (sw + sh) as f32 {
+            return;
+        }
+        let steps = (len / (thick * 0.6)).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            let f = k as f32 / steps as f32;
+            let p = [a[0] + dx * f - thick / 2.0, a[1] + dy * f - thick / 2.0];
+            o.panel(p, [thick, thick], thick / 2.0, ink);
+        }
+    };
+    let ink = [0x24, 0x1c, 0x16, 0xe0];
+    let lift = 0.25;
+    for (i, (a, wa, _)) in poles.iter().enumerate() {
+        for (b, wb, _) in &poles[i + 1..] {
+            let reach = i32::from((*wa).min(*wb));
+            if (a.pos.x - b.pos.x).abs().max((a.pos.y - b.pos.y).abs()) <= reach {
+                wire(o, mid(a, lift), mid(b, lift), ink);
+            }
+        }
+    }
+    for e in &snap.entities {
+        let Some(d) = def(e) else { continue };
+        let powered = d.power > 0.0 || matches!(d.role, R::Generator { .. } | R::Engine { .. });
+        if !powered {
+            continue;
+        }
+        let (w, h) = (i32::from(d.size.0), i32::from(d.size.1));
+        let covering = poles.iter().find(|(p, _, s)| {
+            let s = i32::from(*s);
+            e.pos.x <= p.pos.x + s
+                && e.pos.x + w > p.pos.x - s
+                && e.pos.y <= p.pos.y + s
+                && e.pos.y + h > p.pos.y - s
+        });
+        if let Some((p, _, _)) = covering {
+            wire(o, mid(p, lift), mid(e, 0.0), ink);
+        }
+        if e.state == mofact_core::snapshot::MachineState::NoPower && ppt >= 14.0 * scale {
+            let px = 11.0 * scale;
+            let text = tr("state.no_power");
+            let (pad, ch) = (6.0 * scale, 18.0 * scale);
+            let tw = o.measure(text, px) + 2.0 * pad;
+            let c = mid(e, 0.0);
+            let top = c[1] - f32::from(d.size.1) * ppt / 2.0 - ch - 2.0 * scale;
+            o.panel(
+                [c[0] - tw / 2.0, top],
+                [tw, ch],
+                ch / 2.0,
+                [0xff, 0x5d, 0x5d, 0xf0],
+            );
+            o.text(
+                text,
+                [c[0] - tw / 2.0 + pad, top + (ch + o.cap_height(px)) / 2.0],
+                px,
+                [0x1b, 0x1f, 0x24, 0xff],
+            );
         }
     }
 }

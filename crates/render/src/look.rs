@@ -75,6 +75,8 @@ enum Art {
     Hub,
     Pole,
     Turbine,
+    /// The turbine with its blades turned to frame `0` of [`ROTOR_FRAMES`].
+    TurbineSpin(u8),
     /// A generator bigger than a tile: a solar panel.
     Solar,
     Splitter,
@@ -596,12 +598,19 @@ impl Look {
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
                 Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
                 Kind::Generator => {
-                    let art = if b.size.0 > 1 {
-                        Art::Solar
+                    if b.size.0 > 1 {
+                        push(&mut look, id.to_owned(), b.size, Art::Solar);
                     } else {
-                        Art::Turbine
-                    };
-                    push(&mut look, id.to_owned(), b.size, art);
+                        push(&mut look, id.to_owned(), b.size, Art::Turbine);
+                        for k in 0..ROTOR_FRAMES {
+                            push(
+                                &mut look,
+                                format!("{id}:spin:{k}"),
+                                b.size,
+                                Art::TurbineSpin(k),
+                            );
+                        }
+                    }
                 }
                 Kind::Splitter => push(&mut look, id.to_owned(), b.size, Art::Splitter),
                 Kind::Underground | Kind::UndergroundPipe => {
@@ -982,6 +991,18 @@ impl Look {
         self.sprites.get(at).map(|s| s.name.as_str())
     }
 
+    /// For a wind turbine on a grid, its sprite with the blades turned for
+    /// `t` seconds; `None` for anything that doesn't spin.
+    pub fn spinning(&self, building: &BuildingId, t: f64) -> Option<&str> {
+        let b = self.buildings.get(building)?;
+        if b.kind != Kind::Generator || b.size.0 > 1 {
+            return None;
+        }
+        let frame = ((t / ROTOR_SECONDS).fract() * f64::from(ROTOR_FRAMES)) as usize;
+        let at = b.base + 1 + frame.min(usize::from(ROTOR_FRAMES) - 1);
+        self.sprites.get(at).map(|s| s.name.as_str())
+    }
+
     /// The white sprite that shows the fluid inside `building`, drawn over
     /// it and turned with it, and whether it shrinks as it empties (a tank's
     /// window) rather than fading (a pipe's channel).
@@ -1164,6 +1185,11 @@ impl Look {
 /// when tier 3-4 fills it, turn machine bodies on the GPU instead.
 pub const ATLAS_TILES: u32 = 27;
 
+/// Frames of a wind turbine's blades over a third of a turn, and the
+/// seconds that third takes.
+const ROTOR_FRAMES: u8 = 12;
+const ROTOR_SECONDS: f64 = 1.4;
+
 /// The side of the atlas for the band of `px` pixels a tile. Each sprite
 /// carries its padding, which is most of a tile's room in the smallest band,
 /// so it is counted in: every band then fits the same set of sprites.
@@ -1210,6 +1236,12 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
+        // Three blades repeat every third of a turn; `turbine` turns them
+        // by twice its `t` in radians.
+        Art::TurbineSpin(k) => {
+            let turn = f32::from(k) / f32::from(ROTOR_FRAMES) * std::f32::consts::TAU / 3.0;
+            draw::turbine(&mut c, z, fine, 0.3 + turn / 2.0)
+        }
         Art::Solar => draw::solar(&mut c, z, fine),
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),

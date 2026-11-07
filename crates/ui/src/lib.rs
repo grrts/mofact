@@ -285,6 +285,8 @@ pub enum Action {
 #[derive(Clone, Debug, PartialEq)]
 enum Hit {
     Tool(usize),
+    /// The stock's "+N" pill: show every item, or one row again.
+    StockMore,
     Rotate,
     Recipe(Option<RecipeId>),
     Belt(BuildingId),
@@ -426,6 +428,8 @@ pub struct Hud {
     muted: bool,
     /// Whether the camera is out on the world map.
     map: bool,
+    /// Whether the stock shows every item rather than one row.
+    stock_open: bool,
     /// Whether low-power mode is on.
     low_power: bool,
     /// Whether colour-blind mode is on (T58).
@@ -711,6 +715,16 @@ impl Hud {
             .or(under.map(|at| &self.hits[at].1))
     }
 
+    /// The screen rectangles (x, y, width, height) its controls and cards
+    /// took last frame, so the map can keep its own labels out from under them.
+    pub fn panels(&self) -> Vec<[f32; 4]> {
+        self.hits
+            .iter()
+            .filter(|(_, h)| *h != Hit::Block)
+            .map(|(r, _)| *r)
+            .collect()
+    }
+
     /// Whether `p` is over a control or panel.
     pub fn covers(&self, p: [f32; 2]) -> bool {
         self.hit(p).is_some()
@@ -863,6 +877,10 @@ impl Hud {
                 self.more = false;
                 self.radial = None;
                 self.browse = None;
+                Vec::new()
+            }
+            Hit::StockMore => {
+                self.stock_open = !self.stock_open;
                 Vec::new()
             }
             Hit::Goal => {
@@ -1105,7 +1123,6 @@ impl Hud {
 
         // The top of the screen stays small on a phone: the stock, one row
         // of status chips (research, problems), the goal card, then a tip.
-        let top = self.stock(view, o, [ml, mt]);
         // The sound button keeps the top-right corner, clear of the thumb.
         let right = corner[0] - 36.0 * u;
         self.sound_button(o, [right, mt]);
@@ -1115,6 +1132,8 @@ impl Hud {
         let right = right - gap - 36.0 * u;
         self.map_button(o, [right, mt]);
         let right = right - gap;
+        // The stock keeps to one row beside the buttons, with a "+N" pill for the rest.
+        let top = self.stock(view, o, [ml, mt], right);
         // Looking for problems walks the whole factory: on a big one, do
         // it four times a second, or at once when a machine's state or the
         // number of things built changes (T65).
@@ -1139,7 +1158,7 @@ impl Hud {
         let stock_end = self
             .hits
             .iter()
-            .filter(|(_, h)| matches!(h, Hit::Item(_)))
+            .filter(|(_, h)| matches!(h, Hit::Item(_) | Hit::StockMore))
             .map(|(r, _)| r[0] + r[2])
             .fold(ml, f32::max);
         let beside = stock_end + 8.0 * u;
@@ -1514,25 +1533,80 @@ impl Hud {
     }
 
     /// The player's stock along the top. Returns the bottom edge.
-    fn stock(&mut self, view: &View, o: &mut Overlay, at: [f32; 2]) -> f32 {
+    fn stock(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], right: f32) -> f32 {
         let u = self.unit;
         let h = 30.0 * u;
         let px = 14.0 * u;
         let s = 18.0 * u;
-        let mut x = at[0];
-        for (item, count) in view.snapshot.stock.iter().filter(|(_, n)| *n > 0) {
-            let text = count.to_string();
-            let w = 8.0 * u + s + 5.0 * u + o.measure(&text, px) + 10.0 * u;
-            o.panel([x, at[1]], [w, h], 8.0 * u, PANEL);
-            if let Some((sprite, t)) = view.look.item(item) {
-                o.icon(sprite, [x + 8.0 * u, at[1] + (h - s) / 2.0], s, t);
+        let items: Vec<_> = view.snapshot.stock.iter().filter(|(_, n)| *n > 0).collect();
+        let width =
+            |o: &Overlay, text: &str| 8.0 * u + s + 5.0 * u + o.measure(text, px) + 10.0 * u;
+        // One row, with a "+N" pill for the rest; open, every item on as
+        // many rows as it takes.
+        let more_w = |o: &Overlay, n: usize| width(o, &format!("+{n}")) - s - 5.0 * u;
+        let mut shown = items.len();
+        if !self.stock_open {
+            let mut x = at[0];
+            for (k, (_, count)) in items.iter().enumerate() {
+                let w = width(o, &count.to_string());
+                let rest = items.len() - k - 1;
+                let need = if rest > 0 {
+                    more_w(o, rest) + 6.0 * u
+                } else {
+                    0.0
+                };
+                if k > 0 && x + w + need > right {
+                    shown = k;
+                    break;
+                }
+                x += w + 6.0 * u;
             }
-            let base = at[1] + (h + o.cap_height(px)) / 2.0;
+        }
+        let mut x = at[0];
+        let mut y = at[1];
+        for (item, count) in &items[..shown] {
+            let text = count.to_string();
+            let w = width(o, &text);
+            if x > at[0] && x + w > right {
+                x = at[0];
+                y += h + 6.0 * u;
+            }
+            o.panel([x, y], [w, h], 8.0 * u, PANEL);
+            if let Some((sprite, t)) = view.look.item(item) {
+                o.icon(sprite, [x + 8.0 * u, y + (h - s) / 2.0], s, t);
+            }
+            let base = y + (h + o.cap_height(px)) / 2.0;
             o.text(&text, [x + 8.0 * u + s + 5.0 * u, base], px, TEXT);
-            self.hits.push(([x, at[1], w, h], Hit::Item(item.clone())));
+            self.hits.push(([x, y, w, h], Hit::Item(item.clone())));
             x += w + 6.0 * u;
         }
-        at[1] + h
+        let hidden = items.len() - shown;
+        if hidden > 0 || self.stock_open && items.len() > 1 {
+            let text = if self.stock_open {
+                tr("stock.less").to_string()
+            } else {
+                format!("+{hidden}")
+            };
+            let w = more_w(o, 0).max(o.measure(&text, px) + 18.0 * u);
+            if x > at[0] && x + w > right {
+                x = at[0];
+                y += h + 6.0 * u;
+            }
+            o.panel([x, y], [w, h], 8.0 * u, RAISED);
+            let base = y + (h + o.cap_height(px)) / 2.0;
+            o.text(
+                &text,
+                [x + (w - o.measure(&text, px)) / 2.0, base],
+                px,
+                MUTED,
+            );
+            // A finger-sized target, taller than the pill.
+            self.hits.push((
+                [x, y - 7.0 * u, w.max(44.0 * u), h + 14.0 * u],
+                Hit::StockMore,
+            ));
+        }
+        y + h
     }
 
     /// A round button that opens the game menu: three bars.
@@ -3325,6 +3399,15 @@ impl Hud {
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
+            } else if e.state == MachineState::NoPower {
+                // Say how to fix it, not just that it's wrong.
+                let text = if grid.is_none() {
+                    tr("inspect.no_grid")
+                } else {
+                    tr("inspect.no_turbine")
+                };
+                let px = fit(o, text, px, r[2] - 2.0 * pad);
+                o.text(text, [x, base], px, palette::STARVE);
             } else if let Some(rd) = recipe {
                 // Each item opens the recipe browser.
                 let stacks =
@@ -3357,9 +3440,9 @@ impl Hud {
                 let px = fit(o, text, px, r[2] - 2.0 * pad);
                 o.text(text, [x, base], px, MUTED);
             } else {
-                let text = tr("inspect.drill");
-                let px = fit(o, text, px, r[2] - 2.0 * pad);
-                o.text(text, [x, base], px, MUTED);
+                let text = about(view, def, e);
+                let px = fit(o, &text, px, r[2] - 2.0 * pad);
+                o.text(&text, [x, base], px, MUTED);
             }
             y += row + 4.0 * u;
             let bw = r[2] - 2.0 * pad;
@@ -3458,6 +3541,45 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
 
 /// A pill: its label, icon, whether it is the one chosen, and what a tap does.
 type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
+
+/// One line on what a building does, for the inspect sheet, when it has no
+/// recipe, fluid or power figures to show instead.
+fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
+    let name = |id: &mofact_core::ids::ItemId| {
+        view.content
+            .items
+            .iter()
+            .find(|i| &i.id == id)
+            .map_or(id.as_str().to_owned(), |i| i18n::in_sentence(&i.name))
+    };
+    match def.map(|d| &d.role) {
+        Some(BuildingRole::Miner { .. }) => match &e.ore {
+            Some(ore) => trf("inspect.mines", &[&name(ore)]),
+            None => tr("inspect.drill").into(),
+        },
+        Some(BuildingRole::Lab { .. }) => {
+            let research = &view.snapshot.research;
+            match research
+                .current
+                .as_ref()
+                .and_then(|c| view.content.research.iter().find(|r| &r.id == c))
+            {
+                Some(r) => trf(
+                    "inspect.lab",
+                    &[&r.name, &research.progress.0, &research.progress.1],
+                ),
+                None => tr("inspect.lab_idle").into(),
+            }
+        }
+        Some(BuildingRole::Splitter) => tr("inspect.splitter").into(),
+        Some(BuildingRole::Underground { reach, .. }) => trf("inspect.underground", &[reach]),
+        Some(BuildingRole::Rail) => tr("inspect.rail").into(),
+        Some(BuildingRole::RailSignal) => tr("inspect.signal").into(),
+        Some(BuildingRole::TrainStop) => tr("inspect.train_stop").into(),
+        Some(BuildingRole::Locomotive { .. }) => tr("inspect.locomotive").into(),
+        _ => String::new(),
+    }
+}
 
 /// A machine state's label and colour, in `look`'s colours (T58).
 fn state(s: MachineState, look: &Look) -> (&'static str, Rgba) {

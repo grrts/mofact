@@ -146,6 +146,17 @@ inspect.fluid = {0} · {1}% full
 inspect.empty = Empty: nothing is flowing in
 inspect.recipe_any = Picks its recipe from what arrives
 inspect.drill = Mines the ore under it
+inspect.mines = Mines the {0} under it
+inspect.lab = Studies {0} · {1}/{2}
+inspect.lab_idle = Studies research: pick one under Research
+inspect.splitter = Sends items out left and right in turn
+inspect.underground = Carries items underground, up to {0} tiles
+inspect.rail = Track: trains run along it
+inspect.signal = Lets one train at a time into the track ahead
+inspect.train_stop = Trains stop here to load and unload
+inspect.locomotive = A train: give it stops to run between
+inspect.no_grid = No power: put a pole next to it, in reach of a wind turbine's pole
+inspect.no_turbine = No power: this grid has no turbine giving power yet
 state.idle = Idle
 state.working = Working
 state.starved = Starved
@@ -182,6 +193,9 @@ error.no_ore = Drills only go on ore: tap a coloured ore tile.
 error.terrain = Nothing can be built on water or cliffs.
 error.overgrown = Trees in the way: drag over them with Remove to clear them.
 error.full_game = That research needs the full game.
+error.short_of = {0} needs {1} more.
+error.short_item = {0} {1}
+stock.less = Less
 toast.slot_loaded = Slot {0} loaded
 
 # The first-hour guide's labels over the first buildings.
