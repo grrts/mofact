@@ -55,6 +55,7 @@ fn main() {
                 nudge: None,
                 slots: &[],
                 store: &mofact_ui::StoreView::default(),
+                crash: false,
             };
             hud.draw(&view, &mut overlay);
             h += t.elapsed().as_secs_f64();

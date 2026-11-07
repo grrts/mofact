@@ -31,6 +31,18 @@ const SLOT_KEY: &str = "mofact-slot";
 /// not of the save.
 const LOW_POWER_KEY: &str = "mofact-low-power";
 const COLOUR_BLIND_KEY: &str = "mofact-colour-blind";
+const CRASH_KEY: &str = "mofact-crash";
+
+/// Crash reports kept in local storage, never sent (see `mofact::crash`).
+struct CrashKeep;
+
+impl mofact::crash::Keep for CrashKeep {
+    fn write(&self, report: &str) {
+        if let Some(Ok(Some(st))) = web_sys::window().map(|w| w.local_storage()) {
+            let _ = st.set_item(CRASH_KEY, report);
+        }
+    }
+}
 /// Milliseconds between autosaves.
 const SAVE_EVERY: f64 = 30_000.0;
 
@@ -76,6 +88,9 @@ impl Shell {
         }
         self.game.safe = self.safe_area(scale);
         self.game.frame(size, scale);
+        if let Some(text) = self.game.clipboard.take() {
+            let _ = self.window.navigator().clipboard().write_text(&text);
+        }
         // Phones' browsers buzz; the rest ignore it.
         if let Some(feel) = self.game.haptic.take() {
             use mofact::haptics::Haptic;
@@ -393,6 +408,13 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         }
         // The web link plays the full game until a store build is live
         // (docs/decisions.md); then it becomes the demo with store links.
+        if let Ok(Some(st)) = window.local_storage() {
+            if let Ok(Some(report)) = st.get_item(CRASH_KEY) {
+                let _ = st.remove_item(CRASH_KEY);
+                s.game.set_crash_report(report);
+            }
+        }
+        mofact::crash::install(Box::new(CrashKeep));
         s.saved = s.now();
         match speaker(&mut s.game) {
             Ok(ctx) => s.sound = Some(ctx),

@@ -332,6 +332,10 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
             .map(|d| d.join("autosave.mofact"))
             .unwrap_or_else(|_| PathBuf::from("autosave.mofact")),
     };
+    // Crash reports go next to the saves, and nowhere else.
+    let crash = crate::crash::File(save_path.with_file_name("crash.txt"));
+    let crashed = crash.take();
+    crate::crash::install(Box::new(crate::crash::File(crash.0.clone())));
     let mut files = autosave::Files::new(save_path);
     if let (Some(c), None, None) = (&mut cloud, &args.scenario, &args.screenshot) {
         for slot in crate::cloud::pull(&content, c.as_mut(), &mut files) {
@@ -362,6 +366,10 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut app = App::new(&video, content.clone(), sim, ore, camera)?;
+    if let Some(report) = crashed {
+        eprintln!("mofact: the last run crashed; its report is in the game menu");
+        app.game.set_crash_report(report);
+    }
     let speaker = speaker(&sdl, app.game.sound.audio());
     // Quiet in the background, as the game is paused there.
     let hush = |quiet: bool| {
@@ -470,6 +478,14 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
             continue;
         }
         let frame = app.draw();
+        if let Some(text) = app.game.clipboard.take() {
+            report(
+                video
+                    .clipboard()
+                    .set_clipboard_text(&text)
+                    .map_err(|e| e.to_string()),
+            );
+        }
         if let (Some(play), Some(feel)) = (haptic, app.game.haptic.take()) {
             play(feel);
         }
@@ -699,6 +715,7 @@ fn screenshots(
             nudge: None,
             slots: &[],
             store: &mofact_ui::StoreView::default(),
+            crash: false,
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -768,6 +785,7 @@ fn screenshots(
                 nudge: None,
                 slots: &slots,
                 store: &mofact_ui::StoreView::default(),
+                crash: false,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -863,6 +881,7 @@ fn screenshots(
                 nudge: None,
                 slots: &slots,
                 store: &store,
+                crash: sheet == "menu",
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);

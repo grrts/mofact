@@ -115,6 +115,8 @@ pub struct View<'a> {
     pub slots: &'a [SlotView],
     /// The demo and the full game's purchase (T61).
     pub store: &'a StoreView,
+    /// Whether a crash report from last time is waiting to be sent.
+    pub crash: bool,
 }
 
 /// Whether this is the demo, and how buying the full game is going.
@@ -263,6 +265,8 @@ pub enum Action {
     Buy,
     /// Look for a full game bought before, on this account.
     Restore,
+    /// Copy last time's crash report, to paste into an email or a bug.
+    CopyCrash,
 }
 
 /// A control on screen, and what tapping it does.
@@ -314,6 +318,8 @@ enum Hit {
     Power,
     /// The colour-blind toggle in the game menu.
     ColourBlind,
+    /// The game menu's crash report button.
+    CopyCrash,
     /// The menu button: opens and closes the game menu.
     Menu,
     /// A slot's buttons in the game menu.
@@ -747,6 +753,7 @@ impl Hud {
                 Vec::new()
             }
             Hit::Buy => vec![Action::Buy],
+            Hit::CopyCrash => vec![Action::CopyCrash],
             Hit::Restore => vec![Action::Restore],
             Hit::Item(item) => {
                 self.browse = Some(item);
@@ -1479,13 +1486,16 @@ impl Hud {
         let title = if two { 0.0 } else { 50.0 * u };
         let width = if two { wide.min(620.0 * u) } else { width };
         // Slot rows shrink on a short screen, down to a button and a gap.
-        let row = ((room - 2.0 * pad - title - bh) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
+        // A crash report waiting adds a row for sending it.
+        let extra = if view.crash { bh + gap } else { 0.0 };
+        let row =
+            ((room - 2.0 * pad - title - bh - extra) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
         // The keys grow into spare room on a tall screen.
         let key = ((room - 2.0 * pad - tall) / 3.0 + bh).clamp(bh, 52.0 * u);
         let body = match &new_game {
             Some(_) if two => 4.0 * bh + 3.0 * gap,
             Some(_) => note + 3.0 * (bh + gap) + 3.0 * (key + gap) - gap,
-            None => f32::from(SLOTS) * row + bh,
+            None => f32::from(SLOTS) * row + bh + extra,
         };
         let height = pad + title + body + pad;
         let r = [corner[0] - width, corner[1] - height, width, height];
@@ -1741,6 +1751,18 @@ impl Hud {
             };
             let b = [left + i * (half + gap), y, half, bh];
             self.button(o, b, &label, 15.0 * u, fill, ink, hit);
+        }
+        if view.crash {
+            let label = "Copy last crash report";
+            self.button(
+                o,
+                [left, y + bh + gap, inner, bh],
+                label,
+                15.0 * u,
+                RAISED,
+                TEXT,
+                Hit::CopyCrash,
+            );
         }
     }
 
