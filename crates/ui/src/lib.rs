@@ -39,6 +39,9 @@ const WORKING: Rgba = [0x63, 0xd4, 0x8a, 0xff];
 /// Google's guidance for a fingertip. Smaller controls take taps from a
 /// finger-sized area round them.
 pub const FINGER: f32 = 44.0;
+
+/// How much bigger large text draws the HUD.
+pub const LARGE_TEXT: f32 = 1.2;
 /// The height of the status chips under the stock, in points.
 const CHIP_H: f32 = 36.0;
 /// A finger that moves further than this (in points) is dragging, not tapping.
@@ -251,6 +254,10 @@ pub enum Action {
     LowPower(bool),
     /// Turn colour-blind mode on (true) or off (T58).
     ColourBlind(bool),
+    /// Turn large text on (true) or off.
+    LargeText(bool),
+    /// Turn reduce motion on (true) or off.
+    ReduceMotion(bool),
     /// The player picked a language, or to follow the device's (T65).
     Language(i18n::Choice),
     /// The game menu opened: the slots it lists want refreshing.
@@ -323,6 +330,10 @@ enum Hit {
     Power,
     /// The colour-blind toggle in the game menu.
     ColourBlind,
+    /// The large text toggle in the game menu.
+    LargeText,
+    /// The reduce motion toggle in the game menu.
+    Motion,
     /// The game menu's crash report button.
     CopyCrash,
     /// The menu button: opens and closes the game menu.
@@ -419,6 +430,11 @@ pub struct Hud {
     low_power: bool,
     /// Whether colour-blind mode is on (T58).
     colour_blind: bool,
+    /// Whether the player wants the HUD's words and buttons bigger.
+    large_text: bool,
+    /// Whether the player wants the world to hold still: no swaying trees,
+    /// rippling water or pulsing hints.
+    reduce_motion: bool,
     /// The language the player chose, and the device's (T65).
     language: i18n::Choice,
     device: i18n::Lang,
@@ -545,6 +561,26 @@ impl Hud {
     /// Turn colour-blind mode on or off, as a platform does from a saved setting.
     pub fn set_colour_blind(&mut self, on: bool) {
         self.colour_blind = on;
+    }
+
+    /// Whether large text is on.
+    pub fn large_text(&self) -> bool {
+        self.large_text
+    }
+
+    /// Turn large text on or off, as a platform does from a saved setting.
+    pub fn set_large_text(&mut self, on: bool) {
+        self.large_text = on;
+    }
+
+    /// Whether reduce motion is on.
+    pub fn reduce_motion(&self) -> bool {
+        self.reduce_motion
+    }
+
+    /// Turn reduce motion on or off, as a platform does from a saved setting.
+    pub fn set_reduce_motion(&mut self, on: bool) {
+        self.reduce_motion = on;
     }
 
     /// The language the player chose: the device's, or one of their own.
@@ -930,6 +966,24 @@ impl Hud {
                 }));
                 vec![Action::ColourBlind(self.colour_blind)]
             }
+            Hit::LargeText => {
+                self.large_text = !self.large_text;
+                self.toast(tr(if self.large_text {
+                    "toast.large_text_on"
+                } else {
+                    "toast.large_text_off"
+                }));
+                vec![Action::LargeText(self.large_text)]
+            }
+            Hit::Motion => {
+                self.reduce_motion = !self.reduce_motion;
+                self.toast(tr(if self.reduce_motion {
+                    "toast.reduce_motion_on"
+                } else {
+                    "toast.reduce_motion_off"
+                }));
+                vec![Action::ReduceMotion(self.reduce_motion)]
+            }
             Hit::Language => {
                 self.set_language(self.language.next());
                 vec![Action::Language(self.language)]
@@ -998,6 +1052,15 @@ impl Hud {
         let across = if portrait { w } else { h } / scale;
         let n = TOOLS.len() as f32;
         let u = scale * (across / 380.0).clamp(0.85, 1.0) * (across / 700.0).clamp(1.0, 1.25);
+        // Large text grows everything up to a fifth, as far as the HUD's
+        // layout still fits across the screen: 350 points upright, 376 on
+        // its side, where the top bar's buttons crowd each other. A small
+        // phone gains a little, a big phone or a tablet the whole fifth.
+        let u = if self.large_text {
+            (u * LARGE_TEXT).min(u.max(across * scale / if portrait { 350.0 } else { 376.0 }))
+        } else {
+            u
+        };
         self.unit = u;
         self.finger = FINGER * scale;
         self.screen = [w, h];
@@ -1124,6 +1187,7 @@ impl Hud {
             && self.browse.is_none()
             && !hand_with_goal
             && !self.map
+            && !self.menu
         {
             self.tip(view, o, [ml, tip_y], column);
         }
@@ -1356,9 +1420,15 @@ impl Hud {
                 );
             }
             // The coach's next tool glows until it is picked.
+            // Held at half glow when the player asked for less motion.
             if current != Some(i) && view.nudge.as_ref().and_then(tool_index) == Some(i) {
                 let t = pulse_clock().elapsed().as_secs_f32();
-                let a = 64.0 + ((t * 4.0).sin() * 0.5 + 0.5) * 80.0;
+                let beat = if self.reduce_motion {
+                    0.5
+                } else {
+                    (t * 4.0).sin() * 0.5 + 0.5
+                };
+                let a = 64.0 + beat * 80.0;
                 let [cr, cg, cb, _] = palette::ACCENT;
                 o.panel([r[0], r[1]], [r[2], r[3]], 10.0 * u, [cr, cg, cb, a as u8]);
             }
@@ -1541,10 +1611,16 @@ impl Hud {
         let title = if two { 0.0 } else { 50.0 * u };
         let width = if two { wide.min(620.0 * u) } else { width };
         // Slot rows shrink on a short screen, down to a button and a gap.
-        // Under the slots, two rows of settings, and a crash report
-        // waiting adds a row for sending it.
+        // Under the slots, three rows of settings, and a crash report
+        // waiting adds a row for sending it. Where even that is too tall,
+        // as on a small phone held sideways, the language moves up beside
+        // the heading.
         let extra = if view.crash { bh + gap } else { 0.0 };
-        let settings = 2.0 * bh + gap + extra;
+        let short = new_game.is_none()
+            && 2.0 * pad + title + f32::from(SLOTS) * (bh + gap) + 3.0 * bh + 2.0 * gap + extra
+                > room;
+        let rows = if short { 2.0 } else { 3.0 };
+        let settings = rows * bh + (rows - 1.0) * gap + extra;
         let row =
             ((room - 2.0 * pad - title - settings) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
         // The keys grow into spare room on a tall screen.
@@ -1590,6 +1666,12 @@ impl Hud {
                 Hit::Menu
             };
             self.hits.push((c, back));
+            if short {
+                let x = left + o.measure(&heading, px) + 12.0 * u;
+                let b = [x, y, c[0] - gap - x, close];
+                let label = self.language_label();
+                self.button(o, b, &label, 15.0 * u, RAISED, TEXT, Hit::Language);
+            }
             y += title;
         }
 
@@ -1794,15 +1876,32 @@ impl Hud {
             }
             y += row;
         }
-        // Low-power and colour-blind mode, side by side.
+        // Low-power and colour-blind mode side by side, the language under
+        // them, then large text and reduce motion.
         let half = (inner - gap) / 2.0;
-        for (i, on, name, hit) in [
-            (0.0, self.low_power, "setting.low_power", Hit::Power),
+        let below = y + (rows - 1.0) * (bh + gap);
+        for (i, y, on, name, hit) in [
+            (0.0, y, self.low_power, "setting.low_power", Hit::Power),
             (
                 1.0,
+                y,
                 self.colour_blind,
                 "setting.colour_blind",
                 Hit::ColourBlind,
+            ),
+            (
+                0.0,
+                below,
+                self.large_text,
+                "setting.large_text",
+                Hit::LargeText,
+            ),
+            (
+                1.0,
+                below,
+                self.reduce_motion,
+                "setting.reduce_motion",
+                Hit::Motion,
             ),
         ] {
             let state = tr(if on { "setting.on" } else { "setting.off" });
@@ -1815,18 +1914,16 @@ impl Hud {
             let b = [left + i * (half + gap), y, half, bh];
             self.button(o, b, &label, 15.0 * u, fill, ink, hit);
         }
-        // The language, under them: the device's until the player picks one.
-        let name = match self.language {
-            i18n::Choice::Device => trf("setting.language_auto", &[&self.device.native()]),
-            i18n::Choice::Fixed(l) => l.native().to_string(),
-        };
-        let label = trf("setting.language", &[&name]);
-        let b = [left, y + bh + gap, inner, bh];
-        self.button(o, b, &label, 15.0 * u, RAISED, TEXT, Hit::Language);
+        // The language, under them, unless it went up by the heading.
+        if !short {
+            let label = self.language_label();
+            let b = [left, y + bh + gap, inner, bh];
+            self.button(o, b, &label, 15.0 * u, RAISED, TEXT, Hit::Language);
+        }
         if view.crash {
             self.button(
                 o,
-                [left, y + 2.0 * (bh + gap), inner, bh],
+                [left, y + rows * (bh + gap), inner, bh],
                 tr("menu.copy_crash"),
                 15.0 * u,
                 RAISED,
@@ -1834,6 +1931,16 @@ impl Hud {
                 Hit::CopyCrash,
             );
         }
+    }
+
+    /// The language button's words: the device's language until the
+    /// player picks one.
+    fn language_label(&self) -> String {
+        let name = match self.language {
+            i18n::Choice::Device => trf("setting.language_auto", &[&self.device.native()]),
+            i18n::Choice::Fixed(l) => l.native().to_string(),
+        };
+        trf("setting.language", &[&name])
     }
 
     /// The die for a random seed: a rounded square with five pips.

@@ -21,6 +21,8 @@ pub use mofact_ui::i18n::Choice;
 pub struct Settings {
     pub low_power: bool,
     pub colour_blind: bool,
+    pub large_text: bool,
+    pub reduce_motion: bool,
     /// The device's language, or the player's own pick (T65).
     pub language: Choice,
 }
@@ -38,6 +40,8 @@ impl Settings {
         Settings {
             low_power: on("low-power"),
             colour_blind: on("colour-blind"),
+            large_text: on("large-text"),
+            reduce_motion: on("reduce-motion"),
             language: value("language").map_or(Choice::Device, Choice::from_code),
         }
     }
@@ -46,9 +50,11 @@ impl Settings {
     pub fn text(&self) -> String {
         let flag = |on: bool| if on { "on" } else { "off" };
         format!(
-            "low-power = {}\ncolour-blind = {}\nlanguage = {}\n",
+            "low-power = {}\ncolour-blind = {}\nlarge-text = {}\nreduce-motion = {}\nlanguage = {}\n",
             flag(self.low_power),
             flag(self.colour_blind),
+            flag(self.large_text),
+            flag(self.reduce_motion),
             self.language.code()
         )
     }
@@ -265,9 +271,16 @@ mod tests {
         };
         files.set_settings(german).unwrap();
         assert_eq!(files.settings(), german);
+        let calm = Settings {
+            large_text: true,
+            reduce_motion: true,
+            ..Settings::default()
+        };
+        files.set_settings(calm).unwrap();
+        assert_eq!(files.settings(), calm);
         // Files from before the language, and with keys from later builds, still read.
         assert_eq!(
-            Settings::parse("low-power = on\ncolour-blind = off\nlarge-text = on\n"),
+            Settings::parse("low-power = on\ncolour-blind = off\nhigh-contrast = on\n"),
             Settings {
                 low_power: true,
                 ..Settings::default()

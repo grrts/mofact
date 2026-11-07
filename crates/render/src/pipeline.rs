@@ -309,7 +309,7 @@ impl Renderer {
                     camera.pixels_per_tile,
                     width as f32,
                     height as f32,
-                    scene.time,
+                    if scene.still { 0.0 } else { scene.time },
                     map[0],
                     map[1],
                     map[2],

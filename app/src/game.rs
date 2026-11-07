@@ -202,6 +202,27 @@ impl Game {
         self.use_colour_blind(on);
     }
 
+    /// Whether large text is on.
+    pub fn large_text(&self) -> bool {
+        self.hud.large_text()
+    }
+
+    /// Turn large text on or off, as a platform does from a saved setting.
+    pub fn set_large_text(&mut self, on: bool) {
+        self.hud.set_large_text(on);
+    }
+
+    /// Whether reduce motion is on.
+    pub fn reduce_motion(&self) -> bool {
+        self.hud.reduce_motion()
+    }
+
+    /// Turn reduce motion on or off, as a platform does from a saved setting.
+    pub fn set_reduce_motion(&mut self, on: bool) {
+        self.hud.set_reduce_motion(on);
+        self.scene.still = on;
+    }
+
     /// Paint everything again in the colour-blind look, or the usual one.
     /// The game crashed last time: say so, and offer the report in the menu.
     pub fn set_crash_report(&mut self, report: String) {
@@ -630,6 +651,8 @@ impl Game {
             Action::Mute(muted) => self.sound.set_muted(muted),
             Action::LowPower(on) => self.scene.low_power = on,
             Action::ColourBlind(on) => self.use_colour_blind(on),
+            Action::LargeText(_) => {}
+            Action::ReduceMotion(on) => self.scene.still = on,
             Action::Map(open) => {
                 let cam = &mut self.controls.camera;
                 let scale = cam.scale();

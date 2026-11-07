@@ -57,6 +57,8 @@ preset.lakes = Lakes
 preset.dry = Dry
 setting.low_power = Low power
 setting.colour_blind = Colour-blind
+setting.large_text = Large text
+setting.reduce_motion = Reduce motion
 setting.state = {0}: {1}
 setting.on = on
 setting.off = off
@@ -66,6 +68,10 @@ toast.colour_blind_on = Colour-blind mode: safer colours, and marks on look-alik
 toast.colour_blind_off = Colour-blind mode off.
 toast.low_power_on = Low-power mode: 30 fps and calmer ground, to save battery.
 toast.low_power_off = Low-power mode off.
+toast.large_text_on = Large text: bigger words and buttons.
+toast.large_text_off = Large text off.
+toast.reduce_motion_on = Reduce motion: trees, water and hints hold still.
+toast.reduce_motion_off = Reduce motion off.
 
 # Save slots.
 slot.title = {0} · seed {1}

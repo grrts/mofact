@@ -402,6 +402,8 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
     let mut saves = autosave::Autosave::new(save_path);
     app.game.set_low_power(settings.low_power);
     app.game.set_colour_blind(settings.colour_blind);
+    app.game.set_large_text(settings.large_text);
+    app.game.set_reduce_motion(settings.reduce_motion);
     let (owned, keep) = (files.full_game(), Box::new(files.keep_full_game()));
     app.game.set_shop(match shop {
         Some(make) => make(owned, keep),
@@ -481,6 +483,8 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
         let now = autosave::Settings {
             low_power: app.game.low_power(),
             colour_blind: app.game.colour_blind(),
+            large_text: app.game.large_text(),
+            reduce_motion: app.game.reduce_motion(),
             language: app.game.language(),
         };
         if now != settings {
@@ -843,8 +847,20 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
-            "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
-            "menu", "new-game", "plan", "mega", "unlock",
+            "toolbar",
+            "build",
+            "research",
+            "radial",
+            "recipes",
+            "problems",
+            "train",
+            "machine",
+            "menu",
+            "new-game",
+            "plan",
+            "mega",
+            "unlock",
+            "large-text",
         ];
         // As a fresh install sees it: the demo, with the price known.
         let store = mofact_ui::StoreView {
@@ -884,6 +900,10 @@ fn screenshots(
                 // A whole chain for the ratio calculator.
                 "plan" => hud.browse("circuit".into()),
                 "menu" => hud.open_menu(None),
+                "large-text" => {
+                    hud.set_large_text(true);
+                    hud.open_menu(None);
+                }
                 "new-game" => hud.open_menu(Some((2, 271_828))),
                 "radial" => {
                     hud.pointer(Pointer::Down {
