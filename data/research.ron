@@ -61,4 +61,53 @@
         units: 40, seconds: 15.0,
         buildings: ["rail", "rail-signal", "train-stop", "locomotive"],
     ),
+    // Tier 4-5 (T53).
+    (
+        id: "sulfur-processing", name: "Sulfur processing", tier: 3, requires: ["oil-processing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 40, seconds: 20.0,
+        recipes: ["sulfur", "sulfuric-acid", "battery"],
+    ),
+    (
+        id: "advanced-electronics", name: "Advanced electronics", tier: 3, requires: ["oil-processing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 40, seconds: 20.0,
+        recipes: ["advanced-circuit"],
+    ),
+    (
+        id: "chemistry", name: "Chemistry", tier: 3, requires: ["sulfur-processing", "advanced-electronics"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 50, seconds: 20.0,
+        recipes: ["chemistry-pack"],
+    ),
+    (
+        id: "electric-smelting", name: "Electric smelting", tier: 4, requires: ["chemistry"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
+        units: 50, seconds: 25.0,
+        buildings: ["electric-furnace"],
+    ),
+    (
+        id: "silicon-processing", name: "Silicon processing", tier: 4, requires: ["chemistry"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
+        units: 60, seconds: 25.0,
+        recipes: ["silicon", "processor"],
+    ),
+    (
+        id: "solar-energy", name: "Solar energy", tier: 4, requires: ["silicon-processing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
+        units: 60, seconds: 25.0,
+        buildings: ["solar-panel"],
+    ),
+    (
+        id: "precision-engineering", name: "Precision engineering", tier: 4, requires: ["silicon-processing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
+        units: 75, seconds: 30.0,
+        recipes: ["robot-frame", "low-density-structure", "precision-pack"],
+    ),
+    (
+        id: "precision-assembly", name: "Precision assembly", tier: 5, requires: ["precision-engineering"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 100, seconds: 30.0,
+        buildings: ["precision-assembler"],
+    ),
 ]
