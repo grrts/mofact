@@ -10,6 +10,7 @@ use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId};
 use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot, TrainView};
 use std::collections::{HashMap, HashSet};
+use std::f32::consts::TAU;
 
 /// What the screen shows: the world point at its centre and how many screen
 /// pixels one tile covers. Pan and pinch arrive with T15.
@@ -593,8 +594,18 @@ impl Scene {
                 _ => 0.9,
             };
             let size = base * (1.0 + 0.25 * jitter(0));
+            // Trees and bushes sway in the wind (S8): a slow lean and a
+            // breath of the canopy, each on its own beat, the wind's gusts
+            // rolling across the land. Still in low-power mode.
+            let sway = if self.low_power || !matches!(kind, 1..=3) {
+                0.0
+            } else {
+                let gust = 0.6 + 0.4 * (self.time * 0.35 - tile.x as f32 * 0.07).sin();
+                gust * (self.time * 1.3 + jitter(24) * TAU).sin()
+            };
+            let size = size * (1.0 + 0.02 * sway);
             let (x, y) = (
-                tile.x as f32 + 0.5 + 0.3 * jitter(8) - size / 2.0,
+                tile.x as f32 + 0.5 + 0.3 * jitter(8) - size / 2.0 + 0.035 * sway,
                 tile.y as f32 + 0.5 + 0.3 * jitter(16) - size / 2.0,
             );
             self.ore.push(Instance {
@@ -807,6 +818,36 @@ mod tests {
             1.0,
         );
         assert_eq!(scene.instances, alone);
+    }
+
+    #[test]
+    fn trees_sway_in_the_wind_but_stones_and_low_power_stay_still() {
+        let look = Look::new(&content());
+        let atlases = look.atlases();
+        let at = |time: f32, low_power: bool| {
+            let mut scene = Scene {
+                time,
+                low_power,
+                ..Scene::default()
+            };
+            let decor = [(TilePos::new(1, 0), 1u8), (TilePos::new(3, 0), 4u8)];
+            scene.decor(&atlases, &CAMERA, (640, 360), decor);
+            scene
+                .ore
+                .iter()
+                .map(|i| (i.pos, i.size))
+                .collect::<Vec<_>>()
+        };
+        let (a, b) = (at(0.0, false), at(0.7, false));
+        assert_ne!(a[0], b[0], "the tree moves");
+        assert_eq!(a[1], b[1], "the stone does not");
+        assert_eq!(
+            at(0.0, true),
+            at(0.7, true),
+            "nothing moves in low-power mode"
+        );
+        // A sway, not a walk: it stays within a few hundredths of a tile.
+        assert!((a[0].0[0] - b[0].0[0]).abs() < 0.1);
     }
 
     #[test]
