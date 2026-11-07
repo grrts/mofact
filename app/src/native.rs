@@ -283,6 +283,16 @@ pub fn main() -> ExitCode {
 
 /// Run the game, reporting why it could not start or stopped early.
 pub fn run() -> Result<(), String> {
+    run_with(None)
+}
+
+/// Makes the platform's [`Shop`](crate::shop::Shop) from whether the full
+/// game is remembered as bought, and a way to remember it.
+pub type MakeShop = Box<dyn FnOnce(bool, Box<dyn FnMut(bool)>) -> Box<dyn crate::shop::Shop>>;
+
+/// [`run`], selling the full game through the platform's own store; with
+/// none, through the [`Sandbox`](crate::shop::Sandbox).
+pub fn run_with(shop: Option<MakeShop>) -> Result<(), String> {
     let args = args()?;
     let content = match &args.data {
         Some(dir) => mofact_content::load_dir(Path::new(dir)).map_err(|e| e.to_string())?,
@@ -344,10 +354,11 @@ pub fn run() -> Result<(), String> {
     let mut settings = files.settings();
     app.game.set_low_power(settings.0);
     app.game.set_colour_blind(settings.1);
-    app.game.set_shop(Box::new(crate::shop::Sandbox::new(
-        files.full_game(),
-        Box::new(files.keep_full_game()),
-    )));
+    let (owned, keep) = (files.full_game(), Box::new(files.keep_full_game()));
+    app.game.set_shop(match shop {
+        Some(make) => make(owned, keep),
+        None => Box::new(crate::shop::Sandbox::new(owned, keep)),
+    });
     let mut presented = 0u64;
     let mut cycled = false;
     let mut second = (Instant::now(), 0u32);

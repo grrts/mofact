@@ -68,6 +68,9 @@ jobs:
       - name: Build the APK
         env:
           MOFACT_VERSION_CODE: ${{ github.run_number }}
+          # RevenueCat's public Android key; until the secret is set the
+          # APK unlocks the full game through the free sandbox (T61).
+          MOFACT_REVENUECAT_KEY: ${{ secrets.REVENUECAT_ANDROID_KEY }}
         run: |
           gradle -p platform/android assembleDebug
           cp platform/android/app/build/outputs/apk/debug/app-debug.apk mofact.apk
