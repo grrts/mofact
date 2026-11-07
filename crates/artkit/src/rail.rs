@@ -234,10 +234,9 @@ pub fn stop(c: &mut Canvas, z: f32, fine: bool, links: u8) {
 }
 
 /// A stop's platform along its east side, to be turned the way it faces:
-/// the side it unloads out of.
+/// the side it unloads out of. Casts no shadow: the renderer casts it.
 pub fn platform(c: &mut Canvas, z: f32, fine: bool) {
     let (x, w) = (z * 0.8, z * 0.2);
-    c.fill_rect(x + z * 0.03, z * 0.03, w, z, pal::SHADOW);
     c.fill_rect(x, 0.0, w, z, pal::MACHINE_EDGE);
     c.fill_rect(x + 1.0, 1.0, w - 2.0, z - 2.0, pal::CONCRETE);
     c.fill_rect(x, 0.0, z * 0.04, z, pal::ACCENT);
@@ -271,16 +270,12 @@ pub fn stop_icon(c: &mut Canvas, z: f32, fine: bool) {
 }
 
 /// A locomotive heading east, a little over a tile long: a cab at the
-/// back, a long bonnet and headlamps at the front.
+/// back, a long bonnet and headlamps at the front. Casts no shadow: the
+/// renderer casts it, since the train is turned when drawn.
 pub fn locomotive(c: &mut Canvas, z: f32, fine: bool) {
     let (x0, x1) = (z * 0.04, z * 0.96);
     let (y0, y1) = (z * 0.2, z * 0.8);
     let (w, h) = (x1 - x0, y1 - y0);
-    fill(
-        c,
-        rr(x0 + z * 0.06, y0 + z * 0.08, w, h, z * 0.12),
-        pal::SHADOW,
-    );
     fill(c, rr(x0, y0, w, h, z * 0.12), shade(pal::LOCO, -0.55));
     fill(
         c,

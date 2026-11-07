@@ -89,6 +89,24 @@ pub struct TerrainMap {
 /// What a tile with no terrain yet shows: plain grass.
 pub const UNKNOWN_TERRAIN: (u8, u8) = (3, 128);
 
+/// Where the shadow of a sprite that is turned when drawn falls, in tiles:
+/// always down and to the right on screen, whichever way the sprite faces.
+/// Sprites painted per direction carry their own; these are painted facing
+/// east with none, and cast it here from their outline.
+const BELT_SHADOW: [f32; 2] = [0.03, 0.05];
+const MACHINE_SHADOW: [f32; 2] = [0.07, 0.09];
+const TRAIN_SHADOW: [f32; 2] = [0.06, 0.08];
+const PLATFORM_SHADOW: [f32; 2] = [0.03, 0.03];
+
+/// The shadow `of` casts `by` tiles away: its outline, dark and see-through.
+fn shadow(of: &Instance, by: [f32; 2]) -> Instance {
+    Instance {
+        pos: [of.pos[0] + by[0], of.pos[1] + by[1]],
+        tint: [0, 0, 0, palette::SHADOW[3]],
+        ..*of
+    }
+}
+
 fn turns(dir: Dir) -> u32 {
     match dir {
         Dir::East => 0,
@@ -233,6 +251,10 @@ impl Scene {
         let mut bends = HashMap::new();
         let mut belt_dirs = HashMap::new();
         let mut machines = Vec::new();
+        // Shadows go under everything of their layer: belts' under belts,
+        // machines' over belts and items but under machines.
+        let mut belt_shadows = Vec::new();
+        let mut machine_shadows = Vec::new();
         self.occupied.clear();
         let mut badges = Vec::new();
         // Badges keep a readable size on screen when zoomed out, as in the prototype.
@@ -272,10 +294,12 @@ impl Scene {
                 let speed = look.belt_speed(&e.building).unwrap_or(1.0);
                 let phase = (seconds * 2.0 * f64::from(speed)).fract() as f32;
                 let (surface, frame) = look.belt_layers(&e.building, bend, joins, phase);
-                self.instances.push(Instance {
+                let surface = Instance {
                     uv: uv(surface),
                     ..instance
-                });
+                };
+                belt_shadows.push(shadow(&surface, BELT_SHADOW));
+                self.instances.push(surface);
                 self.instances.push(Instance {
                     uv: uv(frame),
                     ..instance
@@ -284,6 +308,9 @@ impl Scene {
                     bends.insert(e.pos, bend);
                 }
                 continue;
+            }
+            if turned {
+                machine_shadows.push(shadow(&instance, MACHINE_SHADOW));
             }
             machines.push(instance);
             for l in look.layers(&e.building, e.recipe.as_ref().map(|r| r.as_str())) {
@@ -296,11 +323,13 @@ impl Scene {
                 });
             }
             if let Some(platform) = look.platform(&e.building) {
-                machines.push(Instance {
+                let platform = Instance {
                     uv: uv(platform),
                     turns: turns(e.dir),
                     ..instance
-                });
+                };
+                machine_shadows.push(shadow(&platform, PLATFORM_SHADOW));
+                machines.push(platform);
             }
             // What a pipe or tank holds shows in its channel or window: the
             // fluid's colour, fading in a pipe and shrinking in a tank as it
@@ -387,6 +416,8 @@ impl Scene {
                 turns: 0,
             });
         }
+        self.instances.splice(0..0, belt_shadows);
+        self.instances.append(&mut machine_shadows);
         self.instances.append(&mut machines);
         // Trains ride over the track, smoothed between ticks as items are.
         let at = |t: &TrainView| {
@@ -412,13 +443,15 @@ impl Scene {
             if !seen(p[0], p[1], 1.0, 1.0) {
                 continue;
             }
-            self.instances.push(Instance {
+            let train = Instance {
                 pos: p,
                 size: [1.0, 1.0],
                 uv: uv(sprite),
                 tint: palette::WHITE,
                 turns: turns(t.dir),
-            });
+            };
+            self.instances.push(shadow(&train, TRAIN_SHADOW));
+            self.instances.push(train);
         }
         self.instances.append(&mut badges);
     }
@@ -694,10 +727,10 @@ mod tests {
             );
             assert_eq!(
                 scene.instances.len(),
-                9,
-                "four belts in two layers, and an item"
+                13,
+                "four belts in two layers over their shadows, and an item"
             );
-            scene.instances[8].pos[0] + ITEM_TILES / 2.0
+            scene.instances[12].pos[0] + ITEM_TILES / 2.0
         };
         let xs: Vec<f32> = [0.0, 0.5, 1.0]
             .iter()
@@ -1006,7 +1039,55 @@ mod tests {
         );
     }
 
-    /// The CPU side of 15,000 sprites (5,000 belts in two layers, each with
+    /// A belt or splitter turned any way casts its shadow the same way on
+    /// screen: down and to the right, not turned with it.
+    #[test]
+    fn shadows_fall_the_same_way_whichever_way_a_sprite_faces() {
+        let look = Look::new(&content());
+        let atlases = look.atlases();
+        for building in ["belt", "splitter"] {
+            let mut snapshot = Snapshot::default();
+            for (i, dir) in Dir::ALL.into_iter().enumerate() {
+                let mut e = belt(i as i32 * 3);
+                e.building = building.into();
+                e.dir = dir;
+                snapshot.entities.push(e);
+            }
+            let mut scene = Scene::default();
+            scene.build(
+                &look,
+                &atlases,
+                &CAMERA,
+                (640, 360),
+                &snapshot,
+                &snapshot,
+                0.0,
+            );
+            let dark = |i: &&Instance| i.tint[..3] == [0, 0, 0];
+            let shadows: Vec<_> = scene.instances.iter().filter(dark).collect();
+            assert_eq!(shadows.len(), 4, "{building}: one shadow each");
+            let by = if building == "belt" {
+                BELT_SHADOW
+            } else {
+                MACHINE_SHADOW
+            };
+            for s in shadows {
+                let body = scene
+                    .instances
+                    .iter()
+                    .find(|i| !dark(i) && i.uv == s.uv && i.turns == s.turns)
+                    .expect("the sprite that casts it");
+                let off = [s.pos[0] - body.pos[0], s.pos[1] - body.pos[1]];
+                assert!(
+                    (off[0] - by[0]).abs() < 1e-6 && (off[1] - by[1]).abs() < 1e-6,
+                    "{building} turned {}: shadow off by {off:?}",
+                    s.turns
+                );
+            }
+        }
+    }
+
+    /// The CPU side of 20,000 sprites (5,000 belts in two layers over a shadow, each with
     /// an item); prints the time per frame.
     #[test]
     fn ten_thousand_sprites() {
@@ -1040,7 +1121,7 @@ mod tests {
                 0.5,
             );
         }
-        assert_eq!(scene.instances.len(), 15_000);
-        println!("15k sprites: {:?} per frame", start.elapsed() / 10);
+        assert_eq!(scene.instances.len(), 20_000);
+        println!("20k sprites: {:?} per frame", start.elapsed() / 10);
     }
 }

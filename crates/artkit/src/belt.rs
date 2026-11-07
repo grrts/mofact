@@ -117,14 +117,14 @@ fn on_corner(c: &mut Canvas, z: f32, s: f32, u: f32, r: f32) {
 }
 
 /// The moving layer of a belt tile `z` pixels across, at `phase` (0 to 1)
-/// of its half-tile cycle: shadow, body, rollers and chevrons, or at far
-/// zoom (`fine` off) the plain band and arrow.
+/// of its half-tile cycle: body, rollers and chevrons, or at far zoom
+/// (`fine` off) the plain band and arrow. It casts no shadow: belts are
+/// turned when drawn, so the renderer casts theirs in world space.
 pub fn surface(c: &mut Canvas, z: f32, fine: bool, bend: Bend, phase: f32) {
     let phase = phase.rem_euclid(1.0);
     c.save();
     c.translate(z / 2.0, z / 2.0);
     if bend == Bend::Straight {
-        c.fill_rect(-z * 0.5, -z * 0.34, z, z * 0.78, [0, 0, 0, 64]);
         c.fill_rect(-z * 0.5, -z * 0.38, z, z * 0.76, pal::BELT);
         if !fine {
             c.fill_rect(-z * 0.5, -z * 0.1, z, z * 0.2, alpha(pal::CHEVRON, 0.9));
@@ -151,10 +151,6 @@ pub fn surface(c: &mut Canvas, z: f32, fine: bool, bend: Bend, phase: f32) {
         return;
     }
     let s = bend.side();
-    c.save();
-    c.translate(0.0, z * 0.05);
-    fill(c, ring(z, s, 0.11, 0.89), [0, 0, 0, 64]);
-    c.restore();
     fill(c, ring(z, s, 0.12, 0.88), pal::BELT);
     if !fine {
         fill(c, ring(z, s, 0.4, 0.6), alpha(pal::CHEVRON, 0.9));
@@ -313,14 +309,19 @@ mod tests {
     use crate::draw;
 
     fn layers(z: f32, fine: bool, bend: Bend, joins: Joins, phase: f32) -> Canvas {
-        let mut c = Canvas::new(z as u32, z as u32);
+        let c = Canvas::new(z as u32, z as u32);
+        over(c, z, fine, bend, joins, phase)
+    }
+
+    fn over(mut c: Canvas, z: f32, fine: bool, bend: Bend, joins: Joins, phase: f32) -> Canvas {
         surface(&mut c, z, fine, bend, phase);
         frame(&mut c, z, fine, bend, joins);
         c
     }
 
-    /// The two layers of a plain straight tile add up to the one-piece belt
-    /// the prototype draws, which the golden test holds to the prototype.
+    /// The two layers of a plain straight tile, over the shadow the renderer
+    /// casts for an east-facing belt, add up to the one-piece belt the
+    /// prototype draws, which the golden test holds to the prototype.
     #[test]
     fn a_plain_straight_tile_is_the_prototype_belt() {
         for fine in [true, false] {
@@ -329,7 +330,9 @@ mod tests {
                 let mut one = Canvas::new(64, 64);
                 draw::belt(&mut one, z, fine, t, 2.0);
                 let phase = ((t * 2.0) % 0.5) / 0.5;
-                let two = layers(z, fine, Bend::Straight, Joins::default(), phase);
+                let mut shadow = Canvas::new(64, 64);
+                shadow.fill_rect(0.0, z * 0.16, z, z * 0.78, [0, 0, 0, 64]);
+                let two = over(shadow, z, fine, Bend::Straight, Joins::default(), phase);
                 let (a, b) = (one.rgba(), two.rgba());
                 let worst = a.iter().zip(&b).map(|(x, y)| x.abs_diff(*y)).max();
                 assert!(worst <= Some(2), "fine {fine}, t {t}: off by {worst:?}");

@@ -787,25 +787,16 @@ pub fn turbine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
     c.restore();
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// A splitter facing east: a short belt stub from the west into a housing
 /// that sends items out north and south, shown by arrows on both sides.
 pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
     let s = z;
-    let sh = z * 0.07;
     // The intake: the belt's western half.
     c.fill_rect(0.0, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
     c.fill_rect(0.0, s * 0.1, s * 0.5, s * 0.08, pal::BELT_RAIL);
     c.fill_rect(0.0, s * 0.82, s * 0.5, s * 0.08, pal::BELT_RAIL);
-    shadow(
-        c,
-        rr(
-            s * 0.3 + sh,
-            s * 0.06 + sh * 1.3,
-            s * 0.62,
-            s * 0.88,
-            s * 0.12,
-        ),
-    );
     fill(
         c,
         rr(s * 0.3, s * 0.06, s * 0.62, s * 0.88, s * 0.12),
@@ -831,21 +822,18 @@ pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
     }
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// One end of an underground belt facing east. An entrance takes the belt
 /// in from the west and dives under a hood on its eastern half; an exit
 /// is the same turned around, the belt coming out to the east.
 pub fn underground(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
     let s = z;
-    let sh = z * 0.07;
     let (belt_x, hood_x) = if exit { (s * 0.5, 0.0) } else { (0.0, s * 0.5) };
     c.fill_rect(belt_x, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
     c.fill_rect(belt_x, s * 0.1, s * 0.5, s * 0.08, pal::BELT_RAIL);
     c.fill_rect(belt_x, s * 0.82, s * 0.5, s * 0.08, pal::BELT_RAIL);
     arrow(c, belt_x + s * 0.22, s * 0.5, 0, s * 0.4, pal::CHEVRON);
-    shadow(
-        c,
-        rr(hood_x + sh, s * 0.06 + sh * 1.3, s * 0.5, s * 0.88, s * 0.1),
-    );
     fill(
         c,
         rr(hood_x, s * 0.06, s * 0.5, s * 0.88, s * 0.1),
@@ -907,7 +895,6 @@ const CHANNEL: f32 = 0.18;
 /// west 4, north 8): a steel run with a dark channel down its middle. An
 /// empty pipe shows the channel dark; [`pipe_fluid`] fills it.
 pub fn pipe(c: &mut Canvas, z: f32, fine: bool, links: u8) {
-    let h = z * 0.5;
     let sh = z * 0.06;
     c.save();
     c.translate(sh, sh * 1.3);
@@ -915,6 +902,13 @@ pub fn pipe(c: &mut Canvas, z: f32, fine: bool, links: u8) {
         arm(c, z, d, 0.5, pal::SHADOW);
     }
     c.restore();
+    pipe_body(c, z, fine, links);
+}
+
+/// [`pipe`] without its shadow, for parts that are turned when drawn and so
+/// have theirs cast by the renderer.
+fn pipe_body(c: &mut Canvas, z: f32, fine: bool, links: u8) {
+    let h = z * 0.5;
     for d in arms(links) {
         arm(c, z, d, 0.5, pal::MACHINE_EDGE);
     }
@@ -1036,22 +1030,13 @@ pub fn tank_fluid(c: &mut Canvas, z: f32) {
     c.fill_circle(s / 2.0, s / 2.0, s * TANK_WINDOW, pal::WHITE);
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// A pump facing east: a pipe through a motor housing, with an arrow for
 /// the way it pushes.
 pub fn pump(c: &mut Canvas, z: f32, fine: bool) {
-    pipe(c, z, fine, 5);
+    pipe_body(c, z, fine, 5);
     let s = z;
-    let sh = z * 0.07;
-    shadow(
-        c,
-        rr(
-            s * 0.2 + sh,
-            s * 0.14 + sh * 1.3,
-            s * 0.6,
-            s * 0.72,
-            s * 0.12,
-        ),
-    );
     fill(
         c,
         rr(s * 0.2, s * 0.14, s * 0.6, s * 0.72, s * 0.12),
@@ -1072,15 +1057,15 @@ pub fn pump(c: &mut Canvas, z: f32, fine: bool) {
     }
 }
 
+/// Casts no shadow: it is turned when drawn, so the renderer casts one
+/// in world space.
 /// One end of an underground pipe facing east. An entrance takes the pipe
 /// in from the west and goes down under a cap on its eastern half; an exit
 /// is the same turned around.
 pub fn underground_pipe(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
-    pipe(c, z, fine, if exit { 1 } else { 4 });
+    pipe_body(c, z, fine, if exit { 1 } else { 4 });
     let s = z;
-    let sh = z * 0.07;
     let cx = if exit { s * 0.38 } else { s * 0.62 };
-    shadow(c, ellipse(cx + sh, s * 0.5 + sh * 1.3, s * 0.32, s * 0.32));
     c.fill_circle(cx, s * 0.5, s * 0.32, pal::MACHINE_EDGE);
     c.fill_circle(cx, s * 0.5, s * 0.28, pal::MACHINE);
     c.fill_circle(cx, s * 0.5, s * 0.16, pal::MACHINE_EDGE);
