@@ -43,6 +43,7 @@ impl mofact::crash::Keep for CrashKeep {
         }
     }
 }
+const LANGUAGE_KEY: &str = "mofact-language";
 /// Milliseconds between autosaves.
 const SAVE_EVERY: f64 = 30_000.0;
 
@@ -65,6 +66,7 @@ struct Shell {
     /// Low-power and colour-blind mode as last stored.
     low_power: bool,
     colour_blind: bool,
+    language: mofact_ui::i18n::Choice,
 }
 
 impl Shell {
@@ -109,6 +111,14 @@ impl Shell {
                 let flag = |on: bool| if on { "1" } else { "0" };
                 let _ = st.set_item(LOW_POWER_KEY, flag(low));
                 let _ = st.set_item(COLOUR_BLIND_KEY, flag(safe));
+            }
+        }
+        // And the language, when the player picks one.
+        let language = self.game.language();
+        if language != self.language {
+            self.language = language;
+            if let Ok(Some(st)) = self.window.local_storage() {
+                let _ = st.set_item(LANGUAGE_KEY, language.code());
             }
         }
         if self.game.wants_slots() {
@@ -386,6 +396,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         safe: window.document().and_then(|d| d.get_element_by_id("safe")),
         low_power: false,
         colour_blind: false,
+        language: mofact_ui::i18n::Choice::Device,
     }));
     {
         let mut s = shell.borrow_mut();
@@ -406,6 +417,34 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
             s.game.set_colour_blind(true);
             s.colour_blind = true;
         }
+        // The browser's languages, most preferred first; `?lang=ja` in the
+        // address stands in for them.
+        let nav = window.navigator();
+        let mut tags: Vec<String> = nav
+            .languages()
+            .iter()
+            .filter_map(|v| v.as_string())
+            .collect();
+        tags.extend(nav.language());
+        if let Some(tag) = window.location().search().ok().and_then(|q| {
+            q.split(['?', '&'])
+                .find_map(|p| p.strip_prefix("lang=").map(String::from))
+        }) {
+            tags.insert(0, tag);
+        }
+        s.game.set_device_lang(mofact_ui::i18n::Lang::for_device(
+            tags.iter().map(String::as_str),
+        ));
+        let language = window
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|st| st.get_item(LANGUAGE_KEY).ok().flatten())
+            .map_or(mofact_ui::i18n::Choice::Device, |c| {
+                mofact_ui::i18n::Choice::from_code(&c)
+            });
+        s.game.set_language(language);
+        s.language = language;
         // The web link plays the full game until a store build is live
         // (docs/decisions.md); then it becomes the demo with store links.
         if let Ok(Some(st)) = window.local_storage() {

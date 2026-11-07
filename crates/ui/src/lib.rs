@@ -25,6 +25,8 @@ use mofact_render::palette::{self, Rgba};
 use mofact_render::{Look, Overlay};
 use web_time::{Duration, Instant};
 
+pub use i18n::{tr, trf};
+
 pub use mofact_core as core;
 
 const PANEL: Rgba = [0x1d, 0x23, 0x2a, 0xeb];
@@ -45,15 +47,16 @@ const TOAST_FOR: Duration = Duration::from_millis(2500);
 /// A finger held still on the world this long opens the radial build menu.
 pub const LONG_PRESS: Duration = Duration::from_millis(450);
 
-/// The toolbar, left to right (top to bottom in landscape).
+/// The toolbar, left to right (top to bottom in landscape): the label's
+/// string key and the building it places.
 const TOOLS: [(&str, Option<&str>); 7] = [
-    ("Move", None),
-    ("Belt", Some("belt")),
-    ("Drill", Some("drill")),
-    ("Furnace", Some("furnace")),
-    ("Assembler", Some("assembler")),
-    ("More", None),
-    ("Remove", None),
+    ("tool.move", None),
+    ("tool.belt", Some("belt")),
+    ("tool.drill", Some("drill")),
+    ("tool.furnace", Some("furnace")),
+    ("tool.assembler", Some("assembler")),
+    ("tool.more", None),
+    ("tool.remove", None),
 ];
 /// The slot that opens the build sheet with every other building, and
 /// shows the one in hand when it is one of those.
@@ -248,6 +251,8 @@ pub enum Action {
     LowPower(bool),
     /// Turn colour-blind mode on (true) or off (T58).
     ColourBlind(bool),
+    /// The player picked a language, or to follow the device's (T65).
+    Language(i18n::Choice),
     /// The game menu opened: the slots it lists want refreshing.
     MenuOpened,
     /// Save the game being played and switch to the one in this slot.
@@ -322,6 +327,8 @@ enum Hit {
     CopyCrash,
     /// The menu button: opens and closes the game menu.
     Menu,
+    /// The language button in the game menu: steps to the next language.
+    Language,
     /// A slot's buttons in the game menu.
     SlotLoad(u8),
     SlotDelete(u8),
@@ -377,7 +384,20 @@ fn roll(n: u64) -> u64 {
 const SEED_DIGITS: usize = 9;
 
 /// The names of the world presets, in `mofact_world::PRESETS` order.
-pub const PRESET_NAMES: [&str; 4] = ["Standard", "Rich ore", "Lakes", "Dry"];
+pub const PRESET_NAMES: [&str; 4] = [
+    "preset.standard",
+    "preset.rich",
+    "preset.lakes",
+    "preset.dry",
+];
+
+/// The name of map preset `n`, in the current language.
+pub fn preset_name(n: u8) -> &'static str {
+    tr(PRESET_NAMES
+        .get(usize::from(n))
+        .copied()
+        .unwrap_or(PRESET_NAMES[0]))
+}
 
 /// A touch on the world that may turn out to be a tap.
 #[derive(Debug)]
@@ -399,6 +419,9 @@ pub struct Hud {
     low_power: bool,
     /// Whether colour-blind mode is on (T58).
     colour_blind: bool,
+    /// The language the player chose, and the device's (T65).
+    language: i18n::Choice,
+    device: i18n::Lang,
     /// Whether the game menu is open, the slot asked to be deleted (a
     /// second tap deletes it), and the new game being set up.
     menu: bool,
@@ -522,6 +545,23 @@ impl Hud {
     /// Turn colour-blind mode on or off, as a platform does from a saved setting.
     pub fn set_colour_blind(&mut self, on: bool) {
         self.colour_blind = on;
+    }
+
+    /// The language the player chose: the device's, or one of their own.
+    pub fn language(&self) -> i18n::Choice {
+        self.language
+    }
+
+    /// Choose the language, as a saved setting does at start, and switch to it.
+    pub fn set_language(&mut self, choice: i18n::Choice) {
+        self.language = choice;
+        i18n::set_lang(choice.resolve(self.device));
+    }
+
+    /// Tell the HUD the device's language, from its preferred locales.
+    pub fn set_device_lang(&mut self, lang: i18n::Lang) {
+        self.device = lang;
+        i18n::set_lang(self.language.resolve(lang));
     }
 
     /// Whether the game menu is open.
@@ -883,20 +923,24 @@ impl Hud {
             }
             Hit::ColourBlind => {
                 self.colour_blind = !self.colour_blind;
-                self.toast(if self.colour_blind {
-                    "Colour-blind mode: safer colours, and marks on look-alike items."
+                self.toast(tr(if self.colour_blind {
+                    "toast.colour_blind_on"
                 } else {
-                    "Colour-blind mode off."
-                });
+                    "toast.colour_blind_off"
+                }));
                 vec![Action::ColourBlind(self.colour_blind)]
+            }
+            Hit::Language => {
+                self.set_language(self.language.next());
+                vec![Action::Language(self.language)]
             }
             Hit::Power => {
                 self.low_power = !self.low_power;
-                self.toast(if self.low_power {
-                    "Low-power mode: 30 fps and calmer ground, to save battery."
+                self.toast(tr(if self.low_power {
+                    "toast.low_power_on"
                 } else {
-                    "Low-power mode off."
-                });
+                    "toast.low_power_off"
+                }));
                 vec![Action::LowPower(self.low_power)]
             }
             Hit::Map => {
@@ -943,6 +987,7 @@ impl Hud {
     /// Lay out and paint the HUD for this frame.
     pub fn draw(&mut self, view: &View, o: &mut Overlay) {
         self.hits.clear();
+        o.prefer_chinese(i18n::lang() == i18n::Lang::ZhHans);
         let (w, h) = (view.size.0 as f32, view.size.1 as f32);
         let portrait = h > w;
         // Points to pixels: the display's own, shrunk a little on the
@@ -1203,24 +1248,27 @@ impl Hud {
             return;
         };
         let name = match view.tool {
-            Tool::Place(b) => view.building(b).map_or("Build", |d| d.name.as_str()),
-            _ => TOOLS[slot].0,
+            Tool::Place(b) => view
+                .building(b)
+                .map_or(tr("tip.build"), |d| d.name.as_str()),
+            _ => tr(TOOLS[slot].0),
         };
-        let text = format!("{name}: {}", tip(view.tool));
+        let text = trf("tip.named", &[&name, &tip(view.tool)]);
         let ink = if *view.tool == Tool::Remove {
             palette::STARVE
         } else {
             TEXT
         };
         let px = 15.0 * u;
-        let bw = o.measure("Done", px) + 28.0 * u;
+        let done = tr("button.done");
+        let bw = o.measure(done, px) + 28.0 * u;
         let gap = 8.0 * u;
         let bottom = chip(o, &text, at, width - bw - gap, u, ink);
         let h = (bottom - at[1]).max(40.0 * u).min(52.0 * u);
         let r = [at[0] + width - bw, at[1], bw, h];
         o.panel([r[0], r[1]], [r[2], r[3]], 8.0 * u, RAISED);
         o.text(
-            "Done",
+            done,
             [r[0] + 14.0 * u, r[1] + (h + o.cap_height(px)) / 2.0],
             px,
             TEXT,
@@ -1237,8 +1285,8 @@ impl Hud {
         let px = 15.0 * u;
         let mut x = at[0];
         for (show, live, hit, label) in [
-            (undo || redo, undo, Hit::Undo, "← Undo"),
-            (redo, redo, Hit::Redo, "Redo →"),
+            (undo || redo, undo, Hit::Undo, tr("button.undo")),
+            (redo, redo, Hit::Redo, tr("button.redo")),
         ] {
             if !show {
                 continue;
@@ -1291,9 +1339,9 @@ impl Hud {
             let (label, def) = match view.tool {
                 Tool::Place(b) if i == MORE && current == Some(MORE) => {
                     let def = view.building(b);
-                    (def.map_or(*label, |d| d.name.as_str()), def)
+                    (def.map_or(tr(label), |d| d.name.as_str()), def)
                 }
-                _ => (*label, building.and_then(|b| view.building(&b.into()))),
+                _ => (tr(label), building.and_then(|b| view.building(&b.into()))),
             };
             let cost = def.map(|d| d.cost.as_slice()).unwrap_or_default();
             let open = def.is_none_or(|d| view.building_open(&d.id));
@@ -1493,16 +1541,18 @@ impl Hud {
         let title = if two { 0.0 } else { 50.0 * u };
         let width = if two { wide.min(620.0 * u) } else { width };
         // Slot rows shrink on a short screen, down to a button and a gap.
-        // A crash report waiting adds a row for sending it.
+        // Under the slots, two rows of settings, and a crash report
+        // waiting adds a row for sending it.
         let extra = if view.crash { bh + gap } else { 0.0 };
+        let settings = 2.0 * bh + gap + extra;
         let row =
-            ((room - 2.0 * pad - title - bh - extra) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
+            ((room - 2.0 * pad - title - settings) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
         // The keys grow into spare room on a tall screen.
         let key = ((room - 2.0 * pad - tall) / 3.0 + bh).clamp(bh, 52.0 * u);
         let body = match &new_game {
             Some(_) if two => 4.0 * bh + 3.0 * gap,
             Some(_) => note + 3.0 * (bh + gap) + 3.0 * (key + gap) - gap,
-            None => f32::from(SLOTS) * row + bh + extra,
+            None => f32::from(SLOTS) * row + settings,
         };
         let height = pad + title + body + pad;
         let r = [corner[0] - width, corner[1] - height, width, height];
@@ -1514,8 +1564,8 @@ impl Hud {
         if !two {
             let px = 20.0 * u;
             let heading = match &new_game {
-                Some(g) => format!("New game in slot {}", g.slot + 1),
-                None => "Game".to_string(),
+                Some(g) => trf("menu.new_game_in_slot", &[&(g.slot + 1)]),
+                None => tr("menu.title").to_string(),
             };
             let close = 44.0 * u;
             o.text(
@@ -1557,7 +1607,7 @@ impl Hud {
                 pcols = 2u8;
                 last_at = [right, y + 3.0 * (bh + gap), half];
             } else {
-                let text = "The same seed and preset always make the same map.";
+                let text = tr("menu.seed_note");
                 let mpx = fit(o, text, 14.0 * u, inner);
                 o.text(text, [left, y + o.cap_height(mpx)], mpx, MUTED);
                 y += note;
@@ -1575,7 +1625,7 @@ impl Hud {
             o.panel([field[0], field[1]], [field[2], field[3]], 10.0 * u, RAISED);
             let lpx = 14.0 * u;
             o.text(
-                "Seed",
+                tr("menu.seed"),
                 [
                     field[0] + 12.0 * u,
                     field[1] + (bh + o.cap_height(lpx)) / 2.0,
@@ -1618,7 +1668,7 @@ impl Hud {
                 let (label, hit) = match k {
                     0..=8 => ((k + 1).to_string(), Hit::Digit(k + 1)),
                     9 => ("0".to_string(), Hit::Digit(0)),
-                    _ => ("Delete".to_string(), Hit::Backspace),
+                    _ => (tr("key.delete").to_string(), Hit::Backspace),
                 };
                 let lpx = if k == 10 { 14.0 } else { 20.0 } * u;
                 self.button(o, kr, &label, lpx, RAISED, TEXT, hit);
@@ -1643,14 +1693,14 @@ impl Hud {
                     pw,
                     bh,
                 ];
-                self.button(o, pr, name, 14.0 * u, fill, ink, Hit::Preset(i as u8));
+                self.button(o, pr, tr(name), 14.0 * u, fill, ink, Hit::Preset(i as u8));
             }
             let half = (last_at[2] - gap) / 2.0;
             let [lx, ly, _] = last_at;
             self.button(
                 o,
                 [lx, ly, half, bh],
-                "Cancel",
+                tr("button.cancel"),
                 15.0 * u,
                 RAISED,
                 TEXT,
@@ -1659,7 +1709,7 @@ impl Hud {
             self.button(
                 o,
                 [lx + half + gap, ly, half, bh],
-                "Start",
+                tr("menu.start"),
                 15.0 * u,
                 palette::ACCENT,
                 palette::GROUND,
@@ -1678,7 +1728,7 @@ impl Hud {
             let mut bx = b[0] + b[2] - 6.0 * u;
             let by = b[1] + (b[3] - bh) / 2.0;
             if slot.current {
-                let tag = "Playing";
+                let tag = tr("menu.playing");
                 let tpx = 13.0 * u;
                 bx -= o.measure(tag, tpx) + 8.0 * u;
                 o.text(
@@ -1690,7 +1740,7 @@ impl Hud {
             } else if slot.used {
                 let asking = self.confirm_delete == Some(n);
                 let (label, fill, w) = if asking {
-                    ("Delete?", palette::STARVE, 84.0 * u)
+                    (tr("menu.delete_ask"), palette::STARVE, 84.0 * u)
                 } else {
                     ("×", PANEL, 44.0 * u)
                 };
@@ -1708,7 +1758,7 @@ impl Hud {
                 self.button(
                     o,
                     [bx, by, 72.0 * u, bh],
-                    "Load",
+                    tr("menu.load"),
                     15.0 * u,
                     palette::ACCENT,
                     palette::GROUND,
@@ -1719,7 +1769,7 @@ impl Hud {
                 self.button(
                     o,
                     [bx, by, 96.0 * u, bh],
-                    "New game",
+                    tr("menu.new_game"),
                     15.0 * u,
                     palette::ACCENT,
                     palette::GROUND,
@@ -1729,9 +1779,9 @@ impl Hud {
             let tx = b[0] + 12.0 * u;
             let words = (bx - 8.0 * u - tx).max(20.0 * u);
             let name = if slot.used {
-                format!("Slot {} · {}", n + 1, slot.title)
+                trf("menu.slot_used", &[&(n + 1), &slot.title])
             } else {
-                format!("Slot {} · empty", n + 1)
+                trf("menu.slot_empty", &[&(n + 1)])
             };
             let npx = fit(o, &name, 15.0 * u, words);
             if slot.used {
@@ -1747,10 +1797,16 @@ impl Hud {
         // Low-power and colour-blind mode, side by side.
         let half = (inner - gap) / 2.0;
         for (i, on, name, hit) in [
-            (0.0, self.low_power, "Low power", Hit::Power),
-            (1.0, self.colour_blind, "Colour-blind", Hit::ColourBlind),
+            (0.0, self.low_power, "setting.low_power", Hit::Power),
+            (
+                1.0,
+                self.colour_blind,
+                "setting.colour_blind",
+                Hit::ColourBlind,
+            ),
         ] {
-            let label = format!("{name}: {}", if on { "on" } else { "off" });
+            let state = tr(if on { "setting.on" } else { "setting.off" });
+            let label = trf("setting.state", &[&tr(name), &state]);
             let (fill, ink) = if on {
                 (PRESSED, view.look.status(palette::Status::Working))
             } else {
@@ -1759,12 +1815,19 @@ impl Hud {
             let b = [left + i * (half + gap), y, half, bh];
             self.button(o, b, &label, 15.0 * u, fill, ink, hit);
         }
+        // The language, under them: the device's until the player picks one.
+        let name = match self.language {
+            i18n::Choice::Device => trf("setting.language_auto", &[&self.device.native()]),
+            i18n::Choice::Fixed(l) => l.native().to_string(),
+        };
+        let label = trf("setting.language", &[&name]);
+        let b = [left, y + bh + gap, inner, bh];
+        self.button(o, b, &label, 15.0 * u, RAISED, TEXT, Hit::Language);
         if view.crash {
-            let label = "Copy last crash report";
             self.button(
                 o,
-                [left, y + bh + gap, inner, bh],
-                label,
+                [left, y + 2.0 * (bh + gap), inner, bh],
+                tr("menu.copy_crash"),
                 15.0 * u,
                 RAISED,
                 TEXT,
@@ -1877,7 +1940,7 @@ impl Hud {
         };
         if self.goal_seen != Some(g.index) {
             if self.goal_seen.is_some_and(|seen| seen < g.index) {
-                let text = format!("Goal met! Next: {}", def.title);
+                let text = trf("goal.met", &[&def.title]);
                 self.toast = Some((text, Instant::now(), WORKING));
             }
             self.goal_seen = Some(g.index);
@@ -1887,11 +1950,9 @@ impl Hud {
         let px = 14.0 * u;
         let count = format!("{}/{}", g.have, g.need);
         let cw = o.measure(&count, px);
-        let text = format!(
-            "Goal {} of {}: {}",
-            g.index + 1,
-            view.content.goals.len(),
-            def.title
+        let text = trf(
+            "goal.progress",
+            &[&(g.index + 1), &view.content.goals.len(), &def.title],
         );
         let px = fit(o, &text, px, width - 40.0 * u - cw);
         // The hint sits inside the card, so goal and hint read as one thing.
@@ -1945,9 +2006,9 @@ impl Hud {
         let h = CHIP_H * u;
         let n: usize = self.found.iter().map(|p| p.at.len()).sum();
         let text = if n == 1 {
-            "1 problem".to_string()
+            tr("problems.one").to_string()
         } else {
-            format!("{n} problems")
+            trf("problems.many", &[&n])
         };
         let px = fit(o, &text, 14.0 * u, width - 32.0 * u);
         let w = (o.measure(&text, px) + 38.0 * u).min(width);
@@ -1993,7 +2054,12 @@ impl Hud {
         let mut y = r[1] + pad;
 
         let px = 20.0 * u;
-        o.text("Problems", [left, y + o.cap_height(px) + 4.0 * u], px, TEXT);
+        o.text(
+            tr("problems.title"),
+            [left, y + o.cap_height(px) + 4.0 * u],
+            px,
+            TEXT,
+        );
         let close = 32.0 * u;
         let c = [r[0] + r[2] - pad - close, y - 2.0 * u, close, close];
         o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
@@ -2063,9 +2129,9 @@ impl Hud {
                 TEXT,
             ),
             None if view.content.research.iter().any(|d| view.research_ready(d)) => {
-                ("Pick research".to_string(), palette::ACCENT)
+                (tr("research.pick").to_string(), palette::ACCENT)
             }
-            None => ("Research done".to_string(), MUTED),
+            None => (tr("research.all_done").to_string(), MUTED),
         };
         let px = fit(o, &text, 14.0 * u, width - 28.0 * u);
         let w = (o.measure(&text, px) + 28.0 * u).min(width);
@@ -2227,18 +2293,16 @@ impl Hud {
             *y += head;
         };
         if empty {
-            o.text(
-                "Nothing makes or uses this yet.",
-                [left, y + row / 2.0],
-                14.0 * u,
-                MUTED,
-            );
+            o.text(tr("browser.none"), [left, y + row / 2.0], 14.0 * u, MUTED);
         }
-        for (label, list, n) in [("MADE BY", &made, nm), ("USED IN", &used, nu)] {
+        for (label, list, n) in [
+            ("browser.made_by", &made, nm),
+            ("browser.used_in", &used, nu),
+        ] {
             if n == 0 {
                 continue;
             }
-            header(o, &mut y, label);
+            header(o, &mut y, tr(label));
             for rd in &list[..n] {
                 self.recipe_row(
                     view,
@@ -2249,14 +2313,14 @@ impl Hud {
                 );
                 y += row;
             }
-            if label == "MADE BY" && np > 0 {
+            if label == "browser.made_by" && np > 0 {
                 y = self.plan_lines(view, o, &chips, [left, y, r[2] - 2.0 * pad], head, line);
             }
         }
         if nr > 0 {
-            header(o, &mut y, "RESEARCH");
+            header(o, &mut y, tr("browser.research"));
             let names: Vec<&str> = research.iter().map(|r| r.name.as_str()).collect();
-            let text = names.join(", ");
+            let text = i18n::join(&names);
             let px = fit(o, &text, 14.0 * u, r[2] - 2.0 * pad);
             o.text(&text, [left, y + row / 2.0], px, TEXT);
         }
@@ -2276,12 +2340,17 @@ impl Hud {
     ) -> f32 {
         let u = self.unit;
         let [left, mut y, width] = b;
-        o.text("TO MAKE", [left, y + head * 0.7], 12.0 * u, MUTED);
+        o.text(
+            tr("browser.to_make"),
+            [left, y + head * 0.7],
+            12.0 * u,
+            MUTED,
+        );
         // − rate +, on the right of the header.
         let btn = 30.0 * u;
-        let rate = format!("{}/min", self.rate_per_minute());
+        let rate = trf("unit.per_min", &[&self.rate_per_minute()]);
         let rpx = 14.0 * u;
-        let rw = o.measure("1200/min", rpx);
+        let rw = o.measure(&trf("unit.per_min", &[&1200]), rpx);
         let right = left + width;
         let by = y + (head - btn) / 2.0;
         let plus = [right - btn, by, btn, btn];
@@ -2376,13 +2445,11 @@ impl Hud {
             })
             .map(|bd| bd.name.as_str())
             .collect();
-        let lock = if open { "" } else { " · Locked" };
-        let text = format!(
-            "{} · {:.1}s · {}{lock}",
-            rd.name,
-            rd.seconds,
-            makers.join(", ")
-        );
+        let seconds = trf("unit.seconds", &[&format!("{:.1}", rd.seconds)]);
+        let mut text = format!("{} · {seconds} · {}", rd.name, i18n::join(&makers));
+        if !open {
+            text = format!("{text} · {}", tr("state.locked"));
+        }
         let spx = fit(o, &text, 11.0 * u, b[2] - 20.0 * u);
         let ink = if open { MUTED } else { palette::STARVE };
         o.text(&text, [b[0] + 10.0 * u, b[1] + b[3] - 7.0 * u], spx, ink);
@@ -2482,7 +2549,12 @@ impl Hud {
         let left = r[0] + pad;
         let top = r[1] + pad;
         let px = 20.0 * u;
-        o.text("Build", [left, top + o.cap_height(px) + 4.0 * u], px, TEXT);
+        o.text(
+            tr("build.title"),
+            [left, top + o.cap_height(px) + 4.0 * u],
+            px,
+            TEXT,
+        );
         let close = 32.0 * u;
         let c = [r[0] + r[2] - pad - close, top - 2.0 * u, close, close];
         o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
@@ -2528,13 +2600,10 @@ impl Hud {
             let y = base + 6.0 * u;
             if !open {
                 let lpx = 11.0 * u;
-                let lw = o.measure("Locked", lpx);
-                o.text(
-                    "Locked",
-                    [b[0] + (cw - lw) / 2.0, y + lpx * 0.85],
-                    lpx,
-                    MUTED,
-                );
+                let locked = tr("state.locked");
+                let lpx = fit(o, locked, lpx, cw - 4.0 * u);
+                let lw = o.measure(locked, lpx);
+                o.text(locked, [b[0] + (cw - lw) / 2.0, y + lpx * 0.85], lpx, MUTED);
             } else {
                 let spx = 10.0 * u;
                 let s = 10.0 * u;
@@ -2597,7 +2666,12 @@ impl Hud {
         let mut y = r[1] + pad;
 
         let px = 20.0 * u;
-        o.text("Research", [left, y + o.cap_height(px) + 4.0 * u], px, TEXT);
+        o.text(
+            tr("research.title"),
+            [left, y + o.cap_height(px) + 4.0 * u],
+            px,
+            TEXT,
+        );
         let close = 32.0 * u;
         let c = [r[0] + r[2] - pad - close, y - 2.0 * u, close, close];
         o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
@@ -2615,34 +2689,48 @@ impl Hud {
             let b = [left, y, r[2] - 2.0 * pad, row - 6.0 * u];
             let is_current = current == Some(&d.id);
             let again = d.repeat.is_some();
+            let locked = !(view.done(&d.id) && !again)
+                && !is_current
+                && !view.gated(d)
+                && !view.research_ready(d);
             let (label, color, hit) = if view.done(&d.id) && !again {
-                ("Done", WORKING, None)
+                (tr("research.done"), WORKING, None)
             } else if is_current {
-                ("Studying", palette::ACCENT, Some(Hit::Study(None)))
+                (
+                    tr("research.studying"),
+                    palette::ACCENT,
+                    Some(Hit::Study(None)),
+                )
             } else if view.gated(d) {
-                ("Full game", palette::ACCENT, Some(Hit::Unlock))
+                (tr("research.full_game"), palette::ACCENT, Some(Hit::Unlock))
             } else if view.research_ready(d) {
-                ("Study", TEXT, Some(Hit::Study(Some(d.id.clone()))))
+                (
+                    tr("research.study"),
+                    TEXT,
+                    Some(Hit::Study(Some(d.id.clone()))),
+                )
             } else {
-                ("Locked", MUTED, None)
+                (tr("state.locked"), MUTED, None)
             };
             let fill = if is_current { PRESSED } else { RAISED };
             o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, fill);
             let npx = 15.0 * u;
-            let ink = if label == "Locked" { MUTED } else { TEXT };
+            let ink = if locked { MUTED } else { TEXT };
             // Repeatable research says which level is next, and what it gives.
             let level = view.level(&d.id);
             let name = match d.repeat {
-                Some(rep) => format!(
-                    "{} {} · +{:.0}% {}",
-                    d.name,
-                    level + 1,
-                    rep.per_level * 100.0,
-                    match rep.bonus {
-                        Bonus::Mining => "drills",
-                        Bonus::Crafting => "crafting",
-                        Bonus::Research => "labs",
-                    }
+                Some(rep) => trf(
+                    "research.repeat",
+                    &[
+                        &d.name,
+                        &(level + 1),
+                        &format!("{:.0}", rep.per_level * 100.0),
+                        &tr(match rep.bonus {
+                            Bonus::Mining => "bonus.mining",
+                            Bonus::Crafting => "bonus.crafting",
+                            Bonus::Research => "bonus.research",
+                        }),
+                    ],
                 ),
                 None => d.name.clone(),
             };
@@ -2713,24 +2801,16 @@ impl Hud {
                 + if note.is_some() { line + gap } else { 0.0 }
                 + pad
         };
-        // On a short screen the words come down to one line.
-        let (lines, bh) = if tall(4, 48.0 * u) <= room {
-            (
-                vec![
-                    format!("The demo goes up to tier {}.", first - 1),
-                    format!("The full game opens tiers {first} to {last}"),
-                    "and the skyhook, with one purchase.".to_string(),
-                    "Your factory stays just as it is.".to_string(),
-                ],
-                48.0 * u,
-            )
+        // On a short screen the words come down to a line or two.
+        let lpx = 15.0 * u;
+        let inner = width - 2.0 * pad;
+        let long = trf("unlock.long", &[&(first - 1), &first, &last]);
+        let long = wrap(o, &long, lpx, inner);
+        let (lines, bh) = if tall(long.len(), 48.0 * u) <= room {
+            (long, 48.0 * u)
         } else {
-            (
-                vec![format!(
-                    "Tiers {first} to {last} and the skyhook. Your factory stays."
-                )],
-                44.0 * u,
-            )
+            let short = trf("unlock.short", &[&first, &last]);
+            (wrap(o, &short, lpx, inner), 44.0 * u)
         };
         let height = tall(lines.len(), bh);
         let r = [at[0], at[1] - height, width, height];
@@ -2741,8 +2821,9 @@ impl Hud {
         let mut y = r[1] + pad;
         let px = 20.0 * u;
         let close = 44.0 * u;
+        let px = fit(o, tr("unlock.title"), px, inner - close - gap);
         o.text(
-            "Unlock the full game",
+            tr("unlock.title"),
             [left, y + (close + o.cap_height(px)) / 2.0],
             px,
             TEXT,
@@ -2759,16 +2840,16 @@ impl Hud {
         self.hits.push((c, Hit::Close));
         y += 44.0 * u;
         for l in &lines {
-            let lpx = fit(o, l, 15.0 * u, inner);
+            let lpx = fit(o, l, lpx, inner);
             o.text(l, [left, y + o.cap_height(lpx) + 4.0 * u], lpx, MUTED);
             y += line;
         }
         y += gap;
         let busy = view.store.busy;
         let buy = match (&view.store.price, busy) {
-            (_, true) => "Waiting for the store".to_string(),
-            (Some(p), false) => format!("Buy the full game · {p}"),
-            (None, false) => "Buy the full game".to_string(),
+            (_, true) => tr("unlock.waiting").to_string(),
+            (Some(p), false) => trf("unlock.buy_price", &[p]),
+            (None, false) => tr("unlock.buy").to_string(),
         };
         let (fill, hit) = if busy {
             (RAISED, Hit::Block)
@@ -2783,7 +2864,7 @@ impl Hud {
         self.button(
             o,
             [left, y, inner, bh],
-            "Restore a purchase",
+            tr("unlock.restore"),
             15.0 * u,
             RAISED,
             TEXT,
@@ -2886,7 +2967,7 @@ impl Hud {
             }
         }
         let products = |named: bool| -> Vec<Pill> {
-            let auto = ("Auto", None, current.is_none(), hit(None));
+            let auto = (tr("recipe.auto"), None, current.is_none(), hit(None));
             std::iter::once(auto)
                 .chain(firsts.iter().map(|r| {
                     let item = product(r);
@@ -3066,17 +3147,14 @@ impl Hud {
             let base = y + (row + o.cap_height(px)) / 2.0;
             let mut x = left;
             if hub {
-                o.text(
-                    "Everything delivered here joins your stock.",
-                    [x, base],
-                    px,
-                    MUTED,
-                );
+                let text = tr("inspect.hub");
+                let px = fit(o, text, px, r[2] - 2.0 * pad);
+                o.text(text, [x, base], px, MUTED);
             } else if let Some(m) = mega {
                 if m.done() {
-                    o.text("Built. Your factory has won!", [x, base], px, TEXT);
+                    o.text(tr("inspect.won"), [x, base], px, TEXT);
                 } else {
-                    let head = format!("{} · {} of {}", m.name, m.stage + 1, m.stages);
+                    let head = trf("inspect.stage", &[&m.name, &(m.stage + 1), &m.stages]);
                     x += o.text(&head, [x, base], px, MUTED) + 10.0 * u;
                     for (item, have, need) in &m.needs {
                         let start = x;
@@ -3092,38 +3170,45 @@ impl Hud {
                 }
             } else if let Some((kw, fluid)) = engine {
                 let text = match grid {
-                    Some(_) => format!(
-                        "Gives {:.0} of {kw:.0} kW, burning {}",
-                        e.progress.clamp(0.0, 1.0) * kw,
-                        fluid_name(fluid).to_lowercase()
+                    Some(_) => trf(
+                        "inspect.engine_on",
+                        &[
+                            &format!("{:.0}", e.progress.clamp(0.0, 1.0) * kw),
+                            &format!("{kw:.0}"),
+                            &i18n::in_sentence(&fluid_name(fluid)),
+                        ],
                     ),
-                    None => format!("Gives up to {kw:.0} kW once a pole covers it"),
+                    None => trf("inspect.engine_off", &[&format!("{kw:.0}")]),
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
             } else if wired {
                 let text = match (grid, generator) {
-                    (Some(g), _) => format!(
-                        "Grid: {:.0} of {:.0} kW asked for · {:.0}% met",
-                        g.demand_kw,
-                        g.supply_kw,
-                        g.satisfaction * 100.0
+                    (Some(g), _) => trf(
+                        "inspect.grid",
+                        &[
+                            &format!("{:.0}", g.demand_kw),
+                            &format!("{:.0}", g.supply_kw),
+                            &format!("{:.0}", g.satisfaction * 100.0),
+                        ],
                     ),
-                    (None, Some(kw)) => format!("Gives {kw:.0} kW once a pole covers it"),
-                    (None, None) => "Not linked to anything".to_string(),
+                    (None, Some(kw)) => trf("inspect.generator_off", &[&format!("{kw:.0}")]),
+                    (None, None) => tr("inspect.unlinked").to_string(),
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
             } else if plumbing || pump || well.is_some() {
                 let text = match (&e.fluid, well) {
-                    (_, Some(f)) => format!("Draws {} from the ground", fluid_name(f)),
-                    _ if pump => "Pushes fluid the way its arrow points".to_string(),
-                    (Some(f), _) => format!(
-                        "{} · {:.0}% full",
-                        fluid_name(&f.item),
-                        f.fill.clamp(0.0, 1.0) * 100.0
+                    (_, Some(f)) => trf("inspect.well", &[&i18n::in_sentence(&fluid_name(f))]),
+                    _ if pump => tr("inspect.pump").to_string(),
+                    (Some(f), _) => trf(
+                        "inspect.fluid",
+                        &[
+                            &fluid_name(&f.item),
+                            &format!("{:.0}", f.fill.clamp(0.0, 1.0) * 100.0),
+                        ],
                     ),
-                    (None, _) => "Empty: nothing is flowing in".to_string(),
+                    (None, _) => tr("inspect.empty").to_string(),
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
@@ -3145,15 +3230,23 @@ impl Hud {
                 x += o.text("→", [x, base], px, MUTED) + 8.0 * u;
                 stacks(&mut self.hits, o, &mut x, &rd.outputs);
                 o.text(
-                    &format!("{} · {:.1}s", rd.name, rd.seconds),
+                    &format!(
+                        "{} · {}",
+                        rd.name,
+                        trf("unit.seconds", &[&format!("{:.1}", rd.seconds)])
+                    ),
                     [x + 4.0 * u, base],
                     px,
                     MUTED,
                 );
             } else if recipes.is_some() {
-                o.text("Picks its recipe from what arrives", [x, base], px, MUTED);
+                let text = tr("inspect.recipe_any");
+                let px = fit(o, text, px, r[2] - 2.0 * pad);
+                o.text(text, [x, base], px, MUTED);
             } else {
-                o.text("Mines the ore under it", [x, base], px, MUTED);
+                let text = tr("inspect.drill");
+                let px = fit(o, text, px, r[2] - 2.0 * pad);
+                o.text(text, [x, base], px, MUTED);
             }
             y += row + 4.0 * u;
             let bw = r[2] - 2.0 * pad;
@@ -3200,13 +3293,13 @@ impl Hud {
             let bh = 40.0 * u;
             let bw = (r[2] - 2.0 * pad - 8.0 * u) / 2.0;
             let buttons = [
-                ("Rotate", Hit::Turn(e.id, e.dir), TEXT),
-                ("Remove", Hit::Remove(e.id), palette::STARVE),
+                (tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT),
+                (tr("tool.remove"), Hit::Remove(e.id), palette::STARVE),
             ];
             for (i, (label, hit, ink)) in buttons.into_iter().enumerate() {
                 let b = [left + i as f32 * (bw + 8.0 * u), y, bw, bh];
                 o.panel([b[0], b[1]], [bw, bh], 10.0 * u, RAISED);
-                let px = 15.0 * u;
+                let px = fit(o, label, 15.0 * u, bw - 12.0 * u);
                 let lw = o.measure(label, px);
                 o.text(
                     label,
@@ -3257,55 +3350,35 @@ type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
 fn state(s: MachineState, look: &Look) -> (&'static str, Rgba) {
     use palette::Status;
     match s {
-        MachineState::Idle => ("Idle", MUTED),
-        MachineState::Working => ("Working", look.status(Status::Working)),
-        MachineState::Starved => ("Starved", look.status(Status::Starved)),
-        MachineState::Blocked => ("Output full", look.status(Status::Blocked)),
-        MachineState::NoPower => ("No power", look.status(Status::Starved)),
+        MachineState::Idle => (tr("state.idle"), MUTED),
+        MachineState::Working => (tr("state.working"), look.status(Status::Working)),
+        MachineState::Starved => (tr("state.starved"), look.status(Status::Starved)),
+        MachineState::Blocked => (tr("state.blocked"), look.status(Status::Blocked)),
+        MachineState::NoPower => (tr("state.no_power"), look.status(Status::Starved)),
     }
 }
 
 /// The tip for the tool in hand, from the prototype.
 fn tip(tool: &Tool) -> &'static str {
-    match tool {
-        Tool::Hand => "Drag to look around, pinch or scroll to zoom. Tap a machine to inspect it.",
-        Tool::Belt => "Drag to draw a belt along your path. Two fingers pan and zoom.",
-        Tool::Place(b) if b.as_str() == "drill" => {
-            "Tap any ore tile. Face the drill into a belt, or straight into a furnace."
-        }
-        Tool::Place(b) if b.as_str() == "furnace" => {
-            "Put it where ore arrives. Plates come out of the arrow: belt them to the hub."
-        }
-        Tool::Place(b) if b.as_str() == "lab" => {
-            "Tap to place. Belt research packs into it, and give it power."
-        }
-        Tool::Place(b) if b.as_str() == "pole" => {
-            "Tap to place. Poles link up to 7 tiles apart and power what's next to them."
-        }
-        Tool::Place(b) if b.as_str() == "splitter" => {
-            "Tap to place facing along a belt. Items go out left and right in turn."
-        }
-        Tool::Place(b) if b.as_str() == "underground-belt" => {
-            "Place an entrance, then an exit up to 5 tiles on facing the same way."
-        }
-        Tool::Place(b) if b.as_str() == "rail" => {
-            "Drag to lay track; it joins up by itself. Signals and stops go on top."
-        }
-        Tool::Place(b) if b.as_str() == "rail-signal" => {
-            "Tap track to split it into blocks. Only one train at a time goes past."
-        }
-        Tool::Place(b) if b.as_str() == "train-stop" => {
-            "Tap track. Belts pointed in load the train; it unloads out of the arrow."
-        }
-        Tool::Place(b) if b.as_str() == "locomotive" => {
-            "Tap track to place, then tap the train to give it stops."
-        }
-        Tool::Place(b) if b.as_str() == "wind-turbine" => {
-            "Tap to place next to a pole. Each turbine powers one lab."
-        }
-        Tool::Place(_) => "Tap to place. Pick a recipe, or let it pick from what arrives.",
-        Tool::Remove => "Tap or drag to mark, lift to remove. Undo brings things back.",
-    }
+    tr(match tool {
+        Tool::Hand => "tip.hand",
+        Tool::Belt => "tip.belt",
+        Tool::Remove => "tip.remove",
+        Tool::Place(b) => match b.as_str() {
+            "drill" => "tip.drill",
+            "furnace" => "tip.furnace",
+            "lab" => "tip.lab",
+            "pole" => "tip.pole",
+            "splitter" => "tip.splitter",
+            "underground-belt" => "tip.underground_belt",
+            "rail" => "tip.rail",
+            "rail-signal" => "tip.rail_signal",
+            "train-stop" => "tip.train_stop",
+            "locomotive" => "tip.locomotive",
+            "wind-turbine" => "tip.wind_turbine",
+            _ => "tip.place",
+        },
+    })
 }
 
 /// The largest size up to `px` at which `text` fits in `width`.
@@ -3334,15 +3407,18 @@ fn chip(o: &mut Overlay, text: &str, at: [f32; 2], width: f32, u: f32, ink: Rgba
     at[1] + h
 }
 
-/// Break `text` into lines no wider than `width` at `px`.
+/// Break `text` into lines no wider than `width` at `px`: at spaces, and
+/// between Han characters and kana, which are written without spaces.
 fn wrap(o: &Overlay, text: &str, px: f32, width: f32) -> Vec<String> {
     let mut lines = vec![String::new()];
-    for word in text.split_whitespace() {
+    for (word, spaced) in i18n::breaks(text) {
         let last = lines.last_mut().expect("one line");
         let candidate = if last.is_empty() {
             word.to_string()
-        } else {
+        } else if spaced {
             format!("{last} {word}")
+        } else {
+            format!("{last}{word}")
         };
         if !last.is_empty() && o.measure(&candidate, px) > width {
             lines.push(word.to_string());
@@ -3356,6 +3432,7 @@ fn wrap(o: &Overlay, text: &str, px: f32, width: f32) -> Vec<String> {
 #[cfg(test)]
 mod tests;
 
+pub mod i18n;
 pub mod plan;
 pub mod problems;
 mod train;

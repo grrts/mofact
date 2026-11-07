@@ -2,7 +2,7 @@
 //! grouped by what it is and what's wrong, so a tap can take the camera
 //! straight to it.
 
-use crate::View;
+use crate::{tr, trf, View};
 use mofact_core::content::BuildingRole;
 use mofact_core::ids::{BuildingId, EntityId};
 use mofact_core::snapshot::MachineState;
@@ -62,11 +62,13 @@ pub fn find(view: &View) -> Vec<Problem> {
         out.push(Problem {
             trouble: Trouble::ShortPower,
             building: None,
-            label: format!(
-                "Power: {:.0} of {:.0} kW · {:.0}% met",
-                grid.supply_kw,
-                grid.demand_kw,
-                grid.satisfaction * 100.0
+            label: trf(
+                "problems.power",
+                &[
+                    &format!("{:.0}", grid.supply_kw),
+                    &format!("{:.0}", grid.demand_kw),
+                    &format!("{:.0}", grid.satisfaction * 100.0),
+                ],
             ),
             at,
         });
@@ -104,17 +106,17 @@ pub fn find(view: &View) -> Vec<Problem> {
         {
             Some(p) => p.at.push(here),
             None => {
-                let what = match trouble {
-                    Trouble::NoPower => "no power",
-                    Trouble::Starved => "waiting for input",
-                    Trouble::Blocked => "output full",
-                    Trouble::EmptyPipe => "empty",
-                    _ => "no recipe",
-                };
+                let what = tr(match trouble {
+                    Trouble::NoPower => "trouble.no_power",
+                    Trouble::Starved => "trouble.starved",
+                    Trouble::Blocked => "trouble.blocked",
+                    Trouble::EmptyPipe => "trouble.empty",
+                    _ => "trouble.idle",
+                });
                 out.push(Problem {
                     trouble,
                     building: Some(e.building.clone()),
-                    label: format!("{} · {what}", def.name),
+                    label: trf("problems.what", &[&def.name, &what]),
                     at: vec![here],
                 });
             }

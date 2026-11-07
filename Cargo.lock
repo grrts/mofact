@@ -752,6 +752,7 @@ dependencies = [
  "mofact-input",
  "mofact-render",
  "mofact-sim",
+ "mofact-ui",
  "wasm-bindgen",
  "wasm-bindgen-futures",
  "web-sys",

@@ -18,11 +18,8 @@ pub fn answer(kind: i32, text: String) {
         1 => Event::Owned,
         2 => Event::Cancelled,
         3 => Event::NothingToRestore,
-        _ => Event::Failed(if text.is_empty() {
-            "The store couldn't be reached.".into()
-        } else {
-            text
-        }),
+        // No words from the store: the game says it in the player's language.
+        _ => Event::Failed(text),
     };
     EVENTS.lock().unwrap_or_else(|e| e.into_inner()).push(event);
 }
@@ -113,7 +110,7 @@ mod tests {
         shop.restore();
         assert_eq!(
             shop.poll(),
-            vec![Event::Failed("The store couldn't be reached.".into())],
+            vec![Event::Failed(String::new())],
             "a call the activity can't take is a failure, not a hang"
         );
         shop.buy();

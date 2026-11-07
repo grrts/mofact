@@ -12,6 +12,48 @@ use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 use std::time::{Duration, Instant};
 
+pub use mofact_ui::i18n::Choice;
+
+/// The settings that outlive a game, saved as `key = value` lines in
+/// `settings.txt`. A key that is missing or unknown keeps its default, so
+/// settings can be added without breaking older files.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Settings {
+    pub low_power: bool,
+    pub colour_blind: bool,
+    /// The device's language, or the player's own pick (T65).
+    pub language: Choice,
+}
+
+impl Settings {
+    /// Read `settings.txt`'s lines.
+    pub fn parse(text: &str) -> Self {
+        let value = |key: &str| {
+            text.lines().find_map(|l| {
+                let (k, v) = l.split_once('=')?;
+                (k.trim() == key).then(|| v.trim())
+            })
+        };
+        let on = |key: &str| value(key) == Some("on");
+        Settings {
+            low_power: on("low-power"),
+            colour_blind: on("colour-blind"),
+            language: value("language").map_or(Choice::Device, Choice::from_code),
+        }
+    }
+
+    /// Write them as `settings.txt`'s lines.
+    pub fn text(&self) -> String {
+        let flag = |on: bool| if on { "on" } else { "off" };
+        format!(
+            "low-power = {}\ncolour-blind = {}\nlanguage = {}\n",
+            flag(self.low_power),
+            flag(self.colour_blind),
+            self.language.code()
+        )
+    }
+}
+
 pub const EVERY: Duration = Duration::from_secs(30);
 
 pub struct Autosave {
@@ -110,13 +152,10 @@ impl Files {
         self.first.with_extension("slot")
     }
 
-    /// The settings that outlive a game: low-power and colour-blind mode,
-    /// as `(low_power, colour_blind)`. Missing or unreadable means off.
-    pub fn settings(&self) -> (bool, bool) {
+    /// The settings that outlive a game. Missing or unreadable means the defaults.
+    pub fn settings(&self) -> Settings {
         let text = std::fs::read_to_string(self.first.with_file_name("settings.txt"));
-        let text = text.unwrap_or_default();
-        let on = |key: &str| text.lines().any(|l| l.trim() == format!("{key} = on"));
-        (on("low-power"), on("colour-blind"))
+        Settings::parse(&text.unwrap_or_default())
     }
 
     /// Whether the full game was bought, as remembered on this device.
@@ -139,13 +178,8 @@ impl Files {
         }
     }
 
-    pub fn set_settings(&self, (low_power, colour_blind): (bool, bool)) -> Result<(), String> {
-        let flag = |on: bool| if on { "on" } else { "off" };
-        let text = format!(
-            "low-power = {}\ncolour-blind = {}\n",
-            flag(low_power),
-            flag(colour_blind)
-        );
+    pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
+        let text = settings.text();
         write(&self.first.with_file_name("settings.txt"), text.as_bytes())
     }
 }
@@ -217,9 +251,28 @@ mod tests {
         assert_eq!(Files::new(dir.join("autosave.mofact")).current(), 2);
         files.remove(2);
         assert_eq!(files.read(2), None);
-        assert_eq!(files.settings(), (false, false));
-        files.set_settings((false, true)).unwrap();
-        assert_eq!(files.settings(), (false, true));
+        assert_eq!(files.settings(), Settings::default());
+        let safe = Settings {
+            colour_blind: true,
+            ..Settings::default()
+        };
+        files.set_settings(safe).unwrap();
+        assert_eq!(files.settings(), safe);
+        let german = Settings {
+            low_power: true,
+            language: Choice::Fixed(mofact_ui::i18n::Lang::De),
+            ..Settings::default()
+        };
+        files.set_settings(german).unwrap();
+        assert_eq!(files.settings(), german);
+        // Files from before the language, and with keys from later builds, still read.
+        assert_eq!(
+            Settings::parse("low-power = on\ncolour-blind = off\nlarge-text = on\n"),
+            Settings {
+                low_power: true,
+                ..Settings::default()
+            }
+        );
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

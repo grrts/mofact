@@ -4,7 +4,7 @@
 
 use mofact_core::content::Content;
 use mofact_sim::Sim;
-use mofact_ui::{SlotView, SLOTS};
+use mofact_ui::{tr, trf, SlotView, SLOTS};
 use mofact_world::Preset;
 
 /// Where the slots live.
@@ -52,16 +52,19 @@ pub fn describe(sim: &Sim, current: bool) -> SlotView {
     let snap = sim.snapshot();
     let seconds = snap.tick / u64::from(mofact_core::TICKS_PER_SECOND);
     let played = match (seconds / 3600, seconds / 60 % 60) {
-        (0, 0) => "just started".to_string(),
-        (0, m) => format!("{m} min played"),
-        (h, m) => format!("{h} h {m} min played"),
+        (0, 0) => tr("slot.just_started").to_string(),
+        (0, m) => trf("slot.minutes", &[&m]),
+        (h, m) => trf("slot.hours", &[&h, &m]),
     };
     let built = snap.entities.len();
     SlotView {
         used: true,
         current,
-        title: format!("{} · seed {seed}", preset.name()),
-        detail: format!("{played} · {built} built"),
+        title: trf(
+            "slot.title",
+            &[&mofact_ui::preset_name(preset as u8), &seed],
+        ),
+        detail: trf("slot.detail", &[&played, &built]),
     }
 }
 

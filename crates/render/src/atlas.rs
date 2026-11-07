@@ -90,6 +90,25 @@ impl Atlas {
     pub fn get(&self, name: &str) -> Option<Uv> {
         self.sprites.get(name).copied()
     }
+
+    /// Where the next sprite goes: hand it to [`Atlas::rewind`] to take back
+    /// everything added after it.
+    pub fn mark(&self) -> (u32, u32, u32) {
+        self.shelf
+    }
+
+    /// Forget every sprite named with `prefix` and reuse the room from
+    /// `mark` on. Only sprites with that prefix may have been added since.
+    pub fn rewind(&mut self, mark: (u32, u32, u32), prefix: &str) {
+        self.sprites.retain(|name, _| !name.starts_with(prefix));
+        self.shelf = mark;
+        self.version += 1;
+    }
+
+    /// How much of the atlas is taken, from 0 to 1, counting whole shelves.
+    pub fn filled(&self) -> f32 {
+        (self.shelf.1 + self.shelf.2) as f32 / self.size as f32
+    }
 }
 
 /// Sprites painted here rather than by the art kit.
