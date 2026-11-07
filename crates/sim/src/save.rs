@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 10;
+pub const VERSION: u16 = 11;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -66,6 +66,20 @@ struct World {
     /// How much ore each held tile has left, and the tiles mined out.
     ore_left: Vec<u32>,
     depleted: Vec<TilePos>,
+}
+
+/// Versions 9 and 10: the same, before ore that runs out.
+#[derive(Deserialize)]
+struct WorldV10 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
 }
 
 /// Versions 7 and 8: the same, before cleared trees.
@@ -233,7 +247,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
-        // Version 9 adds cleared trees and ore that runs out.
+        // Version 9 adds cleared trees.
         7 | 8 => {
             let v8: WorldV8 = postcard::from_bytes(payload).map_err(corrupt)?;
             Ok(World {
@@ -251,7 +265,24 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
             })
         }
         // Version 10 adds rails and trains: new variants only.
-        9 | 10 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 11 adds ore that runs out.
+        9 | 10 => {
+            let v10: WorldV10 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v10.tick,
+                stock: v10.stock,
+                delivered: v10.delivered,
+                ore: v10.ore,
+                entities: v10.entities,
+                research: v10.research,
+                current: v10.current,
+                goal: v10.goal,
+                cleared: v10.cleared,
+                ore_left: Vec::new(),
+                depleted: Vec::new(),
+            })
+        }
+        11 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }

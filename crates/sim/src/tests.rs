@@ -1435,3 +1435,14 @@ fn drills_run_patches_dry_and_saves_keep_what_is_left() {
     let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
     assert_eq!(*loaded.snapshot().depleted, vec![t]);
 }
+
+#[test]
+fn version_9_saves_from_before_ore_ran_out_still_load() {
+    // Written by the build before ore amounts were saved.
+    let content = content();
+    let (sim, warnings) = Sim::load(&content, include_bytes!("../tests/v9.mofact")).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(sim.snapshot().entities.len(), 1, "the drill is still there");
+    assert_eq!(sim.ore_left(TilePos::new(0, 0)), Some(PLACED_ORE));
+    assert!(sim.snapshot().depleted.is_empty());
+}
