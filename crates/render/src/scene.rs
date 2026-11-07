@@ -292,7 +292,7 @@ impl Scene {
                     size: l.size,
                     uv: uv(l.sprite),
                     tint: l.tint,
-                    turns: 0,
+                    turns: if l.turned { turns(e.dir) } else { 0 },
                 });
             }
             if let Some(platform) = look.platform(&e.building) {
@@ -770,14 +770,18 @@ mod tests {
         };
         let uv = |name: &str| atlases[1].get(name).unwrap();
         let working = frame(MachineState::Working);
-        assert_eq!(working.len(), 1, "no badge while working");
-        assert_eq!(working[0].uv, uv("furnace:copper-plate:lit:1"));
+        // The body, then its ring in copper and the arrow over it.
+        assert_eq!(working.len(), 3, "no badge while working");
+        assert_eq!(working[0].uv, uv("furnace:none:lit:1"));
+        assert_eq!(working[1].uv, uv("furnace:ring"));
+        assert_eq!(working[1].tint, palette::item("copper"));
+        assert_eq!(working[2].turns, 1, "the arrow faces south");
         let starved = frame(MachineState::Starved);
-        assert_eq!(starved.len(), 2);
-        assert_eq!(starved[0].uv, uv("furnace:copper-plate:cold:1"));
-        assert_eq!(starved[1].uv, uv(look::STARVED));
-        assert!(starved[1].pos[0] > 2.5, "on the machine's right");
-        assert_eq!(frame(MachineState::Blocked)[1].uv, uv(look::BLOCKED));
+        assert_eq!(starved.len(), 4);
+        assert_eq!(starved[0].uv, uv("furnace:none:cold:1"));
+        assert_eq!(starved[3].uv, uv(look::STARVED));
+        assert!(starved[3].pos[0] > 2.5, "on the machine's right");
+        assert_eq!(frame(MachineState::Blocked)[3].uv, uv(look::BLOCKED));
     }
 
     #[test]

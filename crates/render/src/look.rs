@@ -119,6 +119,8 @@ enum Art {
     Drill {
         ore: Rgba,
         pose: Pose,
+        /// A faster tier's colour: a deep drill.
+        trim: Option<Rgba>,
     },
     Furnace {
         ring: Option<Rgba>,
@@ -126,6 +128,12 @@ enum Art {
         /// A faster tier's colour: an electric furnace.
         trim: Option<Rgba>,
     },
+    /// A furnace's ring in white, to tint with what it smelts.
+    Ring {
+        electric: bool,
+    },
+    /// The output arrow, facing east.
+    Notch,
     /// An assembler's stripe in white, to tint with its product's colour:
     /// an octagon's band for the faster kind.
     Stripe {
@@ -222,17 +230,19 @@ struct BuildingLook {
     layers: Option<Layers>,
 }
 
-/// How an assembler shows its recipe: its stripe tinted the product's
-/// colour, and the product's icon over its window. Baking a sprite per
-/// recipe would fill the atlas many times over.
+/// How a machine shows its recipe, drawn over one body per direction: an
+/// assembler's stripe tinted the product's colour and the product's icon
+/// over its window, or a furnace's ring in the colour of what it smelts.
+/// Baking a sprite per recipe would fill the atlas many times over.
 #[derive(Clone, Copy, Debug)]
 struct Layers {
-    /// The white stripe sprite, if it has one.
+    /// The white sprite tinted the product's colour, if it has one.
     stripe: Option<usize>,
-    /// Where the icon's centre is, in tiles from the top-left.
-    centre: [f32; 2],
-    /// The item sprite's side, in tiles.
-    icon: f32,
+    /// The output arrow, facing east and turned, to keep it over the stripe.
+    notch: Option<usize>,
+    /// Where the icon's centre is, in tiles from the top-left, and the item
+    /// sprite's side in tiles, if it shows one.
+    icon: Option<([f32; 2], f32)>,
 }
 
 /// A sprite drawn over a machine: where, how big, and its tint.
@@ -243,6 +253,8 @@ pub struct Layer<'a> {
     pub offset: [f32; 2],
     pub size: [f32; 2],
     pub tint: Rgba,
+    /// Turned to the way the machine faces.
+    pub turned: bool,
 }
 
 /// One sprite: its name, its size in tiles, and what it shows.
@@ -299,6 +311,7 @@ fn shape(s: IconShape) -> Shape {
         IconShape::Wafer => Shape::Wafer,
         IconShape::Chip => Shape::Chip,
         IconShape::Frame => Shape::Frame,
+        IconShape::Magnet => Shape::Magnet,
     }
 }
 
@@ -485,6 +498,28 @@ impl Look {
                 }
                 _ => None,
             };
+            // So does a drill faster than the first, by how much faster.
+            let drill_trim = match b.role {
+                BuildingRole::Miner { seconds_per_ore } => {
+                    let first = content
+                        .buildings
+                        .iter()
+                        .find_map(|d| match d.role {
+                            BuildingRole::Miner { seconds_per_ore } => Some(seconds_per_ore),
+                            _ => None,
+                        })
+                        .unwrap_or(seconds_per_ore);
+                    let fast = first / seconds_per_ore.max(0.01);
+                    if fast >= 2.9 {
+                        tier_trim(2)
+                    } else if fast > 1.0 {
+                        tier_trim(1)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            };
             match kind {
                 Kind::Belt => {
                     let tier = look.belt_tier.get(&b.id).copied().unwrap_or(0);
@@ -564,8 +599,9 @@ impl Look {
                 }
                 _ => {
                     let none = std::iter::once(None);
-                    // Assemblers draw their recipe as layers over the body.
-                    let baked = if kind == Kind::Assembler {
+                    // Assemblers and furnaces draw their recipe as layers
+                    // over the body.
+                    let baked = if matches!(kind, Kind::Assembler | Kind::Furnace) {
                         &[][..]
                     } else {
                         &recipes[..]
@@ -607,6 +643,7 @@ impl Look {
                                             working: false,
                                             ..pose
                                         },
+                                        trim: drill_trim,
                                     },
                                     Kind::Furnace => Art::Furnace {
                                         ring: product.map(|p| p.1),
@@ -664,8 +701,28 @@ impl Look {
                 };
                 layers = Some(Layers {
                     stripe,
-                    centre,
-                    icon: across / 0.64,
+                    notch: None,
+                    icon: Some((centre, across / 0.64)),
+                });
+            }
+            if kind == Kind::Furnace {
+                let ring = look.sprites.len();
+                let electric = trim.is_some();
+                push(
+                    &mut look,
+                    format!("{id}:ring"),
+                    b.size,
+                    Art::Ring { electric },
+                );
+                // The fire furnace's ring crosses its arrow.
+                let notch = (!electric).then(|| {
+                    push(&mut look, format!("{id}:notch"), b.size, Art::Notch);
+                    ring + 1
+                });
+                layers = Some(Layers {
+                    stripe: Some(ring),
+                    notch,
+                    icon: None,
                 });
             }
             look.buildings.insert(
@@ -871,6 +928,7 @@ impl Look {
                 b.base + usize::from(setting == Some("exit"))
             }
             Kind::Assembler => b.base + dir_index(dir),
+            Kind::Furnace => b.base + usize::from(working) * 4 + dir_index(dir),
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -899,21 +957,26 @@ impl Look {
         let (Some(l), Some(&(icon, color))) = (b.layers, self.items.get(item)) else {
             return Vec::new();
         };
+        let size = [f32::from(b.size.0), f32::from(b.size.1)];
+        let whole = |sprite: usize, tint, turned| Layer {
+            sprite: &self.sprites[sprite].name,
+            offset: [0.0, 0.0],
+            size,
+            tint,
+            turned,
+        };
         let mut out = Vec::new();
-        if let Some(stripe) = l.stripe {
+        out.extend(l.stripe.map(|s| whole(s, color, false)));
+        out.extend(l.notch.map(|s| whole(s, palette::WHITE, true)));
+        if let Some((centre, side)) = l.icon {
             out.push(Layer {
-                sprite: &self.sprites[stripe].name,
-                offset: [0.0, 0.0],
-                size: [f32::from(b.size.0), f32::from(b.size.1)],
-                tint: color,
+                sprite: &self.sprites[icon].name,
+                offset: [centre[0] - side / 2.0, centre[1] - side / 2.0],
+                size: [side, side],
+                tint: palette::WHITE,
+                turned: false,
             });
         }
-        out.push(Layer {
-            sprite: &self.sprites[icon].name,
-            offset: [l.centre[0] - l.icon / 2.0, l.centre[1] - l.icon / 2.0],
-            size: [l.icon, l.icon],
-            tint: palette::WHITE,
-        });
         out
     }
 
@@ -1019,6 +1082,8 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
         Art::Solar => draw::solar(&mut c, z, fine),
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
+        Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
+        Art::Notch => draw::notch_east(&mut c, z),
         Art::Splitter => draw::splitter(&mut c, z, fine),
         Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
         Art::Pipe { links } => draw::pipe(&mut c, z, fine, links),
@@ -1040,7 +1105,16 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::ChemicalPlant { product, ref pose } => {
             draw::chemical_plant(&mut c, z, fine, pose, product)
         }
-        Art::Drill { ore, ref pose } => draw::drill(&mut c, z, ore, fine, pose),
+        Art::Drill {
+            ore,
+            ref pose,
+            trim: None,
+        } => draw::drill(&mut c, z, ore, fine, pose),
+        Art::Drill {
+            ore,
+            ref pose,
+            trim: Some(trim),
+        } => draw::deep_drill(&mut c, z, ore, fine, pose, trim),
         Art::Furnace {
             ring,
             ref pose,
@@ -1112,9 +1186,14 @@ pub(crate) mod tests {
         let cold = look.sprite(&furnace, Dir::East, Some(iron), false).unwrap();
         let lit = look.sprite(&furnace, Dir::East, Some(iron), true).unwrap();
         let south = look.sprite(&furnace, Dir::South, Some(iron), true).unwrap();
-        assert_eq!(cold, "furnace:iron-plate:cold:0");
-        assert_eq!(lit, "furnace:iron-plate:lit:0");
-        assert_eq!(south, "furnace:iron-plate:lit:1");
+        assert_eq!(cold, "furnace:none:cold:0");
+        assert_eq!(lit, "furnace:none:lit:0");
+        assert_eq!(south, "furnace:none:lit:1");
+        let ring = look.layers(&furnace, Some(iron));
+        assert_eq!(ring.len(), 2, "a ring and the arrow over it");
+        assert_eq!(ring[0].sprite, "furnace:ring");
+        assert_eq!(ring[0].tint, palette::item("iron"));
+        assert!(ring[1].turned);
         let gear = "gear";
         let asm = BuildingId::from("assembler");
         assert_eq!(
@@ -1128,7 +1207,9 @@ pub(crate) mod tests {
         assert_eq!(layers[0].tint, palette::item("iron"));
         assert_eq!(layers[1].sprite, "item:gear");
         assert!(look.layers(&asm, None).is_empty());
-        assert!(look.layers(&furnace, Some(iron)).is_empty());
+        assert!(look
+            .layers(&"chemical-plant".into(), Some("plastic"))
+            .is_empty());
         assert_eq!(
             look.sprite(&asm, Dir::West, None, false),
             Some("assembler:none:cold:2")

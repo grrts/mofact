@@ -73,9 +73,10 @@ pub fn analyse(content: &Content) -> Report {
         .iter()
         .any(|b| matches!(b.role, BuildingRole::Miner { .. }));
 
-    // Raw resources: ores that no recipe makes, dug by miners.
+    // Raw resources: ores, dug by miners, even where a by-product gives
+    // some back.
     for i in &content.items {
-        if i.shape == IconShape::Ore && !made.contains(&i.id) && has_miner {
+        if i.shape == IconShape::Ore && has_miner {
             report.depth.insert(i.id.clone(), 0);
         }
     }
@@ -257,15 +258,10 @@ fn makeable<'a>(
             _ => {}
         }
     }
-    let made: HashSet<&ItemId> = content
-        .recipes
-        .iter()
-        .flat_map(|r| r.outputs.iter().map(|s| &s.item))
-        .collect();
     let mut have: HashSet<&ItemId> = content
         .items
         .iter()
-        .filter(|i| miner && i.shape == IconShape::Ore && !made.contains(&i.id))
+        .filter(|i| miner && i.shape == IconShape::Ore)
         .map(|i| &i.id)
         .chain(pumped)
         .collect();
@@ -438,7 +434,12 @@ mod tests {
                 "silicon-processing",
                 "solar-energy",
                 "precision-engineering",
-                "precision-assembly"
+                "precision-assembly",
+                "titanium-smelting",
+                "aluminium-processing",
+                "rare-earth-processing",
+                "electric-engines",
+                "deep-mining"
             ]
         );
     }

@@ -1489,3 +1489,90 @@ fn version_11_saves_from_before_pins_still_load() {
     );
     assert!(sim.snapshot().pins.is_empty());
 }
+
+/// A titanium furnace facing east: titanium ore from the west, coal from
+/// the north, titanium out of the front to the hub. Its iron ore by-product
+/// leaves by its right side, where nothing is yet.
+fn titanium_line() -> (Sim, EntityId) {
+    let mut sim = Sim::with_content(&content());
+    sim.add_stock(&item("iron-plate"), 200);
+    sim.complete_research(&"titanium-smelting".into());
+    place(&mut sim, "hub", 9, -1, Dir::East, None);
+    sim.set_ore(TilePos::new(0, 0), &item("titanium-ore"));
+    place(&mut sim, "drill", 0, 0, Dir::East, None);
+    belts(&mut sim, 1..=4, 0, Dir::East);
+    sim.set_ore(TilePos::new(5, -2), &item("coal"));
+    place(&mut sim, "drill", 5, -2, Dir::South, None);
+    place(&mut sim, "belt", 5, -1, Dir::South, None);
+    let furnace = place(&mut sim, "furnace", 5, 0, Dir::East, Some("titanium-plate"));
+    belts(&mut sim, 6..=8, 0, Dir::East);
+    (sim, furnace)
+}
+
+#[test]
+fn a_blocked_by_product_stops_the_machine() {
+    let (mut sim, furnace) = titanium_line();
+    // With nowhere for the iron ore to go, a few crafts fill the furnace's
+    // by-product slot and it stops making titanium too.
+    run(&mut sim, 30);
+    assert!(sim.delivered(&item("titanium-plate")) > 0, "no titanium");
+    run(&mut sim, 120);
+    assert_eq!(state_of(&sim, furnace), MachineState::Blocked);
+    let before = sim.delivered(&item("titanium-plate"));
+    run(&mut sim, 30);
+    assert_eq!(sim.delivered(&item("titanium-plate")), before, "kept going");
+    assert_eq!(sim.delivered(&item("iron-ore")), 0, "ore left by the front");
+
+    // A belt from its right side to the hub takes the iron ore away, and it
+    // runs again: about 12 titanium a minute with the drill's 50 ore.
+    place(&mut sim, "belt", 5, 1, Dir::East, None);
+    belts(&mut sim, 6..=8, 1, Dir::East);
+    run(&mut sim, 20);
+    assert_ne!(state_of(&sim, furnace), MachineState::Blocked);
+    let titanium = rate(&mut sim, "titanium-plate", 2);
+    assert!(
+        (titanium - 12.0).abs() <= 1.0,
+        "{titanium} titanium a minute"
+    );
+    let ore = rate(&mut sim, "iron-ore", 2);
+    assert!((ore - 12.0).abs() <= 1.0, "{ore} iron ore a minute");
+}
+
+#[test]
+fn a_two_tile_machine_puts_out_along_its_whole_front() {
+    let mut sim = Sim::with_content(&content());
+    sim.add_stock(&item("steel"), 100);
+    sim.add_stock(&item("processor"), 10);
+    sim.add_stock(&item("robot-frame"), 10);
+    sim.add_stock(&item("iron-plate"), 200);
+    sim.add_stock(&item("silicon"), 100);
+    sim.add_stock(&item("advanced-circuit"), 100);
+    sim.add_stock(&item("wire"), 10);
+    for r in [
+        "precision-engineering",
+        "precision-assembly",
+        "solar-energy",
+    ] {
+        sim.complete_research(&r.into());
+    }
+    place(&mut sim, "hub", 10, -1, Dir::East, None);
+    sim.set_ore(TilePos::new(-3, 0), &item("iron-ore"));
+    place(&mut sim, "drill", -3, 0, Dir::East, None);
+    place(&mut sim, "furnace", -2, 0, Dir::East, None);
+    place(&mut sim, "belt", -1, 0, Dir::East, None);
+    let asm = place(
+        &mut sim,
+        "precision-assembler",
+        0,
+        0,
+        Dir::East,
+        Some("gear"),
+    );
+    // Only the lower of its two front tiles has a belt.
+    belts(&mut sim, 2..=9, 1, Dir::East);
+    place(&mut sim, "solar-panel", 0, 4, Dir::East, None);
+    place(&mut sim, "pole", 2, 2, Dir::East, None);
+    let gears = rate(&mut sim, "gear", 2);
+    assert!((gears - 25.0).abs() <= 1.0, "{gears} gears a minute");
+    assert_ne!(state_of(&sim, asm), MachineState::Blocked);
+}

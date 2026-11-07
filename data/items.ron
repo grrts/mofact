@@ -44,4 +44,15 @@
     (id: "robot-frame",  name: "Robot frame",  kind: Solid, shape: Frame,   color: "robot-frame", tier: 5),
     (id: "low-density-structure", name: "Low density structure", kind: Solid, shape: Plate, color: "low-density", tier: 5),
     (id: "precision-pack", name: "Precision pack", kind: Solid, shape: Pack, color: "pack-precision", tier: 5),
+    // By-products (T56) and tier 6, "light alloys": each far ore smelts
+    // into a metal and gives up something else on the way.
+    (id: "slag",         name: "Slag",         kind: Solid, shape: Powder,  color: "slag",       tier: 5),
+    (id: "titanium-plate", name: "Titanium plate", kind: Solid, shape: Plate, color: "titanium", tier: 6),
+    (id: "alumina",      name: "Alumina",      kind: Solid, shape: Powder,  color: "alumina",    tier: 6),
+    (id: "aluminium-plate", name: "Aluminium plate", kind: Solid, shape: Plate, color: "aluminium", tier: 6),
+    (id: "red-mud",      name: "Red mud",      kind: Fluid, shape: Droplet, color: "red-mud",    tier: 6),
+    (id: "rare-earth-oxide", name: "Rare earth oxide", kind: Solid, shape: Powder, color: "rare-earth-oxide", tier: 6),
+    (id: "magnet",       name: "Magnet",       kind: Solid, shape: Magnet,  color: "magnet",     tier: 6),
+    (id: "electric-engine", name: "Electric engine", kind: Solid, shape: Gear, color: "electric-engine", tier: 6),
+    (id: "aerospace-pack", name: "Aerospace pack", kind: Solid, shape: Pack, color: "pack-aerospace", tier: 6),
 ]

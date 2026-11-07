@@ -83,4 +83,7 @@
         cost: [(item: "silicon", count: 15), (item: "steel", count: 5), (item: "advanced-circuit", count: 5)]),
     (id: "precision-assembler", name: "Precision assembler", size: (2, 2), role: Crafter(categories: ["assembling"], speed: 3.0), power: 150.0,
         cost: [(item: "processor", count: 5), (item: "robot-frame", count: 2), (item: "steel", count: 10)]),
+    // Tier 6 (T56): a drill three times as fast, driven by an electric engine.
+    (id: "deep-drill", name: "Deep drill", size: (1, 1), role: Miner(seconds_per_ore: 0.4), power: 120.0,
+        cost: [(item: "titanium-plate", count: 10), (item: "electric-engine", count: 2), (item: "processor", count: 2)]),
 ]
