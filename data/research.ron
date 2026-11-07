@@ -90,7 +90,7 @@
         id: "silicon-processing", name: "Silicon processing", tier: 4, requires: ["chemistry"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
         units: 60, seconds: 25.0,
-        recipes: ["silicon", "processor"],
+        recipes: ["silicon", "processor", "slag-brick"],
     ),
     (
         id: "solar-energy", name: "Solar energy", tier: 4, requires: ["silicon-processing"],
@@ -109,5 +109,37 @@
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
         units: 100, seconds: 30.0,
         buildings: ["precision-assembler"],
+    ),
+    // Tier 6 (T56): the far ores and what they give up.
+    (
+        id: "titanium-smelting", name: "Titanium smelting", tier: 5, requires: ["precision-engineering"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 75, seconds: 30.0,
+        recipes: ["titanium-plate"],
+    ),
+    (
+        id: "aluminium-processing", name: "Aluminium processing", tier: 5, requires: ["precision-engineering"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 75, seconds: 30.0,
+        recipes: ["alumina", "aluminium-plate", "red-mud-recovery"],
+    ),
+    (
+        id: "rare-earth-processing", name: "Rare earth processing", tier: 5, requires: ["precision-engineering"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 75, seconds: 30.0,
+        recipes: ["rare-earth-oxide", "magnet"],
+    ),
+    (
+        id: "electric-engines", name: "Electric engines", tier: 5,
+        requires: ["titanium-smelting", "aluminium-processing", "rare-earth-processing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 100, seconds: 30.0,
+        recipes: ["electric-engine", "aerospace-pack"],
+    ),
+    (
+        id: "deep-mining", name: "Deep mining", tier: 6, requires: ["electric-engines"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1)],
+        units: 100, seconds: 30.0,
+        buildings: ["deep-drill"],
     ),
 ]

@@ -1135,14 +1135,19 @@ impl Sim {
                     _ => 1.0,
                 };
                 let t = &self.tables;
-                // Fluid outputs leave by the front, then the right, then the
-                // left; fluid inputs come in by any other side.
+                // A recipe's first output leaves by the front, a by-product
+                // by the right, a third by the left; fluid inputs come in by
+                // any side no fluid leaves by.
                 let sides = [e.dir, e.dir.rotate_cw(), e.dir.opposite().rotate_cw()];
-                let fluid_outs = c.recipe.map_or(0, |r| {
-                    let outs = &t.recipes[r as usize].outputs;
-                    outs.iter().filter(|o| t.fluid[o.0 as usize]).count()
-                });
-                let used = &sides[..fluid_outs.min(sides.len())];
+                let mut used = Vec::new();
+                if let Some(r) = c.recipe {
+                    for (k, o) in t.recipes[r as usize].outputs.iter().enumerate() {
+                        if t.fluid[o.0 as usize] {
+                            used.push(sides[k.min(sides.len() - 1)]);
+                        }
+                    }
+                }
+                let used = &used[..];
                 // Any one full output stops the machine: a refinery whose tar
                 // backs up stops making light oil too.
                 let mut full = c
@@ -1211,16 +1216,15 @@ impl Sim {
                     c.idle += 1;
                 }
                 c.blocked = if full { c.blocked + 1 } else { 0 };
-                // Fluids go out their own sides, so they can't run back into
-                // an input line that has run dry. One solid leaves per tick,
-                // the first output first.
-                let mut rank = 0;
-                let mut pushed = false;
+                // Each output goes out its own side, so a by-product can't
+                // run back into an input line or onto the product's belt. One
+                // solid leaves each side per tick, onto any tile along it.
+                let mut pushed = [false; 3];
                 for k in 0..c.outs.len() {
                     let (item, n) = c.outs[k];
+                    let at = k.min(sides.len() - 1);
+                    let side = sides[at];
                     if self.tables.fluid[item as usize] {
-                        let side = sides[rank.min(sides.len() - 1)];
-                        rank += 1;
                         if n > 0 {
                             let got = self.fluids.fill(
                                 &self.entities,
@@ -1231,9 +1235,15 @@ impl Sim {
                             );
                             c.outs[k].1 -= got as u32;
                         }
-                    } else if n > 0 && !pushed && self.push(front, item, e.dir) {
-                        c.outs[k].1 -= 1;
-                        pushed = true;
+                    } else if n > 0 && !pushed[at] {
+                        let out = fluids::edges(e)
+                            .filter(|&(d, _)| d == side)
+                            .map(|(_, n)| n)
+                            .find(|&n| self.push(n, item, side));
+                        if out.is_some() {
+                            c.outs[k].1 -= 1;
+                            pushed[at] = true;
+                        }
                     }
                 }
                 let empty = c.outs.iter().all(|o| o.1 == 0);

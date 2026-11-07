@@ -33,6 +33,8 @@ pub enum IconShape {
     Chip,
     /// An open frame of struts around a core.
     Frame,
+    /// A horseshoe magnet.
+    Magnet,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

@@ -25,6 +25,7 @@ pub enum Shape {
     Wafer,
     Chip,
     Frame,
+    Magnet,
 }
 
 /// The four directions, as `(dx, dy)` steps, in the core's `Dir` order.
@@ -362,6 +363,27 @@ pub fn item(c: &mut Canvas, shape: Shape, color: Rgba, x: f32, y: f32, s: f32, f
             );
             if detail {
                 c.fill_circle(x - s * 0.28, y - s * 0.28, s * 0.04, lo);
+            }
+        }
+        Shape::Magnet => {
+            // A horseshoe magnet, its two poles tipped in steel.
+            let w = s * 0.26;
+            let (cy, r) = (y - s * 0.02, s * 0.3);
+            c.stroke_arc((x, cy), r, (0.0, PI), lo, w * 1.25);
+            c.stroke_arc((x, cy), r, (0.0, PI), color, w);
+            for side in [-1.0, 1.0] {
+                let px = x + side * r - w / 2.0;
+                c.fill_rect(px, y - s * 0.46, w, s * 0.44, color);
+                c.fill_rect(px, y - s * 0.5, w, s * 0.14, pal::DRILL_BIT);
+            }
+            if detail {
+                c.stroke_arc(
+                    (x, cy),
+                    r + w * 0.3,
+                    (PI * 0.6, PI * 0.9),
+                    hi,
+                    (s * 0.05).max(1.0),
+                );
             }
         }
         Shape::Frame => {
@@ -2052,4 +2074,64 @@ pub fn stripe(c: &mut Canvas, z: f32, fine: bool, octagon: bool) {
 /// The faster assembler's inner octagon, for its stripe.
 fn octagon_points() -> [(f32, f32); 8] {
     octagon(0.2, 0.07)
+}
+
+/// A deep drill: an octagonal housing in its tier's stripes over a wide
+/// four-bladed bit, ringed in what it mines, with a motor housing behind.
+pub fn deep_drill(c: &mut Canvas, z: f32, ore: Rgba, fine: bool, pose: &Pose, trim: Rgba) {
+    let (s, sh) = (z, z * 0.07);
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let outer = octagon(0.2, 0.04);
+    let inner = octagon(0.18, 0.08);
+    shape_at(c, &outer, sh, sh * 1.3, s, pal::SHADOW);
+    shape_at(c, &outer, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    shape_at(c, &inner, 0.0, 0.0, s, pal::MACHINE);
+    // The tier's stripes on all four flat sides.
+    let w = (s * 0.05).max(1.0);
+    for (a, b) in [(0, 1), (2, 3), (4, 5), (6, 7)] {
+        let p = |i: usize| (inner[i].0 * s, inner[i].1 * s);
+        c.line(&[p(a), p(b)], trim, w);
+    }
+    // The motor behind the bit.
+    let (mx, my) = pose.local(z, -0.27, 0.0);
+    c.fill_circle(mx, my, s * 0.11, pal::MACHINE_EDGE);
+    c.fill_circle(mx, my, s * 0.08, pal::item("electric-engine"));
+    c.fill_circle(cx, cy, s * 0.3, shade(ore, -0.45));
+    c.fill_circle(cx, cy, s * 0.25, ore);
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(if pose.working { pose.t * 9.0 } else { 0.4 });
+    for _ in 0..4 {
+        c.rotate(TAU / 4.0);
+        let blade = [(-0.045, 0.0), (0.045, 0.0), (0.025, -0.23), (-0.06, -0.19)];
+        fill(c, poly(&blade, 0.0, 0.0, s), pal::DRILL_BIT);
+    }
+    c.fill_circle(0.0, 0.0, s * 0.07, pal::MACHINE_EDGE);
+    c.fill_circle(0.0, 0.0, s * 0.035, trim);
+    c.restore();
+    if fine {
+        for (bx, by) in [(0.2, 0.2), (0.8, 0.2), (0.2, 0.8), (0.8, 0.8)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+    notch(c, z, pose);
+}
+
+/// A furnace's ring in white, to be tinted with what it smelts: round the
+/// hearth of a fire furnace, or the crucible of an electric one.
+pub fn furnace_ring(c: &mut Canvas, z: f32, fine: bool, electric: bool) {
+    let s = z;
+    let lw = (s * 0.05).max(1.0);
+    if electric {
+        c.stroke_circle(s / 2.0, s * 0.55, s * 0.3, pal::WHITE, (s * 0.03).max(1.0));
+    } else if fine {
+        c.stroke_circle(s / 2.0, s / 2.0, s * 0.41, pal::WHITE, lw);
+    } else {
+        c.stroke_circle(s / 2.0, s / 2.0, s * 0.34, pal::WHITE, lw * 1.4);
+    }
+}
+
+/// A machine's output arrow alone, facing east, to draw over its ring.
+pub fn notch_east(c: &mut Canvas, z: f32) {
+    notch(c, z, &Pose::default());
 }
