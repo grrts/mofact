@@ -174,6 +174,10 @@ function __wbg_get_imports() {
         __wbg_blitFramebuffer_d17b7bddf5e86dbc: function(arg0, arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9, arg10) {
             arg0.blitFramebuffer(arg1, arg2, arg3, arg4, arg5, arg6, arg7, arg8, arg9 >>> 0, arg10 >>> 0);
         },
+        __wbg_bottom_fd840749aac1de6e: function(arg0) {
+            const ret = arg0.bottom;
+            return ret;
+        },
         __wbg_bufferData_2fb8740d60478bf0: function(arg0, arg1, arg2, arg3) {
             arg0.bufferData(arg1 >>> 0, arg2, arg3 >>> 0);
         },
@@ -1237,6 +1241,10 @@ function __wbg_get_imports() {
             const ret = arg0.resume();
             return ret;
         }, arguments); },
+        __wbg_right_87f14139bda7986d: function(arg0) {
+            const ret = arg0.right;
+            return ret;
+        },
         __wbg_sampleRate_239ec0f08f69ef0b: function(arg0) {
             const ret = arg0.sampleRate;
             return ret;
