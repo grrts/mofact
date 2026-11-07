@@ -23,6 +23,7 @@ mod android {
             haptic: Some(haptic),
             // Play Games saved games need the Play account (T62).
             cloud: None,
+            reduce_motion: Some(|| call("reducedMotion")),
         };
         match mofact::run_with(platform) {
             Ok(()) => 0,
