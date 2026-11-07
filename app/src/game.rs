@@ -5,9 +5,11 @@
 //! frame. Nothing here knows which shell it runs in.
 
 use crate::built::Built;
+use crate::guide::{Coach, Guide};
 use crate::ore::OreMap;
 use crate::sound::Sound;
 use mofact_core::content::Content;
+use mofact_core::geom::TilePos;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
@@ -39,6 +41,8 @@ pub struct Game {
     /// The edges of the screen the display covers, in pixels (top, right,
     /// bottom, left): the platform sets it, and the HUD keeps clear of it.
     pub safe: [f32; 4],
+    /// The first-hour coach.
+    guide: Guide,
 }
 
 impl Game {
@@ -93,6 +97,7 @@ impl Game {
             sound: Sound::new(&content),
             started: Instant::now(),
             safe: [0.0; 4],
+            guide: Guide::default(),
             content,
             ore,
             controls,
@@ -192,6 +197,29 @@ impl Game {
         self.scene
             .terrain(&camera, target.size(), ore.version(), |t| ore.terrain(t));
         self.scene.time = self.started.elapsed().as_secs_f32() % 3600.0;
+        let (coach, turn) = self.guide.update(
+            &self.content,
+            &latest,
+            &self.ore,
+            &self.controls.builder.tool,
+        );
+        if let Some(dir) = turn {
+            self.controls.builder.dir = dir;
+        }
+        // The coach's line to build, faint, under what the player is placing.
+        if let Some(Coach::Line(plan, ..)) = &coach {
+            let built = |t: &TilePos| latest.entities.iter().any(|e| e.pos == *t);
+            self.scene.ghosts(
+                &self.look,
+                atlases,
+                plan.iter().flat_map(|s| {
+                    s.tiles
+                        .iter()
+                        .filter(|t| !built(t))
+                        .map(move |t| (&s.building, *t, s.dir, None))
+                }),
+            );
+        }
         let ghosts = self.controls.builder.ghosts();
         let recipe = self.controls.builder.recipe.as_ref();
         self.scene.ghosts(
@@ -229,6 +257,14 @@ impl Game {
             self.overlay
                 .panel([x, y], [ppt, ppt], ppt * 0.3, [0xff, 0x5d, 0x5d, 0x70]);
         }
+        let nudge = coach_marks(
+            &mut self.overlay,
+            coach.as_ref(),
+            &camera,
+            target.size(),
+            scale,
+            t,
+        );
         let builder = &self.controls.builder;
         let view = View {
             size: target.size(),
@@ -242,6 +278,7 @@ impl Game {
             belt: &builder.belt,
             history: self.sim.history(),
             safe: self.safe,
+            nudge,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -430,4 +467,78 @@ pub fn ore_for(content: &Content, scenario: &mofact_headless::Scenario, seed: u6
         .map(|(x, y, item)| (mofact_core::geom::TilePos::new(*x, *y), item.clone()))
         .collect();
     OreMap::new(content, seed, placed)
+}
+
+/// Draw what the coach shows on the map, and return the tool it wants
+/// the player to pick next.
+fn coach_marks(
+    o: &mut Overlay,
+    coach: Option<&Coach>,
+    camera: &Camera,
+    (sw, sh): (u32, u32),
+    scale: f32,
+    t: f32,
+) -> Option<Tool> {
+    let ppt = camera.pixels_per_tile;
+    let at = |p: TilePos| {
+        [
+            (p.x as f32 - camera.center[0]) * ppt + sw as f32 / 2.0,
+            (p.y as f32 - camera.center[1]) * ppt + sh as f32 / 2.0,
+        ]
+    };
+    let px = 13.0 * scale;
+    // A label centred on `mid`, its bottom edge at `y` (or top edge, `below`).
+    let label = |o: &mut Overlay, text: &str, mid: f32, y: f32, below: bool, ink: [u8; 4]| {
+        let (pad, h) = (8.0 * scale, 24.0 * scale);
+        let w = o.measure(text, px) + 2.0 * pad;
+        let x = (mid - w / 2.0).clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
+        let top = if below { y } else { y - h };
+        o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
+        o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
+    };
+    let accent = [0xff, 0xd1, 0x66, 0xff];
+    match coach? {
+        Coach::Labels(labels) => {
+            // Only while the buildings are big enough to read beside.
+            if ppt < 20.0 * scale {
+                return None;
+            }
+            for (pos, (w, h), text, below) in labels {
+                let p = at(*pos);
+                let mid = p[0] + f32::from(*w) * ppt / 2.0;
+                let y = if *below {
+                    p[1] + f32::from(*h) * ppt + 4.0 * scale
+                } else {
+                    p[1] - 4.0 * scale
+                };
+                label(o, text, mid, y, *below, [0xe9, 0xed, 0xf0, 0xff]);
+            }
+            None
+        }
+        Coach::Line(plan, next, below) => {
+            let a = 0x50 + (((t * 4.0).sin() * 0.5 + 0.5) * 90.0) as u8;
+            for (i, step) in plan.iter().enumerate() {
+                for tile in &step.tiles {
+                    let p = at(*tile);
+                    let ink = if i == *next {
+                        [0xff, 0xd1, 0x66, a]
+                    } else {
+                        [0xff, 0xd1, 0x66, 0x18]
+                    };
+                    o.panel(p, [ppt, ppt], ppt * 0.18, ink);
+                }
+            }
+            let step = &plan[*next];
+            let first = at(step.tiles[0]);
+            let last = at(*step.tiles.last().unwrap_or(&step.tiles[0]));
+            let mid = (first[0] + last[0]) / 2.0 + ppt / 2.0;
+            let y = if *below {
+                first[1].max(last[1]) + ppt + 6.0 * scale
+            } else {
+                first[1].min(last[1]) - 6.0 * scale
+            };
+            label(o, step.say(), mid, y, *below, accent);
+            Some(step.tool())
+        }
+    }
 }

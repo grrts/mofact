@@ -622,6 +622,7 @@ fn screenshots(
                 belt: &"belt".into(),
                 history: (false, false),
                 safe: safe.map(|v| v * scale),
+                nudge: None,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);

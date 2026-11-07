@@ -22,6 +22,7 @@ mod autosave;
 mod built;
 mod bundled;
 pub mod game;
+mod guide;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod ore;
