@@ -1467,3 +1467,16 @@ fn a_whole_session_of_han_text_fits_the_atlas() {
         assert_eq!(f.overlay.dropped, 0, "{}: glyphs left out", lang.code());
     }
 }
+
+#[test]
+fn a_tap_on_the_tool_tip_builds_nothing_under_it() {
+    let mut f = Fixture::new();
+    let size = (1170, 2532);
+    f.draw(size, 3.0, &Tool::Belt);
+    let done = f.find(&Hit::Done);
+    // The card beside Done, in its middle.
+    let at = [done[0] / 2.0, done[1] + done[3] / 2.0];
+    assert!(f.tap(at).0, "the card takes the tap");
+    // Out on the map the tap is the game's.
+    assert!(!f.tap([size.0 as f32 / 2.0, size.1 as f32 * 0.6]).0);
+}
