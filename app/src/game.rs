@@ -152,6 +152,27 @@ impl Game {
         self.scene.low_power = on;
     }
 
+    /// Whether colour-blind mode is on (T58).
+    pub fn colour_blind(&self) -> bool {
+        self.hud.colour_blind()
+    }
+
+    /// Turn colour-blind mode on or off, as a platform does from a saved setting.
+    pub fn set_colour_blind(&mut self, on: bool) {
+        self.hud.set_colour_blind(on);
+        self.use_colour_blind(on);
+    }
+
+    /// Paint everything again in the colour-blind look, or the usual one.
+    fn use_colour_blind(&mut self, on: bool) {
+        if self.look.colour_blind() == on {
+            return;
+        }
+        self.look = Look::with_colour_blind(&self.content, on);
+        self.renderer = Renderer::new(&self.gpu, self.look.atlases());
+        self.overlay = Overlay::new(&self.look);
+    }
+
     /// The window was resized to `w` × `h` pixels.
     pub fn resize(&mut self, w: u32, h: u32) {
         if let Some(t) = &mut self.target {
@@ -331,6 +352,7 @@ impl Game {
             crate::worldmap::factory(
                 &mut self.overlay,
                 &self.content,
+                &self.look,
                 &camera,
                 target.size(),
                 scale,
@@ -519,6 +541,7 @@ impl Game {
             // inspect sheet (opened by the HUD) says what's wrong.
             Action::Mute(muted) => self.sound.set_muted(muted),
             Action::LowPower(on) => self.scene.low_power = on,
+            Action::ColourBlind(on) => self.use_colour_blind(on),
             Action::Map(open) => {
                 let cam = &mut self.controls.camera;
                 let scale = cam.scale();

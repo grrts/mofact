@@ -13,17 +13,14 @@
 
 use crate::atlas::Atlas;
 use crate::look::{Effect, Look, FX_BAR, FX_DOT, FX_RING};
-use crate::palette::Rgba;
+use crate::palette::{Rgba, Status};
 use crate::scene::{Camera, Instance, Scene};
 use mofact_core::snapshot::{MachineState, Snapshot};
 use std::f32::consts::TAU;
 
 const SMOKE: Rgba = [0x9a, 0xa4, 0xae, 0xff];
 const STEAM: Rgba = [0xee, 0xf2, 0xf5, 0xff];
-const WORKING: Rgba = [0x4c, 0xd9, 0x7b, 0xff];
 const TRACK: Rgba = [0x0e, 0x12, 0x16, 0xff];
-const STARVED: Rgba = [0xff, 0x5d, 0x5d, 0xff];
-const BLOCKED: Rgba = [0xff, 0xd1, 0x66, 0xff];
 
 fn with_alpha(c: Rgba, a: f32) -> Rgba {
     [c[0], c[1], c[2], (255.0 * a.clamp(0.0, 1.0)) as u8]
@@ -141,7 +138,8 @@ impl Scene {
                         let bw = w - 2.0 * inset;
                         put([bx, by], [bw, 0.07], bar, with_alpha(TRACK, 0.7));
                         let done = e.progress.clamp(0.0, 1.0);
-                        put([bx, by], [bw * done, 0.07], bar, with_alpha(WORKING, 0.95));
+                        let working = look.status(Status::Working);
+                        put([bx, by], [bw * done, 0.07], bar, with_alpha(working, 0.95));
                     }
                 }
                 MachineState::Starved | MachineState::Blocked | MachineState::NoPower
@@ -157,11 +155,11 @@ impl Scene {
                     let c = [x + w - r * 0.3, y + r * 0.3];
                     let p = (t * 0.8 + stagger(id, 8)).fract();
                     let d = badge * (1.0 + 1.4 * p);
-                    let color = if e.state == MachineState::Blocked {
-                        BLOCKED
+                    let color = look.status(if e.state == MachineState::Blocked {
+                        Status::Blocked
                     } else {
-                        STARVED
-                    };
+                        Status::Starved
+                    });
                     let (pos, size) = blob(c, d);
                     put(pos, size, ring, with_alpha(color, (1.0 - p) * 0.8));
                 }

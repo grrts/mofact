@@ -88,6 +88,45 @@ fn gear_points(n: usize, inner: f32, outer: f32) -> Vec<(f32, f32)> {
         .collect()
 }
 
+/// How many different [`mark`]s there are, not counting none.
+pub const MARKS: u8 = 7;
+
+/// A small sign on the lower right of an item icon `s` pixels across,
+/// centred on (`x`, `y`), that tells it from others of the same shape
+/// without its colour (T58): `k` from 1 to [`MARKS`] is a dot, a bar, a
+/// ring, a cross, a triangle, two dots or a square; 0 is none.
+pub fn mark(c: &mut Canvas, k: u8, x: f32, y: f32, s: f32) {
+    if k == 0 {
+        return;
+    }
+    let r = (s * 0.2).max(2.0);
+    let (cx, cy) = (x + s * 0.5 - r, y + s * 0.5 - r);
+    c.fill_circle(cx, cy, r, pal::GROUND);
+    let ink = pal::WHITE;
+    let g = r * 0.62;
+    let w = (r * 0.3).max(1.0);
+    match (k - 1) % MARKS {
+        0 => c.fill_circle(cx, cy, g * 0.55, ink),
+        1 => c.fill_rect(cx - g, cy - w / 2.0, 2.0 * g, w, ink),
+        2 => c.stroke_circle(cx, cy, g * 0.75, ink, w),
+        3 => {
+            c.fill_rect(cx - g, cy - w / 2.0, 2.0 * g, w, ink);
+            c.fill_rect(cx - w / 2.0, cy - g, w, 2.0 * g, ink);
+        }
+        4 => {
+            let t = [(0.0, -1.0), (0.9, 0.7), (-0.9, 0.7)];
+            if let Some(p) = poly(&t, cx, cy, g * 2.0 * 0.5) {
+                c.fill(&p, ink);
+            }
+        }
+        5 => {
+            c.fill_circle(cx - g * 0.5, cy, g * 0.38, ink);
+            c.fill_circle(cx + g * 0.5, cy, g * 0.38, ink);
+        }
+        _ => c.fill_rect(cx - g * 0.6, cy - g * 0.6, g * 1.2, g * 1.2, ink),
+    }
+}
+
 /// An item icon `s` pixels across, centred on (`x`, `y`). `flat` leaves out
 /// the shading, as on belts seen from far away.
 pub fn item(c: &mut Canvas, shape: Shape, color: Rgba, x: f32, y: f32, s: f32, flat: bool) {
@@ -735,10 +774,16 @@ pub fn assembler(c: &mut Canvas, z: f32, product: Option<(Shape, Rgba)>, fine: b
 
 /// The badge over a stalled machine, a disc of radius `r` centred in a
 /// `2r`-pixel square: "!" when it waits for input, "=" when its output is full.
-pub fn badge(c: &mut Canvas, r: f32, starved: bool) {
+/// With `safe`, in the colour-blind set (T58).
+pub fn badge(c: &mut Canvas, r: f32, starved: bool, safe: bool) {
     let (cx, cy) = (r, r);
     let r = (r - 0.5).max(1.0);
-    let color = if starved { pal::STARVE } else { pal::ACCENT };
+    let status = if starved {
+        pal::Status::Starved
+    } else {
+        pal::Status::Blocked
+    };
+    let color = pal::status(status, safe);
     c.fill_circle(cx, cy, r, color);
     if starved {
         c.fill_rect(cx - r * 0.14, cy - r * 0.6, r * 0.28, r * 0.7, pal::GROUND);
