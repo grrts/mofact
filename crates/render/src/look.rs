@@ -1231,11 +1231,13 @@ impl Look {
     }
 }
 
-/// Each band's atlas is this many tiles on a side, padding included: 3,564
-/// pixels at the closest zoom, inside the 4,096 every target GPU takes. Machines
-/// have a sprite per recipe, state and direction, so this grows with content;
-/// when tier 3-4 fills it, turn machine bodies on the GPU instead.
-pub const ATLAS_TILES: u32 = 27;
+/// Each band's atlas is this many tiles on a side, padding included: 4,092
+/// pixels at the closest zoom, the most that fits inside the 4,096 every
+/// target GPU takes (a GPU that takes less drops that band). Machines have a
+/// sprite per recipe, state and direction, so this grows with content; 27
+/// filled up with drones and the radar, and 31 is the last step. When it
+/// fills again, turn machine bodies on the GPU instead.
+pub const ATLAS_TILES: u32 = 31;
 
 /// Frames of a wind turbine's blades over a third of a turn, and the
 /// seconds that third takes.
@@ -1611,6 +1613,11 @@ pub(crate) mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn the_closest_band_still_fits_a_4096_texture() {
+        assert!(atlas_size(*BANDS.last().unwrap()) <= 4096);
     }
 
     #[test]
