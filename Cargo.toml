@@ -17,6 +17,7 @@ members = [
     "tools/headless",
     "tools/bench",
     "tools/balance",
+    "tools/bot",
 ]
 
 [workspace.package]
