@@ -41,6 +41,23 @@ They are JPEGs, as the App Store refuses PNGs with an alpha channel.
 The name is set in the game's own font (Saira Semi Condensed, under the OFL
 in `assets/fonts`).
 
+## The app icon
+
+A hub-yellow gear over a belt carrying iron and copper plates, on the
+factory floor, drawn in code in `crates/artkit/src/icon.rs` with the game's
+palette. `cargo run -p mofact-icon` writes it at every size: Android's
+launcher icons and adaptive layers, iOS's home screen icons, the web link's
+favicon and home screen icons, the Windows `.ico` in `platform/steam`, and
+these store files:
+
+| File | Store slot |
+| --- | --- |
+| `art/play-icon-512x512.png` | Google Play app icon |
+| `art/app-store-icon-1024x1024.png` | App Store icon |
+| `art/steam-community-icon-184x184.png` | Steam community icon (Steamworks asks for a JPG: save it as one when uploading) |
+
+CI fails if a committed icon no longer matches the drawing.
+
 ## Making them again
 
 The factory in the pictures is `tools/store/showcase.ron`, a scenario built
@@ -74,8 +91,6 @@ lists what its SDK sends.
 
 ## Still to come
 
-- **The app icon** (T68). The current icon is a placeholder, so the 512 × 512
-  Play icon and the 1024 × 1024 App Store icon wait for it.
 - **A support email.** Every store asks for one on the listing; it is the one
   thing here only Leroy can provide.
 - **A trailer** is optional on all three stores and not made yet.

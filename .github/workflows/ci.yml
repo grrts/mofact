@@ -76,6 +76,8 @@ jobs:
           # The store screenshots (docs/store): fails if a machine in the showcase is stuck.
           cargo run -p mofact -- --store screenshots/store --scenario tools/store/showcase.ron
           python3 tools/store/check.py
+          # The app icon at every size (T68) matches its drawing.
+          cargo run -p mofact-icon -- --check
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:

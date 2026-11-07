@@ -679,6 +679,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "mofact-icon"
+version = "0.1.0"
+dependencies = [
+ "mofact-artkit",
+ "png",
+]
+
+[[package]]
 name = "mofact-input"
 version = "0.1.0"
 dependencies = [

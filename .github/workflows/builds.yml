@@ -102,6 +102,7 @@ jobs:
             mkdir -p "$app"
             cp target/$t/release/Mofact "$app/"
             cp platform/ios/Info.plist "$app/"
+            cp platform/ios/icons/*.png "$app/"
           done
       # Install on a simulator, launch, and check the game is still running
       # and drawing a few seconds later.
