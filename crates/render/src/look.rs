@@ -181,6 +181,8 @@ enum Art {
     /// A stop's platform, facing east and turned.
     Platform,
     Locomotive,
+    /// A tank train (S5).
+    TankTrain,
     /// The megaproject's anchor.
     Skyhook,
     /// 0 a dot, 1 a ring, 2 a bar.
@@ -657,7 +659,13 @@ impl Look {
                         push(&mut look, format!("{id}:platform"), b.size, Art::Platform);
                     }
                 }
-                Kind::Train => push(&mut look, id.to_owned(), b.size, Art::Locomotive),
+                Kind::Train => {
+                    let art = match b.role {
+                        BuildingRole::Locomotive { tank: true, .. } => Art::TankTrain,
+                        _ => Art::Locomotive,
+                    };
+                    push(&mut look, id.to_owned(), b.size, art)
+                }
                 Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
                 Kind::Radar => push(&mut look, id.to_owned(), b.size, Art::Radar),
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
@@ -1326,6 +1334,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::StopIcon => rail::stop_icon(&mut c, z, fine),
         Art::Platform => rail::platform(&mut c, z, fine),
         Art::Locomotive => rail::locomotive(&mut c, z, fine),
+        Art::TankTrain => rail::tank_train(&mut c, z, fine),
         Art::Skyhook => draw::skyhook(&mut c, z, fine, tiles),
         Art::Fx(0) => draw::fx_dot(&mut c, w as f32),
         Art::Fx(1) => draw::fx_ring(&mut c, w as f32),

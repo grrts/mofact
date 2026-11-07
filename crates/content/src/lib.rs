@@ -229,6 +229,7 @@ pub fn check(content: &Content) -> Vec<String> {
             BuildingRole::Locomotive {
                 tiles_per_second,
                 capacity,
+                ..
             } if tiles_per_second <= 0.0 || tiles_per_second.is_nan() || capacity == 0 => {
                 problems.push(format!("{owner} is a train that carries nothing anywhere"));
             }
@@ -438,7 +439,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len() // with three repeatable (S2)
             ),
-            (53, 64, 33, 36)
+            (53, 64, 34, 36)
         );
         let circuit = c
             .recipes

@@ -1184,11 +1184,17 @@ impl Sim {
                 .entities
                 .get(EntityId(i as u32))
                 .expect("state implies entity");
-            if let (State::Train(t), Role::Train { per_tick, capacity }) =
-                (&mut state, &self.tables.buildings[e.kind as usize].role)
+            if let (
+                State::Train(t),
+                Role::Train {
+                    per_tick,
+                    capacity,
+                    tank,
+                },
+            ) = (&mut state, &self.tables.buildings[e.kind as usize].role)
             {
-                let (speed, capacity) = (*per_tick, *capacity);
-                self.step_train(EntityId(i as u32), t, capacity, speed);
+                let (speed, capacity, tank) = (*per_tick, *capacity, *tank);
+                self.step_train(EntityId(i as u32), t, capacity, speed, tank);
                 self.states[i] = Some(state);
                 continue;
             }
@@ -1776,10 +1782,11 @@ impl Sim {
         for (id, e) in self.entities.iter() {
             let b = &self.tables.buildings[e.kind as usize];
             let slot = id.0 as usize;
-            if let (Some(State::Train(t)), Role::Train { capacity, .. }) =
+            if let (Some(State::Train(t)), Role::Train { capacity, tank, .. }) =
                 (self.states[slot].as_ref(), &b.role)
             {
-                snap.trains.push(self.train_view(id, b, t, *capacity));
+                snap.trains
+                    .push(self.train_view(id, b, t, *capacity, *tank));
                 continue;
             }
             if let (Some(State::Mega { stage, have }), Role::Mega { stages, names }, None) =
@@ -2033,8 +2040,11 @@ impl Sim {
         b: &tables::Building,
         t: &rails::Train,
         capacity: u32,
+        tank: bool,
     ) -> TrainView {
         let item = |i: Item| self.tables.items[i as usize].clone();
+        // A tank's milli-units show as whole units.
+        let units = |n: u32| if tank { n / FLUID as u32 } else { n };
         TrainView {
             id,
             building: b.id.clone(),
@@ -2045,8 +2055,8 @@ impl Sim {
             } else {
                 0.0
             },
-            cargo: t.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
-            capacity,
+            cargo: t.cargo.iter().map(|&(i, n)| (item(i), units(n))).collect(),
+            capacity: units(capacity),
             schedule: t.schedule.clone(),
             next: t.next,
             state: match t.phase {

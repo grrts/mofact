@@ -78,9 +78,12 @@ pub enum Role {
     /// A train stop: a rail tile trains stop at to load and unload.
     Stop,
     /// A train, which moves `per_tick` position units a tick along rails.
+    /// A `tank` train holds `capacity` milli-units of fluid, any other
+    /// `capacity` items.
     Train {
         per_tick: u32,
         capacity: u32,
+        tank: bool,
     },
     /// Charts one fog cell every `every` ticks while powered, out to
     /// `reach` cells away (S3).
@@ -296,9 +299,16 @@ impl Tables {
                 BuildingRole::Locomotive {
                     tiles_per_second,
                     capacity,
+                    tank,
                 } => Role::Train {
                     per_tick: per_tick(*tiles_per_second).max(1),
-                    capacity: *capacity,
+                    // Milli-units for a tank, capped to what a u32 holds.
+                    capacity: if *tank {
+                        (u64::from(*capacity) * FLUID).min(u64::from(u32::MAX)) as u32
+                    } else {
+                        *capacity
+                    },
+                    tank: *tank,
                 },
             };
             t.buildings.push(Building {

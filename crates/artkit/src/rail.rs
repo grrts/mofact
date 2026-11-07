@@ -347,3 +347,109 @@ pub fn locomotive(c: &mut Canvas, z: f32, fine: bool) {
         c.fill_circle(x1 - z * 0.05, y, z * 0.045, pal::ACCENT);
     }
 }
+
+/// A tank train (S5), facing east: the locomotive's cab at the back and a
+/// round-ended steel tank for its bonnet, hooped, with a filler dome.
+pub fn tank_train(c: &mut Canvas, z: f32, fine: bool) {
+    let (x0, x1) = (z * 0.04, z * 0.96);
+    let (y0, y1) = (z * 0.2, z * 0.8);
+    let (w, h) = (x1 - x0, y1 - y0);
+    // The same orange chassis as a locomotive, so it reads as a train.
+    fill(c, rr(x0, y0, w, h, z * 0.12), shade(pal::LOCO, -0.55));
+    fill(
+        c,
+        rr(x0 + 1.5, y0 + 1.5, w - 3.0, h - 3.0, z * 0.11),
+        pal::LOCO,
+    );
+    // The cab.
+    let (cx, cw) = (z * 0.1, z * 0.22);
+    fill(
+        c,
+        rr(cx, y0 + h * 0.08, cw, h * 0.84, z * 0.06),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(
+            cx + 1.0,
+            y0 + h * 0.08 + 1.0,
+            cw - 2.0,
+            h * 0.84 - 2.0,
+            z * 0.05,
+        ),
+        shade(pal::LOCO, 0.25),
+    );
+    c.fill_rect(
+        cx + cw * 0.62,
+        y0 + h * 0.16,
+        cw * 0.26,
+        h * 0.2,
+        pal::GLASS,
+    );
+    c.fill_rect(
+        cx + cw * 0.62,
+        y0 + h * 0.64,
+        cw * 0.26,
+        h * 0.2,
+        pal::GLASS,
+    );
+    // The tank: a long capsule, lit from the top.
+    let (tx, tw) = (z * 0.36, z * 0.56);
+    let (ty, th) = (y0 + h * 0.1, h * 0.8);
+    fill(c, rr(tx, ty, tw, th, th / 2.0), pal::MACHINE_EDGE);
+    fill(
+        c,
+        rr(tx + 1.0, ty + 1.0, tw - 2.0, th - 2.0, th / 2.0 - 1.0),
+        pal::PIPE,
+    );
+    fill(
+        c,
+        rr(
+            tx + th * 0.3,
+            ty + th * 0.16,
+            tw - th * 0.6,
+            th * 0.2,
+            th * 0.1,
+        ),
+        pal::PIPE_HI,
+    );
+    fill(
+        c,
+        rr(
+            tx + th * 0.3,
+            ty + th * 0.72,
+            tw - th * 0.6,
+            th * 0.12,
+            th * 0.06,
+        ),
+        shade(pal::PIPE, -0.3),
+    );
+    if fine {
+        // Hoops round the tank.
+        for k in [0.3, 0.7] {
+            c.fill_rect(
+                tx + tw * k - z * 0.015,
+                ty + 1.0,
+                z * 0.03,
+                th - 2.0,
+                shade(pal::PIPE, -0.4),
+            );
+        }
+    }
+    // The filler dome, with a hatch.
+    c.fill_circle(tx + tw * 0.5, ty + th * 0.5, th * 0.2, pal::MACHINE_EDGE);
+    c.fill_circle(tx + tw * 0.5, ty + th * 0.5, th * 0.16, pal::PIPE_HI);
+    c.fill_circle(tx + tw * 0.5, ty + th * 0.5, th * 0.06, pal::RIVET);
+    // The stripes and headlamps of every train.
+    c.fill_rect(x0 + z * 0.08, y0 + 1.5, w - z * 0.16, z * 0.03, pal::INK);
+    c.fill_rect(
+        x0 + z * 0.08,
+        y1 - 1.5 - z * 0.03,
+        w - z * 0.16,
+        z * 0.03,
+        pal::INK,
+    );
+    for y in [y0 + h * 0.22, y1 - h * 0.22] {
+        c.fill_circle(x1 - z * 0.05, y, z * 0.045, pal::ACCENT);
+    }
+}
