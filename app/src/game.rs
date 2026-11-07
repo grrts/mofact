@@ -12,7 +12,7 @@ use crate::slots::{Request, Store};
 use crate::sound::Sound;
 use mofact_core::content::Content;
 use mofact_core::geom::TilePos;
-use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
+use mofact_input::{Blueprint, CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui::{tr, trf, Action, Hud, SlotView, StoreView, View};
@@ -83,6 +83,10 @@ pub struct Game {
     crash: Option<String>,
     /// Text for the platform to put on the clipboard.
     pub clipboard: Option<String>,
+    /// The blueprint library (T51), and how many times it has changed, so
+    /// the platform knows when to keep it again.
+    blueprints: Vec<Blueprint>,
+    blueprints_rev: u64,
 }
 
 impl Game {
@@ -156,6 +160,8 @@ impl Game {
             haptic: None,
             crash: None,
             clipboard: None,
+            blueprints: Vec::new(),
+            blueprints_rev: 0,
             shown: content.clone(),
             shown_lang: mofact_ui::i18n::Lang::En,
             content,
@@ -163,6 +169,58 @@ impl Game {
             controls,
             latest: (0, Instant::now()),
         }
+    }
+
+    /// The blueprint library as text, to keep on the device, and a count
+    /// that goes up each time it changes.
+    pub fn blueprints(&self) -> (String, u64) {
+        (
+            mofact_input::blueprint::library_to_text(&self.blueprints),
+            self.blueprints_rev,
+        )
+    }
+
+    /// The blueprint library kept on the device, as a platform reads it at start.
+    pub fn set_blueprints(&mut self, text: &str) {
+        self.blueprints = mofact_input::blueprint::library_from_text(text);
+    }
+
+    /// The selection as a blueprint, and where its top-left corner is.
+    fn capture(&self) -> Option<(Blueprint, TilePos)> {
+        let latest = self.sim.latest();
+        let mut picked: Vec<_> = latest
+            .entities
+            .iter()
+            .filter(|e| self.controls.builder.selection.contains(&e.id))
+            .collect();
+        picked.sort_by_key(|e| e.id);
+        let corner = TilePos::new(
+            picked.iter().map(|e| e.pos.x).min()?,
+            picked.iter().map(|e| e.pos.y).min()?,
+        );
+        let size = |e: &&mofact_core::snapshot::EntityView| {
+            self.content
+                .buildings
+                .iter()
+                .find(|b| b.id == e.building)
+                .map_or(1, |b| b.size.0.max(b.size.1))
+        };
+        let bp = Blueprint::capture(
+            mofact_input::blueprint::next_name(&self.blueprints, tr("blueprint.name")),
+            picked
+                .iter()
+                .map(|e| (e.building.clone(), e.pos, size(e), e.dir, e.recipe.clone())),
+        );
+        Some((bp, corner))
+    }
+
+    /// The tile a blueprint's corner goes on to sit in the middle of the screen.
+    fn centred(&self, bp: &Blueprint) -> TilePos {
+        let [x, y] = self.controls.camera.center;
+        TilePos::new(
+            (x - bp.size.0 as f32 / 2.0).round() as i32,
+            (y - bp.size.1 as f32 / 2.0).round() as i32,
+        )
     }
 
     /// The language the player chose (T65): the device's, or one of their own.
@@ -407,14 +465,56 @@ impl Game {
             );
         }
         let ghosts = self.controls.builder.ghosts();
-        let recipe = self.controls.builder.recipe.as_ref();
         self.scene.ghosts(
             &self.look,
             atlases,
-            ghosts.iter().map(|g| (&g.building, g.tile, g.dir, recipe)),
+            ghosts
+                .iter()
+                .map(|g| (&g.building, g.tile, g.dir, g.recipe.as_ref())),
         );
         self.overlay.clear();
         crate::fog::draw(&mut self.overlay, &camera, target.size(), &latest.explored);
+        // The select tool's box, what it has selected, and where a
+        // blueprint in hand is blocked (T51).
+        {
+            let ppt = camera.pixels_per_tile;
+            let (sw, sh) = target.size();
+            let at = |t: TilePos| {
+                [
+                    (t.x as f32 - camera.center[0]) * ppt + sw as f32 / 2.0,
+                    (t.y as f32 - camera.center[1]) * ppt + sh as f32 / 2.0,
+                ]
+            };
+            let [ar, ag, ab, _] = mofact_render::palette::ACCENT;
+            for e in latest
+                .entities
+                .iter()
+                .filter(|e| self.controls.builder.selection.contains(&e.id))
+            {
+                let s = self
+                    .content
+                    .buildings
+                    .iter()
+                    .find(|b| b.id == e.building)
+                    .map_or(1, |b| b.size.0);
+                let s = f32::from(s) * ppt;
+                self.overlay
+                    .panel(at(e.pos), [s, s], ppt * 0.12, [ar, ag, ab, 0x60]);
+            }
+            if let Some((corner, (w, h))) = self.controls.builder.selecting() {
+                self.overlay.panel(
+                    at(corner),
+                    [w as f32 * ppt, h as f32 * ppt],
+                    ppt * 0.2,
+                    [ar, ag, ab, 0x38],
+                );
+            }
+            self.built.update(&latest);
+            for t in self.controls.builder.blocked(&self.built) {
+                self.overlay
+                    .panel(at(t), [ppt, ppt], ppt * 0.12, [0xff, 0x5d, 0x5d, 0x80]);
+            }
+        }
         self.controls.slop = 12.0 * scale.max(0.5);
         // What a remove drag has marked, in red, before it goes.
         for id in self.controls.builder.marked() {
@@ -516,6 +616,8 @@ impl Game {
             slots: &self.slots,
             store: &self.store,
             crash: self.crash.is_some(),
+            selection: builder.selection.len(),
+            blueprints: &self.blueprints,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -707,6 +809,71 @@ impl Game {
                 }
             }
             Action::Cancel => self.controls.builder.cancel(),
+            Action::Copy => {
+                if let Some((bp, corner)) = self.capture() {
+                    // Beside the original, or mid-screen if that is out of sight.
+                    let beside = TilePos::new(corner.x + bp.size.0 + 1, corner.y);
+                    let cam = &self.controls.camera;
+                    let mid = cam.world_at([0.0, 0.0]);
+                    let far = cam.world_at(self.target.as_ref().map_or([1.0, 1.0], |t| {
+                        let (w, h) = t.size();
+                        [w as f32, h as f32]
+                    }));
+                    let seen = (beside.x as f32) >= mid[0]
+                        && ((beside.x + bp.size.0) as f32) <= far[0]
+                        && (beside.y as f32) >= mid[1]
+                        && ((beside.y + bp.size.1) as f32) <= far[1];
+                    let at = if seen { beside } else { self.centred(&bp) };
+                    self.controls.builder.hold(bp, at, Vec::new());
+                }
+            }
+            Action::Cut => {
+                if let Some((bp, corner)) = self.capture() {
+                    let moving = self.controls.builder.selection.clone();
+                    self.controls.builder.hold(bp, corner, moving);
+                }
+            }
+            Action::DeleteSelection => {
+                let commands = self
+                    .controls
+                    .builder
+                    .selection
+                    .iter()
+                    .map(|&entity| mofact_core::command::Command::Remove { entity })
+                    .collect();
+                self.sim.send_all(commands);
+                self.controls.builder.set_tool(Tool::Select);
+            }
+            Action::SaveBlueprint => {
+                if self.blueprints.len() >= mofact_input::blueprint::LIBRARY_SIZE {
+                    self.hud.toast(tr("toast.library_full"));
+                } else if let Some((bp, _)) = self.capture() {
+                    self.hud.toast(trf("toast.blueprint_saved", &[&bp.name]));
+                    self.blueprints.insert(0, bp);
+                    self.blueprints_rev += 1;
+                }
+            }
+            Action::PlacePaste => {
+                self.built.update(&self.sim.latest());
+                if self.controls.builder.blocked(&self.built).is_empty() {
+                    let commands = self.controls.builder.build_paste();
+                    self.sim.send_all(commands);
+                } else {
+                    self.hud.toast(tr("toast.paste_blocked"));
+                }
+            }
+            Action::Paste(i) => {
+                if let Some(bp) = self.blueprints.get(i).cloned() {
+                    let at = self.centred(&bp);
+                    self.controls.builder.hold(bp, at, Vec::new());
+                }
+            }
+            Action::ForgetBlueprint(i) => {
+                if i < self.blueprints.len() {
+                    self.blueprints.remove(i);
+                    self.blueprints_rev += 1;
+                }
+            }
             // A problem from the list: look at it, with the hand, so its
             // inspect sheet (opened by the HUD) says what's wrong.
             Action::Mute(muted) => self.sound.set_muted(muted),

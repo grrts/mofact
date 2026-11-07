@@ -6,6 +6,11 @@ use mofact_core::command::Command;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, EntityId, RecipeId};
 
+use crate::blueprint::Blueprint;
+
+/// The most tiles a side a selection box spans.
+pub const SELECT_MAX: i32 = 96;
+
 /// What stands on a tile.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Occupant {
@@ -39,6 +44,23 @@ pub enum Tool {
     Place(BuildingId),
     /// Mark whatever the drag passes over, and remove it all when the finger lifts.
     Remove,
+    /// Drag a box round buildings to select them (T51), for copying,
+    /// moving, deleting or keeping as a blueprint.
+    Select,
+    /// A blueprint in hand ([`Builder::paste`]): a drag slides it, a tap
+    /// puts it under the finger, and the HUD's Place button builds it.
+    Paste,
+}
+
+/// A blueprint in hand, where it would go, and what it moves.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Paste {
+    pub blueprint: Blueprint,
+    /// Its top-left corner.
+    pub at: TilePos,
+    /// The buildings it was cut from: building it removes them first, so
+    /// the group moves. Empty for a copy.
+    pub moving: Vec<EntityId>,
 }
 
 /// A building the tools would place, for drawing as a ghost.
@@ -47,6 +69,7 @@ pub struct Ghost {
     pub building: BuildingId,
     pub tile: TilePos,
     pub dir: Dir,
+    pub recipe: Option<RecipeId>,
 }
 
 #[derive(Debug)]
@@ -62,6 +85,11 @@ enum Gesture {
     /// What the finger has passed over so far, in the order it got there,
     /// and the trees it passed over.
     Remove(Vec<EntityId>, Vec<TilePos>),
+    /// A selection box from one corner tile to the other.
+    Select(TilePos, TilePos),
+    /// A blueprint being slid: the tile the finger was last on, and
+    /// whether it has left the first.
+    Slide(TilePos, bool),
 }
 
 #[derive(Debug)]
@@ -76,6 +104,10 @@ pub struct Builder {
     pub lines: Vec<BuildingId>,
     /// Buildings placed on track: signals, stops and trains.
     pub on_track: Vec<BuildingId>,
+    /// What the select tool has selected.
+    pub selection: Vec<EntityId>,
+    /// The blueprint in hand, with the paste tool.
+    pub paste: Option<Paste>,
     gesture: Option<Gesture>,
 }
 
@@ -88,6 +120,8 @@ impl Default for Builder {
             belt: "belt".into(),
             lines: Vec::new(),
             on_track: Vec::new(),
+            selection: Vec::new(),
+            paste: None,
             gesture: None,
         }
     }
@@ -95,8 +129,73 @@ impl Default for Builder {
 
 impl Builder {
     pub fn set_tool(&mut self, tool: Tool) {
+        if tool != Tool::Select {
+            self.selection.clear();
+        }
+        if tool != Tool::Paste {
+            self.paste = None;
+        }
         self.tool = tool;
         self.gesture = None;
+    }
+
+    /// Take `blueprint` in hand with its corner at `at`; `moving` names
+    /// the buildings it was cut from.
+    pub fn hold(&mut self, blueprint: Blueprint, at: TilePos, moving: Vec<EntityId>) {
+        self.set_tool(Tool::Paste);
+        self.paste = Some(Paste {
+            blueprint,
+            at,
+            moving,
+        });
+    }
+
+    /// The commands that build the blueprint in hand where it is: for a
+    /// move, removing what it was cut from first. A move is done once
+    /// built, and puts the blueprint away; a copy stays in hand to paste again.
+    pub fn build_paste(&mut self) -> Vec<Command> {
+        let Some(p) = &self.paste else {
+            return Vec::new();
+        };
+        let mut out: Vec<Command> = p
+            .moving
+            .iter()
+            .map(|&entity| Command::Remove { entity })
+            .collect();
+        out.extend(p.blueprint.commands(p.at));
+        if !p.moving.is_empty() {
+            self.set_tool(Tool::Select);
+        }
+        out
+    }
+
+    /// The tiles the blueprint in hand would go on that are taken: by a
+    /// building it isn't moving, or by a tree.
+    pub fn blocked(&self, ground: &dyn Ground) -> Vec<TilePos> {
+        let Some(p) = &self.paste else {
+            return Vec::new();
+        };
+        p.blueprint
+            .tiles(p.at)
+            .filter(|&t| match ground.at(t) {
+                Some(o) => !p.moving.contains(&o.id),
+                None => ground.tree(t),
+            })
+            .collect()
+    }
+
+    /// The selection box being drawn: its top-left tile and size.
+    pub fn selecting(&self) -> Option<(TilePos, (i32, i32))> {
+        match &self.gesture {
+            Some(Gesture::Select(a, b)) => {
+                let (a, b) = clamp_box(*a, *b);
+                Some((
+                    TilePos::new(a.x.min(b.x), a.y.min(b.y)),
+                    ((a.x - b.x).abs() + 1, (a.y - b.y).abs() + 1),
+                ))
+            }
+            _ => None,
+        }
     }
 
     /// Whether the building in hand is drawn along a drag.
@@ -114,8 +213,16 @@ impl Builder {
         }
     }
 
+    /// Turn the way new buildings face, or the blueprint in hand about its middle.
     pub fn rotate(&mut self) {
-        self.dir = self.dir.rotate_cw();
+        match &mut self.paste {
+            Some(p) => {
+                let (w, h) = p.blueprint.size;
+                p.blueprint.rotate();
+                p.at = TilePos::new(p.at.x + (w - h) / 2, p.at.y + (h - w) / 2);
+            }
+            None => self.dir = self.dir.rotate_cw(),
+        }
     }
 
     /// A finger or the left button went down on `tile`. Returns commands to run now.
@@ -137,6 +244,8 @@ impl Builder {
                 mark(&mut marks, &mut trees, tile, ground);
                 Some(Gesture::Remove(marks, trees))
             }
+            Tool::Select => Some(Gesture::Select(tile, tile)),
+            Tool::Paste => Some(Gesture::Slide(tile, false)),
         };
         Vec::new()
     }
@@ -148,6 +257,14 @@ impl Builder {
             Some(Gesture::Line(path)) => *path = corner(path[0].0, tile),
             Some(Gesture::Place(t)) => *t = tile,
             Some(Gesture::Remove(marks, trees)) => mark(marks, trees, tile, ground),
+            Some(Gesture::Select(_, b)) => *b = tile,
+            Some(Gesture::Slide(last, moved)) => {
+                if let Some(p) = &mut self.paste {
+                    p.at = TilePos::new(p.at.x + tile.x - last.x, p.at.y + tile.y - last.y);
+                }
+                *moved |= tile != *last;
+                *last = tile;
+            }
             None => {}
         }
         Vec::new()
@@ -217,7 +334,28 @@ impl Builder {
                 out.extend(marks.into_iter().map(|entity| Command::Remove { entity }));
                 out.extend(trees.into_iter().map(|tile| Command::Clear { tile }));
             }
-            None => {}
+            // Everything removable the box touches; a tap picks one building.
+            Some(Gesture::Select(a, b)) => {
+                let (a, b) = clamp_box(a, b);
+                self.selection.clear();
+                for y in a.y.min(b.y)..=a.y.max(b.y) {
+                    for x in a.x.min(b.x)..=a.x.max(b.x) {
+                        if let Some(o) = ground.at(TilePos::new(x, y)) {
+                            if o.removable && !self.selection.contains(&o.id) {
+                                self.selection.push(o.id);
+                            }
+                        }
+                    }
+                }
+            }
+            // A tap puts the blueprint's middle under the finger.
+            Some(Gesture::Slide(tile, false)) => {
+                if let Some(p) = &mut self.paste {
+                    let (w, h) = p.blueprint.size;
+                    p.at = TilePos::new(tile.x - (w - 1) / 2, tile.y - (h - 1) / 2);
+                }
+            }
+            Some(Gesture::Slide(_, true)) | None => {}
         }
         out
     }
@@ -246,12 +384,27 @@ impl Builder {
     /// What the current gesture would build, to draw as ghosts.
     pub fn ghosts(&self) -> Vec<Ghost> {
         match (&self.gesture, &self.tool) {
+            (_, Tool::Paste) => self
+                .paste
+                .iter()
+                .flat_map(|p| {
+                    p.blueprint
+                        .placed(p.at)
+                        .map(|(b, tile, _, dir, recipe)| Ghost {
+                            building: b.clone(),
+                            tile,
+                            dir,
+                            recipe: recipe.cloned(),
+                        })
+                })
+                .collect(),
             (Some(Gesture::Belt { path, .. }), _) => path
                 .iter()
                 .map(|&(tile, dir)| Ghost {
                     building: self.belt.clone(),
                     tile,
                     dir,
+                    recipe: None,
                 })
                 .collect(),
             (Some(Gesture::Line(path)), Tool::Place(b)) => path
@@ -260,16 +413,24 @@ impl Builder {
                     building: b.clone(),
                     tile,
                     dir: self.dir,
+                    recipe: None,
                 })
                 .collect(),
             (Some(Gesture::Place(tile)), Tool::Place(b)) => vec![Ghost {
                 building: b.clone(),
                 tile: *tile,
                 dir: self.dir,
+                recipe: self.recipe.clone(),
             }],
             _ => Vec::new(),
         }
     }
+}
+
+/// A selection box from `a` towards `b`, at most [`SELECT_MAX`] a side.
+fn clamp_box(a: TilePos, b: TilePos) -> (TilePos, TilePos) {
+    let c = |from: i32, to: i32| from + (to - from).clamp(1 - SELECT_MAX, SELECT_MAX - 1);
+    (a, TilePos::new(c(a.x, b.x), c(a.y, b.y)))
 }
 
 /// Mark what stands on `tile` for removal, once; the hub can't be marked.
@@ -530,6 +691,113 @@ mod tests {
                     entity: EntityId(2)
                 }
             ]
+        );
+    }
+
+    #[test]
+    fn a_box_selects_what_it_touches_and_a_copy_slides_and_builds() {
+        let mut map = Map::default();
+        map.0.insert(t(0, 0), belt(1, Dir::East));
+        map.0.insert(t(1, 0), belt(2, Dir::East));
+        map.0.insert(t(5, 5), belt(3, Dir::East));
+        map.0.insert(
+            t(1, 1),
+            Occupant {
+                removable: false,
+                ..belt(4, Dir::East)
+            },
+        );
+        let mut b = Builder::default();
+        b.set_tool(Tool::Select);
+        b.start(t(1, 1), &map);
+        b.drag(t(0, 0), &map);
+        assert_eq!(b.selecting(), Some((t(0, 0), (2, 2))));
+        assert!(b.end(&map).is_empty(), "selecting builds nothing");
+        assert_eq!(b.selection, [EntityId(1), EntityId(2)], "never the hub");
+        // A tap picks one.
+        b.start(t(5, 5), &map);
+        b.end(&map);
+        assert_eq!(b.selection, [EntityId(3)]);
+
+        let bp = Blueprint::capture(
+            "Blueprint 1",
+            [
+                ("belt".into(), t(0, 0), 1, Dir::East, None),
+                ("belt".into(), t(1, 0), 1, Dir::East, None),
+            ],
+        );
+        b.hold(bp, t(0, 0), Vec::new());
+        assert!(b.selection.is_empty());
+        assert_eq!(b.blocked(&map), [t(0, 0), t(1, 0)]);
+        // A drag slides it by as many tiles as the finger goes.
+        b.start(t(3, 3), &map);
+        b.drag(t(4, 5), &map);
+        b.end(&map);
+        assert_eq!(b.paste.as_ref().unwrap().at, t(1, 2));
+        // A tap puts its middle under the finger.
+        b.start(t(10, 10), &map);
+        b.end(&map);
+        assert_eq!(b.paste.as_ref().unwrap().at, t(10, 10));
+        assert_eq!(b.ghosts().len(), 2);
+        assert!(b.blocked(&map).is_empty());
+        let built = b.build_paste();
+        assert_eq!(built.len(), 2);
+        assert!(
+            matches!(&built[1], Command::Place { pos, .. } if *pos == t(11, 10)),
+            "{built:?}"
+        );
+        assert_eq!(b.tool, Tool::Paste, "a copy stays in hand");
+        b.rotate();
+        let p = b.paste.as_ref().unwrap();
+        assert_eq!(p.blueprint.size, (1, 2));
+        assert_eq!(p.blueprint.pieces[0].dir, Dir::South);
+    }
+
+    #[test]
+    fn a_move_removes_the_originals_first_and_ignores_them_when_blocked() {
+        let mut map = Map::default();
+        map.0.insert(t(0, 0), belt(1, Dir::East));
+        map.0.insert(t(1, 0), belt(2, Dir::East));
+        let bp = Blueprint::capture(
+            "",
+            [
+                ("belt".into(), t(0, 0), 1, Dir::East, None),
+                ("belt".into(), t(1, 0), 1, Dir::East, None),
+            ],
+        );
+        let mut b = Builder::default();
+        b.hold(bp, t(0, 0), vec![EntityId(1), EntityId(2)]);
+        b.start(t(0, 0), &map);
+        b.drag(t(1, 0), &map);
+        b.end(&map);
+        assert!(b.blocked(&map).is_empty(), "it overlaps only itself");
+        let built = b.build_paste();
+        assert_eq!(
+            built[..2],
+            [
+                Command::Remove {
+                    entity: EntityId(1)
+                },
+                Command::Remove {
+                    entity: EntityId(2)
+                }
+            ]
+        );
+        assert!(matches!(&built[2], Command::Place { pos, .. } if *pos == t(1, 0)));
+        assert_eq!(b.tool, Tool::Select, "a move is done once built");
+        assert!(b.paste.is_none());
+    }
+
+    #[test]
+    fn a_selection_box_stops_at_its_largest() {
+        let map = Map::default();
+        let mut b = Builder::default();
+        b.set_tool(Tool::Select);
+        b.start(t(0, 0), &map);
+        b.drag(t(1000, -1000), &map);
+        assert_eq!(
+            b.selecting(),
+            Some((t(0, 1 - SELECT_MAX), (SELECT_MAX, SELECT_MAX)))
         );
     }
 }

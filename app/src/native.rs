@@ -403,6 +403,8 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
         app.game.target.as_ref().map(Target::format),
     );
 
+    app.game.set_blueprints(&files.blueprints());
+    let mut blueprints = app.game.blueprints().1;
     let mut saves = autosave::Autosave::new(save_path);
     app.game.set_low_power(settings.low_power);
     app.game.set_colour_blind(settings.colour_blind);
@@ -500,6 +502,11 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
         if now != settings {
             settings = now;
             report(files.set_settings(now));
+        }
+        if app.game.blueprints().1 != blueprints {
+            let (text, rev) = app.game.blueprints();
+            blueprints = rev;
+            report(files.set_blueprints(&text));
         }
         report(saves.update(&app.game.sim));
         if app.background {
@@ -760,6 +767,8 @@ fn screenshots(
             slots: &[],
             store: &mofact_ui::StoreView::default(),
             crash: false,
+            selection: 0,
+            blueprints: &[],
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -830,6 +839,8 @@ fn screenshots(
                 slots: &slots,
                 store: &mofact_ui::StoreView::default(),
                 crash: false,
+                selection: 0,
+                blueprints: &[],
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -942,6 +953,8 @@ fn screenshots(
                 slots: &slots,
                 store: &store,
                 crash: sheet == "menu",
+                selection: 0,
+                blueprints: &[],
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -1051,6 +1064,8 @@ fn store_shots(
                 // The full game, as the stores sell it.
                 store: &mofact_ui::StoreView::default(),
                 crash: false,
+                selection: 0,
+                blueprints: &[],
             };
             hud.draw(&view, overlay);
         });
