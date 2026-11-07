@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta name="theme-color" content="#1b1f24">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Mofact</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1b1f24; overflow: hidden; }
+  /* The game takes every touch; the page never scrolls or zooms. */
+  canvas { position: fixed; inset: 0; width: 100vw; height: 100dvh; display: block;
+           touch-action: none; user-select: none; -webkit-user-select: none;
+           -webkit-touch-callout: none; outline: none; }
+  #status { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+            color: #d8dee6; font: 600 16px system-ui, sans-serif; text-align: center; padding: 24px;
+            pointer-events: none; }
+  /* Which build is running, always, small in the top-right corner. */
+  #build { position: fixed; right: calc(6px + env(safe-area-inset-right)); top: calc(3px + env(safe-area-inset-top));
+           color: #ffffff66; font: 10px ui-monospace, monospace; pointer-events: none; }
+  #update { position: fixed; left: 50%; top: calc(56px + env(safe-area-inset-top)); transform: translateX(-50%);
+            display: none; min-height: 44px; padding: 0 20px; border: 0; border-radius: 22px;
+            background: #ffd166; color: #1b1f24; font: 700 15px system-ui, sans-serif;
+            box-shadow: 0 4px 16px #0008; cursor: pointer; white-space: nowrap; }
+</style>
+</head>
+<body>
+<canvas id="game" tabindex="0"></canvas>
+<div id="status">Loading Mofact…</div>
+<div id="build"></div>
+<button id="update" type="button">New version ready · tap to reload</button>
+<script type="module">
+// This page is only a loader; the game is the same Rust app the phones run,
+// compiled to WebAssembly (platform/web). Browsers and GitHub Pages cache
+// pages for minutes, so the page never names the game's files itself:
+// version.json, fetched past every cache, says which build is current and
+// where its files are (each build in its own folder), and is checked again
+// while playing so a new deploy offers itself.
+const status = document.getElementById('status');
+const label = document.getElementById('build');
+const update = document.getElementById('update');
+
+async function current() {
+  const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
+  if (!r.ok) throw new Error(`version.json: ${r.status}`);
+  return r.json();
+}
+
+// Nothing may serve this game from an old copy: drop any service worker
+// and cache an earlier page might have left behind.
+try {
+  const regs = await navigator.serviceWorker?.getRegistrations?.() ?? [];
+  await Promise.all(regs.map(r => r.unregister()));
+  const keys = await window.caches?.keys?.() ?? [];
+  await Promise.all(keys.map(k => caches.delete(k)));
+} catch (e) { console.warn('mofact: cache cleanup', e); }
+
+let running;
+try {
+  running = await current();
+} catch (e) {
+  // A local build has no version.json: its files sit next to the page.
+  running = { build: 'local', js: 'mofact_web.js', wasm: 'mofact_web_bg.wasm' };
+}
+label.textContent = `build ${running.build}`;
+
+try {
+  const { default: init, start } = await import(new URL(running.js, location.href).href);
+  await init({ module_or_path: new URL(running.wasm, location.href).href });
+  await start('game');
+  status.remove();
+  document.getElementById('game').focus();
+} catch (e) {
+  console.error(e);
+  status.textContent = `Mofact couldn't start: ${e && e.message ? e.message : e}. It needs a browser with WebGL2.`;
+}
+
+// A newer deploy offers itself; the game saves as the page goes.
+async function check() {
+  if (running.build === 'local' || document.visibilityState !== 'visible') return;
+  try {
+    const latest = await current();
+    if (latest.build && latest.build !== running.build) {
+      update.textContent = `New version ready (${latest.build}) · tap to reload`;
+      update.style.display = 'block';
+    }
+  } catch (e) { /* offline: try again later */ }
+}
+update.addEventListener('click', () => location.reload());
+setInterval(check, 60_000);
+document.addEventListener('visibilitychange', check);
+window.addEventListener('focus', check);
+</script>
+</body>
+</html>
