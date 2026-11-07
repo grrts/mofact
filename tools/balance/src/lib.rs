@@ -446,8 +446,8 @@ mod tests {
         assert!(report.depth[&ItemId::from("precision-pack")] >= 7);
         // The megaproject's last part is the deepest chain (R6).
         let deepest = report.depth.values().max().copied().unwrap_or(0);
-        assert!(deepest >= 12, "deepest chain {deepest}");
-        assert_eq!(report.depth[&ItemId::from("orbital-beacon")], deepest);
+        assert!(deepest >= 13, "deepest chain {deepest}");
+        assert_eq!(report.depth[&ItemId::from("counterweight")], deepest);
         // Bricks go into labs; research takes the packs.
         assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
@@ -486,6 +486,17 @@ mod tests {
                 "drones",
                 "fusion",
                 "satellites",
+                "nanotech",
+                "nanobots",
+                "alternate-nanotech",
+                "cryogenics",
+                "quantum-computing",
+                "alternate-quantum",
+                "plasma-physics",
+                "field-theory",
+                "alternate-fields",
+                "singularity",
+                "event-horizon",
                 "skyhook"
             ]
         );

@@ -1051,6 +1051,14 @@ impl Hud {
         }
 
         if let Some(e) = selected {
+            // A machine with a long list of recipes takes a wider sheet
+            // held sideways, so its picker stays on a short screen.
+            let many = view.recipes_for(&e.building).is_some_and(|r| r.len() > 24);
+            let width = if many && !portrait {
+                width.max((520.0 * u).min(corner[0] - ml))
+            } else {
+                width
+            };
             self.sheet(view, o, e, [corner[0] - width, corner[1]], width);
             return;
         }

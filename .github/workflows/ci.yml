@@ -71,6 +71,9 @@ jobs:
           name: screenshots
           path: screenshots/
       - run: cargo run -p mofact-balance -- data
+      # How long the bot's playthrough takes, worked out from the content:
+      # it fails outside 80 to 120 hours. The nightly run plays it for real.
+      - run: cargo run -p mofact-bot -- --estimate data
       - run: cargo run --release -p mofact-headless -- scenarios data
       # Tick time on the starter, R44 budget and 2x stress bases, per runner (T23).
       - name: Benchmarks

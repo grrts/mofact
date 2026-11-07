@@ -6,6 +6,7 @@
 //! 64×64 grid of which entity covers each tile, so "what is at this tile"
 //! never searches.
 
+use crate::hash::Fast;
 use mofact_core::geom::{ChunkPos, Dir, TilePos};
 use mofact_core::ids::EntityId;
 use mofact_core::CHUNK_SIZE;
@@ -59,7 +60,7 @@ fn tile_index(pos: TilePos) -> usize {
 pub struct Entities {
     slots: Vec<Option<Entity>>,
     live: usize,
-    chunks: HashMap<ChunkPos, ChunkGrid>,
+    chunks: HashMap<ChunkPos, ChunkGrid, Fast>,
 }
 
 impl Entities {

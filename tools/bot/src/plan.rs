@@ -216,6 +216,11 @@ impl<'a> Planner<'a> {
         (m.size.0 <= 2).then_some(m)
     }
 
+    /// The recipe that uses up a fluid by-product.
+    pub fn sink(&self, fluid: &ItemId) -> Option<usize> {
+        self.sinks.get(fluid).map(|s| s.1)
+    }
+
     pub fn way(&self, item: &ItemId) -> Option<&(u32, Way)> {
         self.ways.get(item)
     }

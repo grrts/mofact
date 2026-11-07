@@ -91,12 +91,13 @@ fn gear_points(n: usize, inner: f32, outer: f32) -> Vec<(f32, f32)> {
 }
 
 /// How many different [`mark`]s there are, not counting none.
-pub const MARKS: u8 = 7;
+pub const MARKS: u8 = 10;
 
 /// A small sign on the lower right of an item icon `s` pixels across,
 /// centred on (`x`, `y`), that tells it from others of the same shape
 /// without its colour (T58): `k` from 1 to [`MARKS`] is a dot, a bar, a
-/// ring, a cross, a triangle, two dots or a square; 0 is none.
+/// ring, a cross, a triangle, two dots, a square, a diamond, three dots or
+/// a dot in a ring; 0 is none.
 pub fn mark(c: &mut Canvas, k: u8, x: f32, y: f32, s: f32) {
     if k == 0 {
         return;
@@ -125,7 +126,22 @@ pub fn mark(c: &mut Canvas, k: u8, x: f32, y: f32, s: f32) {
             c.fill_circle(cx - g * 0.5, cy, g * 0.38, ink);
             c.fill_circle(cx + g * 0.5, cy, g * 0.38, ink);
         }
-        _ => c.fill_rect(cx - g * 0.6, cy - g * 0.6, g * 1.2, g * 1.2, ink),
+        6 => c.fill_rect(cx - g * 0.6, cy - g * 0.6, g * 1.2, g * 1.2, ink),
+        7 => {
+            let d = [(0.0, -1.0), (1.0, 0.0), (0.0, 1.0), (-1.0, 0.0)];
+            if let Some(p) = poly(&d, cx, cy, g * 0.9) {
+                c.fill(&p, ink);
+            }
+        }
+        8 => {
+            for (dx, dy) in [(0.0, -0.55), (-0.55, 0.4), (0.55, 0.4)] {
+                c.fill_circle(cx + g * dx, cy + g * dy, g * 0.32, ink);
+            }
+        }
+        _ => {
+            c.stroke_circle(cx, cy, g * 0.8, ink, w * 0.8);
+            c.fill_circle(cx, cy, g * 0.3, ink);
+        }
     }
 }
 

@@ -12,7 +12,7 @@ use crate::plan::Planner;
 use mofact_core::command::{Command, CommandError, CommandResult};
 use mofact_core::content::{BuildingRole, Content};
 use mofact_core::geom::{Dir, TilePos};
-use mofact_core::ids::{ItemId, ResearchId};
+use mofact_core::ids::{EntityId, ItemId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use mofact_sim::Sim;
 use std::collections::{HashMap, HashSet};
@@ -37,6 +37,12 @@ const LINES: &[(&str, usize)] = &[
 const LEFT: i32 = 60;
 const SHELF: i32 = 1600;
 
+/// Labs in a station for `packs` pack types, and the trees that feed it.
+pub fn station_shape(packs: usize) -> (usize, usize) {
+    let labs = packs.saturating_sub(1).div_ceil(2).max(2);
+    (labs, 2 * labs + 1)
+}
+
 pub struct Bot<'a> {
     pub sim: Sim,
     planner: Planner<'a>,
@@ -45,7 +51,10 @@ pub struct Bot<'a> {
     at: (i32, i32),
     row: i32,
     lines: HashMap<ItemId, usize>,
-    stations: Vec<Vec<ItemId>>,
+    /// Lab stations: the packs each takes, and what it is built of.
+    stations: Vec<(Vec<ItemId>, Vec<EntityId>)>,
+    /// What the bot placed since it last started a block.
+    placed: Vec<EntityId>,
     /// Ticks the bot may run before it gives up.
     limit: u64,
     /// What happened, with the game time of each step.
@@ -67,6 +76,7 @@ impl<'a> Bot<'a> {
             row: 0,
             lines: HashMap::new(),
             stations: Vec::new(),
+            placed: Vec::new(),
             limit: hours * 3600 * u64::from(TICKS_PER_SECOND),
             log: Vec::new(),
             told: 0,
@@ -125,7 +135,10 @@ impl<'a> Bot<'a> {
         };
         loop {
             match self.sim.apply(&cmd) {
-                CommandResult::Applied { .. } => break,
+                CommandResult::Applied { created, .. } => {
+                    self.placed.extend(created);
+                    break;
+                }
                 CommandResult::Refused(CommandError::CannotAfford) => {
                     let why = self.missing(p.building.as_str());
                     self.run(5, &|| why.clone())?;
@@ -141,6 +154,7 @@ impl<'a> Bot<'a> {
 
     /// Build `b` on the next free ground, and power what needs it.
     fn build(&mut self, mut b: Block) -> Result<(), String> {
+        self.placed.clear();
         if let Some(f) = b.fault() {
             return Err(f);
         }
@@ -230,8 +244,7 @@ impl<'a> Bot<'a> {
 
     /// Labs fed with every pack in `packs`, a tree for each belt they take.
     fn station(&mut self, packs: &[ItemId]) -> Result<(), String> {
-        let labs = packs.len().saturating_sub(1).div_ceil(2).max(2);
-        let slots = 2 * labs + 1;
+        let (labs, slots) = station_shape(packs.len());
         let mut trees = Vec::new();
         for i in 0..slots {
             trees.push(self.planner.block(&packs[i % packs.len()])?);
@@ -241,7 +254,21 @@ impl<'a> Bot<'a> {
         let lab = self.planner.building("lab");
         let b = layout::fan_in("lab", lab.size, labs, lab.power, upper, Some(west), trees);
         self.build(b)?;
-        self.stations.push(packs.to_vec());
+        // Older stations take only packs this one takes too: take them
+        // down, so they stop making packs nobody will use.
+        let placed = std::mem::take(&mut self.placed);
+        let mut old = Vec::new();
+        self.stations.retain(|(p, ids)| {
+            let keep = !p.iter().all(|x| packs.contains(x));
+            if !keep {
+                old.extend(ids.iter().copied());
+            }
+            keep
+        });
+        for id in old.into_iter().rev() {
+            self.sim.apply(&Command::Remove { entity: id });
+        }
+        self.stations.push((packs.to_vec(), placed));
         let names: Vec<&str> = packs.iter().map(|p| p.as_str()).collect();
         self.note(format!("built {labs} labs for {}", names.join(", ")));
         Ok(())
@@ -258,7 +285,7 @@ impl<'a> Bot<'a> {
         if !self
             .stations
             .iter()
-            .any(|s| packs.iter().all(|p| s.contains(p)))
+            .any(|(s, _)| packs.iter().all(|p| s.contains(p)))
         {
             self.station(&packs)?;
         }
@@ -363,25 +390,30 @@ impl<'a> Bot<'a> {
 
     /// The whole game.
     pub fn play(&mut self) -> Result<(), String> {
-        let goal =
-            self.content
-                .research
-                .iter()
-                .find(|r| {
-                    r.buildings.iter().any(|b| {
-                        self.content.buildings.iter().any(|d| {
-                            &d.id == b && matches!(d.role, BuildingRole::Megaproject { .. })
-                        })
-                    })
-                })
-                .map(|r| r.id.clone())
-                .ok_or("no research opens the megaproject")?;
+        let goal = self.goal()?;
         self.economy()?;
         for r in self.plan(&goal) {
             self.research(&r)?;
             self.economy()?;
         }
         self.megaproject()
+    }
+
+    /// The research that opens the megaproject.
+    pub fn goal(&self) -> Result<ResearchId, String> {
+        self.content
+            .research
+            .iter()
+            .find(|r| {
+                r.buildings.iter().any(|b| {
+                    self.content
+                        .buildings
+                        .iter()
+                        .any(|d| &d.id == b && matches!(d.role, BuildingRole::Megaproject { .. }))
+                })
+            })
+            .map(|r| r.id.clone())
+            .ok_or_else(|| "no research opens the megaproject".to_owned())
     }
 
     pub fn entities(&self) -> usize {
