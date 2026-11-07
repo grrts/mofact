@@ -501,11 +501,13 @@ fn screenshots(
     let mut scene = Scene::default();
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let size = (960, 540);
-    for ppt in [14.0, 32.0, 64.0] {
+    // The last at the dead of night (S9).
+    for (ppt, night) in [(14.0, 0.0), (32.0, 0.0), (64.0, 0.0), (32.0, 1.0)] {
         let camera = Camera {
             pixels_per_tile: ppt,
             ..camera
         };
+        scene.night = night;
         scene.build(
             &look,
             renderer.atlases(),
@@ -522,7 +524,11 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
-        let path = dir.join(format!("zoom-{ppt}.png"));
+        let path = if night > 0.0 {
+            dir.join(format!("night-{ppt}.png"))
+        } else {
+            dir.join(format!("zoom-{ppt}.png"))
+        };
         write_png(&path, size, &pixels)?;
         println!(
             "{}: {} sprites, band {}",
@@ -531,6 +537,7 @@ fn screenshots(
             scene.band
         );
     }
+    scene.night = 0.0;
     // The world around the start and further out, on a phone held upright.
     let size = (1080, 2340);
     for (name, center, ppt) in [
@@ -738,7 +745,7 @@ fn screenshots(
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
             "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
-            "menu", "new-game",
+            "menu", "new-game", "plan",
         ];
         for sheet in sheets {
             let mut hud = Hud::new();
@@ -763,6 +770,8 @@ fn screenshots(
                 "research" => hud.toggle_research(),
                 "problems" => hud.toggle_problems(),
                 "recipes" => hud.browse("iron-plate".into()),
+                // A whole chain for the ratio calculator.
+                "plan" => hud.browse("circuit".into()),
                 "menu" => hud.open_menu(None),
                 "new-game" => hud.open_menu(Some((2, 271_828))),
                 "radial" => {

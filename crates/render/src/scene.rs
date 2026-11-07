@@ -66,6 +66,8 @@ pub struct Scene {
     pub time: f32,
     /// Low-power mode (T66): the ground keeps still and skips its fine
     /// close-up detail.
+    /// How far into the night it is (S9): 0 by day, 1 at its darkest.
+    pub night: f32,
     pub low_power: bool,
     /// The tiles buildings stand on, from the last [`Scene::build`]: no
     /// decorations are drawn there.
@@ -677,6 +679,18 @@ pub fn map_stride(pixels_per_tile: f32) -> i32 {
 }
 
 /// The atlases for every band, painted with the placeholder sprites.
+/// How far into the night it is at `tick` (S9): a day lasts ten minutes,
+/// dusk and dawn ease in and out, and the dark part is about a fifth of it.
+/// Drawing only: nothing in the factory runs differently at night.
+pub fn night_at(tick: u64) -> f32 {
+    const DAY: u64 = 10 * 60 * mofact_core::TICKS_PER_SECOND as u64;
+    // Start at mid-morning, so a new game opens in daylight.
+    let phase = ((tick + DAY / 8) % DAY) as f32 / DAY as f32;
+    let sun = (phase * std::f32::consts::TAU).cos();
+    // Below the horizon from a quarter of the way down.
+    ((-sun - 0.3) / 0.5).clamp(0.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

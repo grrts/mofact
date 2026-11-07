@@ -316,7 +316,7 @@ impl Renderer {
                     map[3],
                     scene.terrain.stride.max(1) as f32,
                     if scene.low_power { 1.0 } else { 0.0 },
-                    0.0,
+                    scene.night.clamp(0.0, 1.0),
                     0.0,
                 ]
             }),

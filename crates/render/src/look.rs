@@ -1150,6 +1150,9 @@ pub fn atlas_size(px: u32) -> u32 {
 /// (top to bottom as painted) before it is turned.
 pub const MIRROR: u32 = 4;
 
+/// In an instance's turns: a light, which shines as bright by night (S9).
+pub const LIT: u32 = 8;
+
 /// Items and badges are drawn at this fraction of a tile.
 pub const ITEM_TILES: f32 = 0.5;
 

@@ -9,6 +9,7 @@ struct Globals {
     ground: vec4<f32>,
     // Tiles per terrain texel (x): 1 up close, more on the world map.
     // Low-power mode (y): 1 keeps the ground still and plain.
+    // Night (z): 0 by day, 1 at the dead of night (S9).
     map: vec4<f32>,
 };
 
@@ -29,6 +30,11 @@ struct Out {
     @location(0) uv: vec2<f32>,
     @location(1) tint: vec4<f32>,
 };
+
+// The light at night: dim and blue, but the factory still reads.
+fn night_light() -> vec3<f32> {
+    return mix(vec3<f32>(1.0), vec3<f32>(0.42, 0.5, 0.72), globals.map.z);
+}
 
 fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
     return select(pow((c + 0.055) / 1.055, vec3<f32>(2.4)), c / 12.92, c <= vec3<f32>(0.04045));
@@ -54,7 +60,9 @@ fn vs(@builtin(vertex_index) vi: u32, s: Sprite) -> Out {
     var out: Out;
     out.clip = vec4<f32>(world * globals.xf.xy + globals.xf.zw, 0.0, 1.0);
     out.uv = s.uv.xy + t * s.uv.zw;
-    out.tint = vec4<f32>(srgb_to_linear(s.tint.rgb), s.tint.a);
+    // Lights (LIT) shine the same by night; everything else dims.
+    let light = select(night_light(), vec3<f32>(1.0), (s.turns & 8u) != 0u);
+    out.tint = vec4<f32>(srgb_to_linear(s.tint.rgb * light), s.tint.a);
     return out;
 }
 
@@ -278,5 +286,7 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     let gedge = min(fract(world), 1.0 - fract(world)) * ppt;
     let line = 1.0 - smoothstep(0.0, 1.0, min(gedge.x, gedge.y));
     c = c * (1.0 - 0.12 * line * smoothstep(10.0, 16.0, ppt) * (1.0 - wet));
+    // Lava keeps its glow at night.
+    c = c * mix(night_light(), vec3<f32>(1.0), molten);
     return vec4<f32>(srgb_to_linear(c), 1.0);
 }
