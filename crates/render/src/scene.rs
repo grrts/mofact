@@ -260,6 +260,14 @@ impl Scene {
             let Some(sprite) = look.linked(&e.building, e.dir, setting(e), working, e.links) else {
                 continue;
             };
+            // A turbine on a grid turns; one no pole reaches stands still.
+            let sprite = match e.grid {
+                Some(_) => {
+                    let lag = f64::from(e.id.0 % 7) * 0.13;
+                    look.spinning(&e.building, seconds + lag).unwrap_or(sprite)
+                }
+                None => sprite,
+            };
             let instance = Instance {
                 pos: [x, y],
                 size: [w, h],

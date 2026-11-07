@@ -297,6 +297,14 @@ impl Game {
             self.overlay
                 .panel([x, y], [ppt, ppt], ppt * 0.3, [0xff, 0x5d, 0x5d, 0x70]);
         }
+        power_marks(
+            &mut self.overlay,
+            &self.content,
+            &latest,
+            &camera,
+            target.size(),
+            scale,
+        );
         let nudge = coach_marks(
             &mut self.overlay,
             coach.as_ref(),
@@ -662,6 +670,105 @@ fn coach_marks(
             };
             label(o, step.say(), mid, y, *below, accent);
             Some(step.tool())
+        }
+    }
+}
+
+/// Power made visible on the map: wires between poles in reach of each
+/// other and from each pole to what it powers (as the sim joins them: the
+/// first pole whose supply square covers it), and a "No power" tag on
+/// anything that needs power and has none.
+fn power_marks(
+    o: &mut Overlay,
+    content: &Content,
+    snap: &mofact_core::snapshot::Snapshot,
+    camera: &Camera,
+    (sw, sh): (u32, u32),
+    scale: f32,
+) {
+    use mofact_core::content::BuildingRole as R;
+    let ppt = camera.pixels_per_tile;
+    let def = |e: &mofact_core::snapshot::EntityView| {
+        content.buildings.iter().find(|b| b.id == e.building)
+    };
+    // The middle of an entity on screen, a little up for a pole's top.
+    let mid = |e: &mofact_core::snapshot::EntityView, lift: f32| {
+        let (w, h) = def(e).map_or((1, 1), |d| d.size);
+        [
+            (e.pos.x as f32 + f32::from(w) / 2.0 - camera.center[0]) * ppt + sw as f32 / 2.0,
+            (e.pos.y as f32 + f32::from(h) / 2.0 - lift - camera.center[1]) * ppt + sh as f32 / 2.0,
+        ]
+    };
+    let poles: Vec<_> = snap
+        .entities
+        .iter()
+        .filter_map(|e| match def(e)?.role {
+            R::Pole { wire, supply } => Some((e, wire, supply)),
+            _ => None,
+        })
+        .collect();
+    let thick = (2.0 * scale).max(ppt * 0.06);
+    let wire = |o: &mut Overlay, a: [f32; 2], b: [f32; 2], ink: [u8; 4]| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len = dx.hypot(dy);
+        // Off screen both ends: nothing to draw.
+        let out = |p: [f32; 2]| p[0] < 0.0 || p[1] < 0.0 || p[0] > sw as f32 || p[1] > sh as f32;
+        if out(a) && out(b) && len < (sw + sh) as f32 {
+            return;
+        }
+        let steps = (len / (thick * 0.6)).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            let f = k as f32 / steps as f32;
+            let p = [a[0] + dx * f - thick / 2.0, a[1] + dy * f - thick / 2.0];
+            o.panel(p, [thick, thick], thick / 2.0, ink);
+        }
+    };
+    let ink = [0x24, 0x1c, 0x16, 0xe0];
+    let lift = 0.25;
+    for (i, (a, wa, _)) in poles.iter().enumerate() {
+        for (b, wb, _) in &poles[i + 1..] {
+            let reach = i32::from((*wa).min(*wb));
+            if (a.pos.x - b.pos.x).abs().max((a.pos.y - b.pos.y).abs()) <= reach {
+                wire(o, mid(a, lift), mid(b, lift), ink);
+            }
+        }
+    }
+    for e in &snap.entities {
+        let Some(d) = def(e) else { continue };
+        let powered = d.power > 0.0 || matches!(d.role, R::Generator { .. } | R::Engine { .. });
+        if !powered {
+            continue;
+        }
+        let (w, h) = (i32::from(d.size.0), i32::from(d.size.1));
+        let covering = poles.iter().find(|(p, _, s)| {
+            let s = i32::from(*s);
+            e.pos.x <= p.pos.x + s
+                && e.pos.x + w > p.pos.x - s
+                && e.pos.y <= p.pos.y + s
+                && e.pos.y + h > p.pos.y - s
+        });
+        if let Some((p, _, _)) = covering {
+            wire(o, mid(p, lift), mid(e, 0.0), ink);
+        }
+        if e.state == mofact_core::snapshot::MachineState::NoPower && ppt >= 14.0 * scale {
+            let px = 11.0 * scale;
+            let text = "No power";
+            let (pad, ch) = (6.0 * scale, 18.0 * scale);
+            let tw = o.measure(text, px) + 2.0 * pad;
+            let c = mid(e, 0.0);
+            let top = c[1] - f32::from(d.size.1) * ppt / 2.0 - ch - 2.0 * scale;
+            o.panel(
+                [c[0] - tw / 2.0, top],
+                [tw, ch],
+                ch / 2.0,
+                [0xff, 0x5d, 0x5d, 0xf0],
+            );
+            o.text(
+                text,
+                [c[0] - tw / 2.0 + pad, top + (ch + o.cap_height(px)) / 2.0],
+                px,
+                [0x1b, 0x1f, 0x24, 0xff],
+            );
         }
     }
 }
