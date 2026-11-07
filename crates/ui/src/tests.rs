@@ -38,6 +38,7 @@ fn snapshot() -> Snapshot {
         depleted: Default::default(),
         pins: Default::default(),
         trains: vec![train()],
+        mega: None,
     }
 }
 
@@ -1121,4 +1122,35 @@ fn the_recipe_browser_works_out_machines_for_a_rate_even_on_a_small_phone_held_s
     f.hud.browse("copper-ore".into());
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Rate(_))));
+}
+
+#[test]
+fn the_skyhook_sheet_shows_what_its_stage_still_needs() {
+    let mut f = Fixture::new();
+    let mut sky = f.snapshot.entities[1].clone();
+    sky.id = EntityId(11);
+    sky.building = "skyhook".into();
+    sky.pos = TilePos::new(20, 0);
+    f.snapshot.entities.push(sky);
+    f.snapshot.mega = Some(mofact_core::snapshot::MegaView {
+        id: EntityId(11),
+        stage: 1,
+        stages: 4,
+        name: "Tether".into(),
+        needs: vec![
+            ("tether-segment".into(), 40, 300),
+            ("superconductor".into(), 200, 200),
+        ],
+    });
+    f.hud.select(Some(EntityId(11)));
+    for (size, scale) in [((1280, 720), 1.0), ((1080, 2340), 3.0)] {
+        f.draw(size, scale, &Tool::Hand);
+        let tether = f.find(&Hit::Item("tether-segment".into()));
+        let wire = f.find(&Hit::Item("superconductor".into()));
+        assert!(wire[0] > tether[0]);
+        assert!(
+            wire[0] + wire[2] <= size.0 as f32,
+            "the needs fit the screen"
+        );
+    }
 }

@@ -55,4 +55,19 @@
     (id: "magnet",       name: "Magnet",       kind: Solid, shape: Magnet,  color: "magnet",     tier: 6),
     (id: "electric-engine", name: "Electric engine", kind: Solid, shape: Gear, color: "electric-engine", tier: 6),
     (id: "aerospace-pack", name: "Aerospace pack", kind: Solid, shape: Pack, color: "pack-aerospace", tier: 6),
+    // Tier 7, "orbital" (T54): superconducting magnets, thinking cores and
+    // the drones they fly.
+    (id: "superconductor", name: "Superconductor", kind: Solid, shape: Wire, color: "superconductor", tier: 7),
+    (id: "ai-core",      name: "AI core",      kind: Solid, shape: Chip,    color: "ai-core",    tier: 7),
+    (id: "drone",        name: "Drone",        kind: Solid, shape: Frame,   color: "drone",      tier: 7),
+    (id: "orbital-pack", name: "Orbital pack", kind: Solid, shape: Pack,    color: "pack-orbital", tier: 7),
+    // Tier 8, "stellar": fusion and the satellites it drives, and the parts
+    // of the skyhook, the megaproject.
+    (id: "fusion-cell",  name: "Fusion cell",  kind: Solid, shape: Cell,    color: "fusion-cell", tier: 8),
+    (id: "ion-thruster", name: "Ion thruster", kind: Solid, shape: Nozzle,  color: "ion-thruster", tier: 8),
+    (id: "satellite",    name: "Satellite",    kind: Solid, shape: Satellite, color: "satellite", tier: 8),
+    (id: "stellar-pack", name: "Stellar pack", kind: Solid, shape: Pack,    color: "pack-stellar", tier: 8),
+    (id: "tether-segment", name: "Tether segment", kind: Solid, shape: Wire, color: "tether", tier: 8),
+    (id: "climber",      name: "Climber",      kind: Solid, shape: Frame,   color: "climber",    tier: 8),
+    (id: "orbital-beacon", name: "Orbital beacon", kind: Solid, shape: Satellite, color: "beacon", tier: 8),
 ]

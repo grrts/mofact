@@ -136,6 +136,9 @@ enum Art {
     },
     /// The output arrow, facing east.
     Notch,
+    /// A chemical plant's vat in white, and its paddle facing east.
+    Vat,
+    Paddle,
     /// An assembler's stripe in white, to tint with its product's colour:
     /// an octagon's band for the faster kind.
     Stripe {
@@ -174,6 +177,8 @@ enum Art {
     /// A stop's platform, facing east and turned.
     Platform,
     Locomotive,
+    /// The megaproject's anchor.
+    Skyhook,
     /// 0 a dot, 1 a ring, 2 a bar.
     Fx(u8),
 }
@@ -211,6 +216,7 @@ enum Kind {
     Signal,
     Stop,
     Train,
+    Mega,
 }
 
 impl Kind {
@@ -320,6 +326,8 @@ fn shape(s: IconShape) -> Shape {
         IconShape::Chip => Shape::Chip,
         IconShape::Frame => Shape::Frame,
         IconShape::Magnet => Shape::Magnet,
+        IconShape::Satellite => Shape::Satellite,
+        IconShape::Nozzle => Shape::Nozzle,
     }
 }
 
@@ -508,6 +516,7 @@ impl Look {
                 BuildingRole::RailSignal => (Kind::Signal, Vec::new()),
                 BuildingRole::TrainStop => (Kind::Stop, Vec::new()),
                 BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
+                BuildingRole::Megaproject { .. } => (Kind::Mega, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -636,6 +645,7 @@ impl Look {
                     }
                 }
                 Kind::Train => push(&mut look, id.to_owned(), b.size, Art::Locomotive),
+                Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -655,11 +665,12 @@ impl Look {
                     let none = std::iter::once(None);
                     // Assemblers and furnaces draw their recipe as layers
                     // over the body.
-                    let baked = if matches!(kind, Kind::Assembler | Kind::Furnace) {
-                        &[][..]
-                    } else {
-                        &recipes[..]
-                    };
+                    let baked =
+                        if matches!(kind, Kind::Assembler | Kind::Furnace | Kind::ChemicalPlant) {
+                            &[][..]
+                        } else {
+                            &recipes[..]
+                        };
                     let choices: Vec<Option<&str>> =
                         none.chain(baked.iter().map(|r| Some(r.as_str()))).collect();
                     for setting in &choices {
@@ -757,6 +768,17 @@ impl Look {
                     stripe,
                     notch: None,
                     icon: Some((centre, across / 0.64)),
+                });
+            }
+            if kind == Kind::ChemicalPlant {
+                // The vat in the product's colour, and the paddle over it.
+                let vat = look.sprites.len();
+                push(&mut look, format!("{id}:vat"), b.size, Art::Vat);
+                push(&mut look, format!("{id}:paddle"), b.size, Art::Paddle);
+                layers = Some(Layers {
+                    stripe: Some(vat),
+                    notch: Some(vat + 1),
+                    icon: None,
                 });
             }
             if kind == Kind::Furnace {
@@ -936,6 +958,7 @@ impl Look {
                     | Kind::Signal
                     | Kind::Stop
                     | Kind::Train
+                    | Kind::Mega
             )
         })
     }
@@ -1006,12 +1029,14 @@ impl Look {
             // A pipe or rail on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
-            Kind::Train => b.base,
+            Kind::Train | Kind::Mega => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
             Kind::Assembler => b.base + dir_index(dir),
-            Kind::Furnace => b.base + usize::from(working) * 4 + dir_index(dir),
+            Kind::Furnace | Kind::ChemicalPlant => {
+                b.base + usize::from(working) * 4 + dir_index(dir)
+            }
             _ => {
                 let r = setting
                     .and_then(|r| b.settings.iter().position(|x| x == r))
@@ -1189,6 +1214,8 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
         Art::Notch => draw::notch_east(&mut c, z),
+        Art::Vat => draw::chemical_vat(&mut c, z),
+        Art::Paddle => draw::chemical_paddle(&mut c, z),
         Art::Splitter => draw::splitter(&mut c, z, fine),
         Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
         Art::Pipe { links } => draw::pipe(&mut c, z, fine, links),
@@ -1261,6 +1288,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::StopIcon => rail::stop_icon(&mut c, z, fine),
         Art::Platform => rail::platform(&mut c, z, fine),
         Art::Locomotive => rail::locomotive(&mut c, z, fine),
+        Art::Skyhook => draw::skyhook(&mut c, z, fine, tiles),
         Art::Fx(0) => draw::fx_dot(&mut c, w as f32),
         Art::Fx(1) => draw::fx_ring(&mut c, w as f32),
         Art::Fx(_) => draw::fx_bar(&mut c, w as f32, h as f32),
@@ -1369,9 +1397,10 @@ pub(crate) mod tests {
         assert_eq!(layers[0].tint, palette::item("iron"));
         assert_eq!(layers[1].sprite, "item:gear");
         assert!(look.layers(&asm, None).is_empty());
-        assert!(look
-            .layers(&"chemical-plant".into(), Some("plastic"))
-            .is_empty());
+        let vat = look.layers(&"chemical-plant".into(), Some("plastic"));
+        assert_eq!(vat[0].sprite, "chemical-plant:vat");
+        assert_eq!(vat[0].tint, palette::item("plastic"));
+        assert!(vat[1].turned, "the paddle turns with the plant");
         assert_eq!(
             look.sprite(&asm, Dir::West, None, false),
             Some("assembler:none:cold:2")

@@ -232,6 +232,21 @@ pub fn check(content: &Content) -> Vec<String> {
             } if tiles_per_second <= 0.0 || tiles_per_second.is_nan() || capacity == 0 => {
                 problems.push(format!("{owner} is a train that carries nothing anywhere"));
             }
+            BuildingRole::Megaproject { ref stages } => {
+                if stages.is_empty() || stages.iter().any(|s| s.needs.is_empty()) {
+                    problems.push(format!("{owner} is a megaproject with an empty stage"));
+                }
+                for s in stages.iter().flat_map(|s| &s.needs) {
+                    if !items.contains(s.item.as_str()) {
+                        problems.push(format!("{owner} needs unknown item `{}`", s.item));
+                    } else if fluids.contains(s.item.as_str()) || s.count == 0 {
+                        problems.push(format!(
+                            "{owner} needs `{}`, which belts can't bring",
+                            s.item
+                        ));
+                    }
+                }
+            }
             BuildingRole::Rail | BuildingRole::RailSignal | BuildingRole::TrainStop
                 if b.size != (1, 1) =>
             {
@@ -417,7 +432,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len()
             ),
-            (42, 53, 31, 28)
+            (53, 64, 32, 33)
         );
         let circuit = c
             .recipes

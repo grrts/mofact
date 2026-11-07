@@ -116,7 +116,7 @@
     ),
     (
         id: "robot-frame", name: "Robot frame", category: "assembling", seconds: 10.0,
-        inputs: [(item: "motor", count: 2), (item: "battery", count: 2), (item: "processor", count: 1), (item: "steel", count: 2)],
+        inputs: [(item: "motor", count: 2), (item: "battery", count: 2), (item: "processor", count: 1)],
         outputs: [(item: "robot-frame", count: 1)],
     ),
     (
@@ -281,5 +281,61 @@
         id: "light-aerospace-pack", name: "Light aerospace pack", category: "assembling", seconds: 24.0,
         inputs: [(item: "electric-engine", count: 1), (item: "aluminium-plate", count: 4), (item: "titanium-plate", count: 1)],
         outputs: [(item: "aerospace-pack", count: 2)],
+    ),
+    // Tiers 7 and 8 (T54): the long chains up to the skyhook.
+    (
+        id: "superconductor", name: "Superconductor", category: "assembling", seconds: 8.0,
+        inputs: [(item: "magnet", count: 1), (item: "titanium-plate", count: 1), (item: "copper-plate", count: 2)],
+        outputs: [(item: "superconductor", count: 2)],
+    ),
+    (
+        id: "ai-core", name: "AI core", category: "assembling", seconds: 15.0,
+        inputs: [(item: "processor", count: 4), (item: "superconductor", count: 1), (item: "battery", count: 2)],
+        outputs: [(item: "ai-core", count: 1)],
+    ),
+    (
+        id: "drone", name: "Drone", category: "assembling", seconds: 20.0,
+        inputs: [(item: "robot-frame", count: 1), (item: "ai-core", count: 1), (item: "electric-engine", count: 2)],
+        outputs: [(item: "drone", count: 1)],
+    ),
+    (
+        id: "orbital-pack", name: "Orbital pack", category: "assembling", seconds: 30.0,
+        inputs: [(item: "drone", count: 1), (item: "low-density-structure", count: 2)],
+        outputs: [(item: "orbital-pack", count: 3)],
+    ),
+    (
+        id: "fusion-cell", name: "Fusion cell", category: "assembling", seconds: 20.0,
+        inputs: [(item: "superconductor", count: 4), (item: "ai-core", count: 1), (item: "titanium-plate", count: 2)],
+        outputs: [(item: "fusion-cell", count: 1)],
+    ),
+    (
+        id: "ion-thruster", name: "Ion thruster", category: "assembling", seconds: 20.0,
+        inputs: [(item: "fusion-cell", count: 1), (item: "electric-engine", count: 2), (item: "titanium-plate", count: 4)],
+        outputs: [(item: "ion-thruster", count: 1)],
+    ),
+    (
+        id: "satellite", name: "Satellite", category: "assembling", seconds: 30.0,
+        inputs: [(item: "ion-thruster", count: 1), (item: "drone", count: 1), (item: "aluminium-plate", count: 6)],
+        outputs: [(item: "satellite", count: 1)],
+    ),
+    (
+        id: "stellar-pack", name: "Stellar pack", category: "assembling", seconds: 40.0,
+        inputs: [(item: "satellite", count: 1), (item: "fusion-cell", count: 1)],
+        outputs: [(item: "stellar-pack", count: 4)],
+    ),
+    (
+        id: "tether-segment", name: "Tether segment", category: "assembling", seconds: 10.0,
+        inputs: [(item: "superconductor", count: 4), (item: "low-density-structure", count: 2), (item: "titanium-plate", count: 4)],
+        outputs: [(item: "tether-segment", count: 1)],
+    ),
+    (
+        id: "climber", name: "Climber", category: "assembling", seconds: 40.0,
+        inputs: [(item: "satellite", count: 1), (item: "fusion-cell", count: 2), (item: "drone", count: 1)],
+        outputs: [(item: "climber", count: 1)],
+    ),
+    (
+        id: "orbital-beacon", name: "Orbital beacon", category: "assembling", seconds: 60.0,
+        inputs: [(item: "climber", count: 1), (item: "ai-core", count: 4), (item: "ion-thruster", count: 2)],
+        outputs: [(item: "orbital-beacon", count: 1)],
     ),
 ]

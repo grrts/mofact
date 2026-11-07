@@ -68,6 +68,28 @@ pub fn analyse(content: &Content) -> Report {
         .iter()
         .flat_map(|r| r.outputs.iter().map(|s| &s.item))
         .collect();
+    // A machine takes each input on a side of its own and puts each output
+    // out of another: a one-tile machine has four.
+    for r in &craftable {
+        let smallest = content
+            .buildings
+            .iter()
+            .filter_map(|b| match &b.role {
+                BuildingRole::Crafter { categories, .. } if categories.contains(&r.category) => {
+                    Some(u32::from(b.size.0) * u32::from(b.size.1))
+                }
+                _ => None,
+            })
+            .min();
+        if smallest == Some(1) && r.inputs.len() + r.outputs.len() > 4 {
+            report.problems.push(format!(
+                "{} has {} inputs and {} outputs: more than the four sides of a one-tile machine",
+                r.id,
+                r.inputs.len(),
+                r.outputs.len()
+            ));
+        }
+    }
     let has_miner = content
         .buildings
         .iter()
@@ -171,6 +193,17 @@ pub fn analyse(content: &Content) -> Report {
         .chain(content.buildings.iter().filter_map(|b| match &b.role {
             BuildingRole::Engine { fluid, .. } => Some(fluid),
             _ => None,
+        }))
+        // The megaproject takes the last parts.
+        .chain(content.buildings.iter().flat_map(|b| {
+            match &b.role {
+                BuildingRole::Megaproject { stages } => stages
+                    .iter()
+                    .flat_map(|s| &s.needs)
+                    .map(|s| &s.item)
+                    .collect(),
+                _ => Vec::new(),
+            }
         }))
         .collect();
     for r in &content.recipes {
@@ -411,6 +444,10 @@ mod tests {
         assert_eq!(report.depth[&ItemId::from("engineering-pack")], 4);
         // Tier 5 (T53) runs deeper than anything before it.
         assert!(report.depth[&ItemId::from("precision-pack")] >= 7);
+        // The megaproject's last part is the deepest chain (R6).
+        let deepest = report.depth.values().max().copied().unwrap_or(0);
+        assert!(deepest >= 12, "deepest chain {deepest}");
+        assert_eq!(report.depth[&ItemId::from("orbital-beacon")], deepest);
         // Bricks go into labs; research takes the packs.
         assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
@@ -444,7 +481,12 @@ mod tests {
                 "alternate-assembly",
                 "alternate-chemistry",
                 "alternate-silicon",
-                "alternate-alloys"
+                "alternate-alloys",
+                "superconductors",
+                "drones",
+                "fusion",
+                "satellites",
+                "skyhook"
             ]
         );
     }

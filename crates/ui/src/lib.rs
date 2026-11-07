@@ -2733,6 +2733,10 @@ impl Hud {
             )
         });
         let pump = def.is_some_and(|d| matches!(d.role, BuildingRole::Pump { .. }));
+        // A megaproject shows its stage and what that stage still needs.
+        let mega = view.snapshot.mega.as_ref().filter(|m| {
+            m.id == e.id && def.is_some_and(|d| matches!(d.role, BuildingRole::Megaproject { .. }))
+        });
         let well = def.and_then(|d| match &d.role {
             BuildingRole::Well { fluid, .. } => Some(fluid),
             _ => None,
@@ -2793,7 +2797,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
-        if !belt && !hub && !wired && !plumbing {
+        if !belt && !hub && !wired && !plumbing && mega.is_none() {
             let (label, color) = state(e.state, view.look);
             let spx = 12.0 * u;
             let sw = o.measure(label, spx) + 16.0 * u;
@@ -2829,6 +2833,24 @@ impl Hud {
                     px,
                     MUTED,
                 );
+            } else if let Some(m) = mega {
+                if m.done() {
+                    o.text("Built. Your factory has won!", [x, base], px, TEXT);
+                } else {
+                    let head = format!("{} · {} of {}", m.name, m.stage + 1, m.stages);
+                    x += o.text(&head, [x, base], px, MUTED) + 10.0 * u;
+                    for (item, have, need) in &m.needs {
+                        let start = x;
+                        if let Some((sprite, t)) = view.look.item(item) {
+                            o.icon(sprite, [x, y + (row - s) / 2.0], s, t);
+                        }
+                        x += s + 2.0 * u;
+                        let color = if have >= need { MUTED } else { TEXT };
+                        x += o.text(&format!("{have}/{need}"), [x, base], px, color) + 8.0 * u;
+                        self.hits
+                            .push(([start, y, x - start, row], Hit::Item(item.clone())));
+                    }
+                }
             } else if let Some((kw, fluid)) = engine {
                 let text = match grid {
                     Some(_) => format!(

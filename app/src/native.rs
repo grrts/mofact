@@ -745,7 +745,7 @@ fn screenshots(
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
             "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
-            "menu", "new-game", "plan",
+            "menu", "new-game", "plan", "mega",
         ];
         for sheet in sheets {
             let mut hud = Hud::new();
@@ -766,6 +766,11 @@ fn screenshots(
                         None => continue,
                     }
                 }
+                // A world with a megaproject shows its stage.
+                "mega" => match &latest.mega {
+                    Some(m) => hud.select(Some(m.id)),
+                    None => continue,
+                },
                 "build" => hud.toggle_build_sheet(),
                 "research" => hud.toggle_research(),
                 "problems" => hud.toggle_problems(),

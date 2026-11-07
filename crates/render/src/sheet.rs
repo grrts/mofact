@@ -220,7 +220,14 @@ fn closeups() {
     let content = content();
     let look = Look::new(&content);
     let px = 96;
-    let cell = 2 * px + 12;
+    // Room for the largest building.
+    let tiles = content
+        .buildings
+        .iter()
+        .map(|b| b.size.0.max(b.size.1))
+        .max()
+        .unwrap_or(1);
+    let cell = u32::from(tiles) * px + 12;
     let cols = 6;
     let n = content.buildings.len() as u32;
     let (w, h) = (cols * cell, n.div_ceil(cols) * cell);

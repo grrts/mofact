@@ -29,6 +29,11 @@ pub enum Role {
     Lab {
         speed: f32,
     },
+    /// The last build: each stage's items, taken in turn.
+    Mega {
+        stages: Vec<Vec<(Item, u32)>>,
+        names: Vec<String>,
+    },
     Pole {
         wire: u8,
         supply: u8,
@@ -228,6 +233,10 @@ impl Tables {
                     speed: *speed,
                 },
                 BuildingRole::Lab { speed } => Role::Lab { speed: *speed },
+                BuildingRole::Megaproject { stages } => Role::Mega {
+                    stages: stages.iter().map(|st| stacks(&t, &st.needs)).collect(),
+                    names: stages.iter().map(|st| st.name.clone()).collect(),
+                },
                 BuildingRole::Pole { wire, supply } => Role::Pole {
                     wire: *wire,
                     supply: *supply,
