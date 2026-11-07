@@ -344,6 +344,10 @@ pub fn run() -> Result<(), String> {
     let mut settings = files.settings();
     app.game.set_low_power(settings.0);
     app.game.set_colour_blind(settings.1);
+    app.game.set_shop(Box::new(crate::shop::Sandbox::new(
+        files.full_game(),
+        Box::new(files.keep_full_game()),
+    )));
     let mut presented = 0u64;
     let mut cycled = false;
     let mut second = (Instant::now(), 0u32);
@@ -649,6 +653,7 @@ fn screenshots(
             safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
             nudge: None,
             slots: &[],
+            store: &mofact_ui::StoreView::default(),
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -717,6 +722,7 @@ fn screenshots(
                 safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
                 nudge: None,
                 slots: &slots,
+                store: &mofact_ui::StoreView::default(),
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -745,8 +751,14 @@ fn screenshots(
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
             "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
-            "menu", "new-game", "plan", "mega",
+            "menu", "new-game", "plan", "mega", "unlock",
         ];
+        // As a fresh install sees it: the demo, with the price known.
+        let store = mofact_ui::StoreView {
+            demo: Some(crate::shop::DEMO_TIER),
+            price: Some("€4.99".into()),
+            ..Default::default()
+        };
         for sheet in sheets {
             let mut hud = Hud::new();
             match sheet {
@@ -773,6 +785,7 @@ fn screenshots(
                 },
                 "build" => hud.toggle_build_sheet(),
                 "research" => hud.toggle_research(),
+                "unlock" => hud.open_unlock(),
                 "problems" => hud.toggle_problems(),
                 "recipes" => hud.browse("iron-plate".into()),
                 // A whole chain for the ratio calculator.
@@ -804,6 +817,7 @@ fn screenshots(
                 safe: safe.map(|v| v * scale),
                 nudge: None,
                 slots: &slots,
+                store: &store,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);

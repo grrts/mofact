@@ -1804,3 +1804,49 @@ fn a_row_of_labs_pools_more_pack_types_than_a_lab_has_sides() {
     let r = sim.snapshot().research;
     assert!(r.progress.0 >= 60, "{r:?}");
 }
+
+#[test]
+fn the_demo_stops_research_at_its_tier_until_the_full_game_is_bought() {
+    let mut sim = Sim::with_content(&content());
+    for r in [
+        "steel-working",
+        "motors",
+        "fluid-handling",
+        "steam-power",
+        "oil-processing",
+        "sulfur-processing",
+        "advanced-electronics",
+        "chemistry",
+        "silicon-processing",
+        "precision-engineering",
+    ] {
+        sim.complete_research(&r.into());
+    }
+    let pick = |r: &str| Command::SetResearch {
+        research: Some(r.into()),
+    };
+    sim.apply(&pick("titanium-smelting"));
+    assert!(sim.snapshot().research.current.is_some());
+    sim.set_demo(Some(4));
+    assert_eq!(
+        sim.snapshot().research.current,
+        None,
+        "research past the gate stops"
+    );
+    assert_eq!(
+        sim.apply(&pick("titanium-smelting")),
+        CommandResult::Refused(CommandError::FullGame)
+    );
+    assert!(
+        matches!(
+            sim.apply(&pick("solar-energy")),
+            CommandResult::Applied { .. }
+        ),
+        "the demo's own tiers stay open"
+    );
+    sim.set_demo(None);
+    assert!(matches!(
+        sim.apply(&pick("titanium-smelting")),
+        CommandResult::Applied { .. }
+    ));
+}

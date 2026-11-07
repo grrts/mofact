@@ -185,6 +185,10 @@ pub struct Sim {
     /// The goal the player is on: an index into the content's goals, which
     /// is their count once all are met.
     goal: u16,
+    /// The demo's last open tier: research of a higher tier is refused
+    /// until the full game is bought. Not saved: the app sets it from the
+    /// store each time it starts.
+    demo: Option<u8>,
 }
 
 /// Research progress, kept per research so switching loses nothing.
@@ -224,6 +228,23 @@ impl Sim {
         if let Some(r) = self.tables.research(id) {
             self.finish_research(r);
         }
+    }
+
+    /// Gate research above `tier` behind the full game, or open it all
+    /// with `None`. Research already under way above the gate stops.
+    pub fn set_demo(&mut self, tier: Option<u8>) {
+        self.demo = tier;
+        if let Some(r) = self.research.current {
+            if self.gated(r) {
+                self.research.current = None;
+            }
+        }
+    }
+
+    /// Whether research `r` is past the demo's gate.
+    fn gated(&self, r: u16) -> bool {
+        self.demo
+            .is_some_and(|t| self.tables.research[r as usize].tier > t)
     }
 
     pub fn research_done(&self, id: &mofact_core::ids::ResearchId) -> bool {
@@ -706,6 +727,9 @@ impl Sim {
                         let ready = def.requires.iter().all(|&q| self.research.done[q as usize]);
                         if self.research.done[r as usize] || !ready {
                             return Err(CommandError::Locked);
+                        }
+                        if self.gated(r) {
+                            return Err(CommandError::FullGame);
                         }
                         Some(r)
                     }

@@ -7,6 +7,7 @@
 use crate::built::Built;
 use crate::guide::{Coach, Guide};
 use crate::ore::OreMap;
+use crate::shop::Purchase;
 use crate::slots::{Request, Store};
 use crate::sound::Sound;
 use mofact_core::content::Content;
@@ -14,7 +15,7 @@ use mofact_core::geom::TilePos;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
-use mofact_ui::{Action, Hud, SlotView, View};
+use mofact_ui::{Action, Hud, SlotView, StoreView, View};
 use web_time::{Duration, Instant};
 
 /// Frame pacing (T66): 60 fps while playing, 30 in low-power mode or once
@@ -67,6 +68,10 @@ pub struct Game {
     /// and the slots as it lists them.
     requests: Vec<Request>,
     slots: Vec<SlotView>,
+    /// The full game's purchase; none where nothing is sold, which plays
+    /// the full game (tests, tools).
+    purchase: Option<Purchase>,
+    store: StoreView,
 }
 
 impl Game {
@@ -134,6 +139,8 @@ impl Game {
             touched: Instant::now(),
             requests: Vec::new(),
             slots: Vec::new(),
+            purchase: None,
+            store: StoreView::default(),
             content,
             ore,
             controls,
@@ -164,6 +171,15 @@ impl Game {
     }
 
     /// Paint everything again in the colour-blind look, or the usual one.
+    /// Sell the full game through `shop`: the demo's gate holds until it
+    /// is bought (T61).
+    pub fn set_shop(&mut self, shop: Box<dyn crate::shop::Shop>) {
+        let p = Purchase::new(shop);
+        self.sim.set_demo(p.demo());
+        self.store = p.view();
+        self.purchase = Some(p);
+    }
+
     fn use_colour_blind(&mut self, on: bool) {
         if self.look.colour_blind() == on {
             return;
@@ -191,6 +207,13 @@ impl Game {
             return Frame::Skipped;
         }
         self.drawn = Some(now);
+        if let Some(p) = &mut self.purchase {
+            if p.poll() {
+                self.sim.set_demo(None);
+                self.hud.toast("The full game is open. Thank you!");
+            }
+            self.store = p.view();
+        }
         self.sim.pump();
         let results: Vec<_> = self.sim.results().collect();
         self.sound.results(&results);
@@ -207,6 +230,7 @@ impl Game {
                     E::NoOre => "Drills only go on ore: tap a coloured ore tile.",
                     E::Terrain => "Nothing can be built on water or cliffs.",
                     E::Overgrown => "Trees in the way: drag over them with Remove to clear them.",
+                    E::FullGame => "That research needs the full game.",
                 });
             }
         }
@@ -408,6 +432,7 @@ impl Game {
             safe: self.safe,
             nudge,
             slots: &self.slots,
+            store: &self.store,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -479,6 +504,16 @@ impl Game {
                 self.requests.push(Request::New { slot, seed, preset })
             }
             Action::Redo => self.sim.redo(),
+            Action::Buy => {
+                if let Some(p) = &mut self.purchase {
+                    p.buy();
+                }
+            }
+            Action::Restore => {
+                if let Some(p) = &mut self.purchase {
+                    p.restore();
+                }
+            }
             // With the hand, a tap inspects what's there or closes the sheet.
             // With a building in hand, a tap on something already built
             // inspects it instead of trying to build on top of it.
@@ -684,6 +719,7 @@ impl Game {
         self.ore = self.ore.regen(&self.content, seed, preset);
         sim.set_world_gen(seed, preset);
         let camera = framing(&self.content, &sim);
+        sim.set_demo(self.purchase.as_ref().and_then(Purchase::demo));
         self.sim = SimHandle::spawn(sim);
         self.built = Built::new(&self.content);
         self.built.world = Some(self.ore.gen());

@@ -86,6 +86,12 @@ impl SimHandle {
         }
     }
 
+    /// Gate research above `tier` behind the full game, or open it all
+    /// with `None`, at the start of the next tick.
+    pub fn set_demo(&self, tier: Option<u8>) {
+        let _ = self.tx.send(Msg::Job(Job::Demo(tier)));
+    }
+
     /// Undo the latest player action, at the start of the next tick.
     pub fn undo(&self) {
         let _ = self.tx.send(Msg::Job(Job::Undo));

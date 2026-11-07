@@ -119,6 +119,26 @@ impl Files {
         (on("low-power"), on("colour-blind"))
     }
 
+    /// Whether the full game was bought, as remembered on this device.
+    pub fn full_game(&self) -> bool {
+        self.first.with_file_name("full-game").exists()
+    }
+
+    /// Remember that the full game was bought.
+    pub fn keep_full_game(&self) -> impl FnMut(bool) + 'static {
+        let path = self.first.with_file_name("full-game");
+        move |on| {
+            let done = if on {
+                write(&path, b"owned\n")
+            } else {
+                std::fs::remove_file(&path).map_err(|e| e.to_string())
+            };
+            if let Err(e) = done {
+                eprintln!("mofact: couldn't remember the full game: {e}");
+            }
+        }
+    }
+
     pub fn set_settings(&self, (low_power, colour_blind): (bool, bool)) -> Result<(), String> {
         let flag = |on: bool| if on { "on" } else { "off" };
         let text = format!(

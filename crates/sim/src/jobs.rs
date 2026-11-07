@@ -12,6 +12,8 @@ pub(crate) enum Job {
     Action(Vec<Command>),
     Undo,
     Redo,
+    /// Set the demo's gate tier, outside the undo history.
+    Demo(Option<u8>),
 }
 
 /// Whether there is something to undo and to redo, packed for an atomic.
@@ -41,5 +43,6 @@ pub(crate) fn work(
         Job::Redo => {
             history.redo(sim);
         }
+        Job::Demo(tier) => sim.set_demo(tier),
     }
 }

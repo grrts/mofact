@@ -111,6 +111,21 @@ pub struct View<'a> {
     pub nudge: Option<Tool>,
     /// The save slots, for the game menu (T63).
     pub slots: &'a [SlotView],
+    /// The demo and the full game's purchase (T61).
+    pub store: &'a StoreView,
+}
+
+/// Whether this is the demo, and how buying the full game is going.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct StoreView {
+    /// The demo's last open tier; none in the full game.
+    pub demo: Option<u8>,
+    /// The full game's price, as the store words it, once it is known.
+    pub price: Option<String>,
+    /// A purchase or restore is under way.
+    pub busy: bool,
+    /// What happened last, such as a cancelled or failed purchase.
+    pub note: Option<String>,
 }
 
 /// One save slot as the game menu shows it.
@@ -166,6 +181,11 @@ impl View<'_> {
             .research
             .iter()
             .all(|r| self.done(&r.id) || !r.buildings.contains(building))
+    }
+
+    /// Whether `r` is past the demo's last tier.
+    fn gated(&self, r: &ResearchDef) -> bool {
+        self.store.demo.is_some_and(|t| r.tier > t)
     }
 
     /// Whether `r` can be picked now: not done, and its prerequisites are.
@@ -231,6 +251,10 @@ pub enum Action {
         seed: u64,
         preset: u8,
     },
+    /// Buy the full game.
+    Buy,
+    /// Look for a full game bought before, on this account.
+    Restore,
 }
 
 /// A control on screen, and what tapping it does.
@@ -247,6 +271,11 @@ enum Hit {
     Research,
     /// Set what labs work on.
     Study(Option<ResearchId>),
+    /// A research row past the demo: opens the full game sheet.
+    Unlock,
+    /// The full game sheet's buttons.
+    Buy,
+    Restore,
     /// Pick a building from the build sheet.
     Build(BuildingId),
     /// An item's icon: opens the recipe browser on it.
@@ -369,6 +398,8 @@ pub struct Hud {
     picking: Option<EntityId>,
     /// Whether the research sheet is open.
     research: bool,
+    /// Whether the full game sheet is open.
+    unlock: bool,
     /// Whether the build sheet is open.
     more: bool,
     /// Whether the problems list is open.
@@ -503,6 +534,11 @@ impl Hud {
     /// Open or close the problems list, as its button does.
     pub fn toggle_problems(&mut self) {
         self.tapped(Hit::Problems);
+    }
+
+    /// Open the full game sheet, as a research row past the demo does.
+    pub fn open_unlock(&mut self) {
+        self.tapped(Hit::Unlock);
     }
 
     /// Open or close the research sheet, as its button does.
@@ -697,6 +733,13 @@ impl Hud {
                 Vec::new()
             }
             Hit::Study(research) => vec![Action::Send(Command::SetResearch { research })],
+            Hit::Unlock => {
+                self.unlock = true;
+                self.research = false;
+                Vec::new()
+            }
+            Hit::Buy => vec![Action::Buy],
+            Hit::Restore => vec![Action::Restore],
             Hit::Item(item) => {
                 self.browse = Some(item);
                 self.selected = None;
@@ -717,6 +760,7 @@ impl Hud {
             Hit::Close => {
                 self.selected = None;
                 self.research = false;
+                self.unlock = false;
                 self.problems = false;
                 self.more = false;
                 self.radial = None;
@@ -738,6 +782,7 @@ impl Hud {
                 if self.menu {
                     self.selected = None;
                     self.research = false;
+                    self.unlock = false;
                     self.problems = false;
                     self.more = false;
                     self.browse = None;
@@ -1006,6 +1051,7 @@ impl Hud {
         if selected.is_none()
             && train.is_none()
             && !self.research
+            && !self.unlock
             && !self.more
             && !self.problems
             && self.browse.is_none()
@@ -1033,6 +1079,16 @@ impl Hud {
             let room = corner[1] - tip_y;
             self.build_sheet(view, o, [corner[0] - width, corner[1]], width, room);
             return;
+        }
+        if self.unlock {
+            if view.store.demo.is_none() {
+                // Bought: the sheet has done its job.
+                self.unlock = false;
+            } else {
+                let room = corner[1] - tip_y;
+                self.unlock_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+                return;
+            }
         }
         if self.research {
             let room = corner[1] - tip_y;
@@ -2480,7 +2536,22 @@ impl Hud {
         let row = 52.0 * u;
         let title = 30.0 * u;
         let fits = ((room - 2.0 * pad - title) / row).floor().max(1.0) as usize;
-        let shown = &view.content.research[..view.content.research.len().min(fits)];
+        // What can be picked comes first, then what is locked, then what is
+        // done, so the rows that fit are the ones worth a tap.
+        let current = view.snapshot.research.current.as_ref();
+        let mut shown: Vec<&ResearchDef> = view.content.research.iter().collect();
+        shown.sort_by_key(|d| {
+            if current == Some(&d.id) {
+                0
+            } else if view.research_ready(d) {
+                1
+            } else if view.done(&d.id) {
+                3
+            } else {
+                2
+            }
+        });
+        shown.truncate(fits);
         let height = pad + title + shown.len() as f32 * row - 6.0 * u + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
@@ -2503,7 +2574,6 @@ impl Hud {
         self.hits.push((c, Hit::Close));
         y += title;
 
-        let current = view.snapshot.research.current.as_ref();
         for d in shown {
             let b = [left, y, r[2] - 2.0 * pad, row - 6.0 * u];
             let is_current = current == Some(&d.id);
@@ -2511,6 +2581,8 @@ impl Hud {
                 ("Done", WORKING, None)
             } else if is_current {
                 ("Studying", palette::ACCENT, Some(Hit::Study(None)))
+            } else if view.gated(d) {
+                ("Full game", palette::ACCENT, Some(Hit::Unlock))
             } else if view.research_ready(d) {
                 ("Study", TEXT, Some(Hit::Study(Some(d.id.clone()))))
             } else {
@@ -2554,6 +2626,113 @@ impl Hud {
                 self.hits.push((b, hit));
             }
             y += row;
+        }
+    }
+
+    /// The full game sheet: what it opens, and buying or restoring it.
+    fn unlock_sheet(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32, room: f32) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let gap = 8.0 * u;
+        let line = 22.0 * u;
+        let first = view.store.demo.unwrap_or(0) + 1;
+        let last = view
+            .content
+            .research
+            .iter()
+            .map(|r| r.tier)
+            .max()
+            .unwrap_or(first);
+        let note = view.store.note.as_deref();
+        let tall = |lines: usize, bh: f32| {
+            pad + 44.0 * u
+                + lines as f32 * line
+                + gap
+                + 2.0 * bh
+                + gap
+                + if note.is_some() { line + gap } else { 0.0 }
+                + pad
+        };
+        // On a short screen the words come down to one line.
+        let (lines, bh) = if tall(4, 48.0 * u) <= room {
+            (
+                vec![
+                    format!("The demo goes up to tier {}.", first - 1),
+                    format!("The full game opens tiers {first} to {last}"),
+                    "and the skyhook, with one purchase.".to_string(),
+                    "Your factory stays just as it is.".to_string(),
+                ],
+                48.0 * u,
+            )
+        } else {
+            (
+                vec![format!(
+                    "Tiers {first} to {last} and the skyhook. Your factory stays."
+                )],
+                44.0 * u,
+            )
+        };
+        let height = tall(lines.len(), bh);
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let inner = r[2] - 2.0 * pad;
+        let mut y = r[1] + pad;
+        let px = 20.0 * u;
+        let close = 44.0 * u;
+        o.text(
+            "Unlock the full game",
+            [left, y + (close + o.cap_height(px)) / 2.0],
+            px,
+            TEXT,
+        );
+        let c = [r[0] + r[2] - pad - close, y, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+        y += 44.0 * u;
+        for l in &lines {
+            let lpx = fit(o, l, 15.0 * u, inner);
+            o.text(l, [left, y + o.cap_height(lpx) + 4.0 * u], lpx, MUTED);
+            y += line;
+        }
+        y += gap;
+        let busy = view.store.busy;
+        let buy = match (&view.store.price, busy) {
+            (_, true) => "Waiting for the store".to_string(),
+            (Some(p), false) => format!("Buy the full game · {p}"),
+            (None, false) => "Buy the full game".to_string(),
+        };
+        let (fill, hit) = if busy {
+            (RAISED, Hit::Block)
+        } else {
+            (palette::ACCENT, Hit::Buy)
+        };
+        let ink = if busy { MUTED } else { palette::GROUND };
+        let bpx = fit(o, &buy, 16.0 * u, inner - 24.0 * u);
+        self.button(o, [left, y, inner, bh], &buy, bpx, fill, ink, hit);
+        y += bh + gap;
+        let hit = if busy { Hit::Block } else { Hit::Restore };
+        self.button(
+            o,
+            [left, y, inner, bh],
+            "Restore a purchase",
+            15.0 * u,
+            RAISED,
+            TEXT,
+            hit,
+        );
+        y += bh + gap;
+        if let Some(n) = note {
+            let npx = fit(o, n, 14.0 * u, inner);
+            o.text(n, [left, y + o.cap_height(npx) + 2.0 * u], npx, MUTED);
         }
     }
 
