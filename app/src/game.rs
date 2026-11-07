@@ -214,6 +214,49 @@ impl Game {
         Some((bp, corner))
     }
 
+    /// Whether drone ports reach the middle of every building in `commands`
+    /// (T50), so a paste can be planned for drones to build.
+    fn drones_cover(&self, commands: &[mofact_core::command::Command]) -> bool {
+        use mofact_core::command::Command;
+        use mofact_core::content::BuildingRole;
+        let latest = self.sim.latest();
+        let size = |b: &mofact_core::ids::BuildingId| {
+            self.content
+                .buildings
+                .iter()
+                .find(|d| d.id == *b)
+                .map(|d| (d.size, &d.role))
+        };
+        let ports: Vec<([f32; 2], f32)> = latest
+            .entities
+            .iter()
+            .filter_map(|e| match size(&e.building)? {
+                ((w, h), BuildingRole::DronePort { reach, .. }) => Some((
+                    [
+                        e.pos.x as f32 + f32::from(w) / 2.0,
+                        e.pos.y as f32 + f32::from(h) / 2.0,
+                    ],
+                    f32::from(*reach),
+                )),
+                _ => None,
+            })
+            .collect();
+        !ports.is_empty()
+            && commands.iter().all(|c| match c {
+                Command::Place { building, pos, .. } => {
+                    let (w, h) = size(building).map_or((1, 1), |s| s.0);
+                    let m = [
+                        pos.x as f32 + f32::from(w) / 2.0,
+                        pos.y as f32 + f32::from(h) / 2.0,
+                    ];
+                    ports
+                        .iter()
+                        .any(|(p, r)| (p[0] - m[0]).abs() <= *r && (p[1] - m[1]).abs() <= *r)
+                }
+                _ => false,
+            })
+    }
+
     /// The tile a blueprint's corner goes on to sit in the middle of the screen.
     fn centred(&self, bp: &Blueprint) -> TilePos {
         let [x, y] = self.controls.camera.center;
@@ -464,6 +507,15 @@ impl Game {
                 }),
             );
         }
+        // What drones are yet to build (T50).
+        self.scene.ghosts(
+            &self.look,
+            atlases,
+            latest
+                .ghosts
+                .iter()
+                .map(|g| (&g.building, g.pos, g.dir, g.recipe.as_ref())),
+        );
         let ghosts = self.controls.builder.ghosts();
         self.scene.ghosts(
             &self.look,
@@ -509,10 +561,92 @@ impl Game {
                     [ar, ag, ab, 0x38],
                 );
             }
+            // Ghosts waiting for drones, edged in blue; what drones are to
+            // take down, edged in red (T50).
+            let size_of = |b: &mofact_core::ids::BuildingId| {
+                self.content
+                    .buildings
+                    .iter()
+                    .find(|d| d.id == *b)
+                    .map_or((1, 1), |d| d.size)
+            };
+            let [gr, gg, gb, _] = mofact_render::palette::GLASS;
+            for g in &latest.ghosts {
+                let (w, h) = size_of(&g.building);
+                let a = if g.coming { 0x50 } else { 0x28 };
+                self.overlay.panel(
+                    at(g.pos),
+                    [f32::from(w) * ppt, f32::from(h) * ppt],
+                    ppt * 0.12,
+                    [gr, gg, gb, a],
+                );
+            }
+            for e in latest
+                .entities
+                .iter()
+                .filter(|e| latest.marked.contains(&e.id))
+            {
+                let (w, h) = size_of(&e.building);
+                self.overlay.panel(
+                    at(e.pos),
+                    [f32::from(w) * ppt, f32::from(h) * ppt],
+                    ppt * 0.12,
+                    [0xff, 0x5d, 0x5d, 0x50],
+                );
+            }
             self.built.update(&latest);
             for t in self.controls.builder.blocked(&self.built) {
                 self.overlay
                     .panel(at(t), [ppt, ppt], ppt * 0.12, [0xff, 0x5d, 0x5d, 0x80]);
+            }
+        }
+        // Drones in flight (T49), over everything on the ground: a shadow,
+        // the drone, and what it carries hung under it.
+        {
+            let ppt = camera.pixels_per_tile;
+            let (sw, sh) = target.size();
+            let same = prev.drones.len() == latest.drones.len();
+            for (i, d) in latest.drones.iter().enumerate() {
+                let p = if same {
+                    let a = prev.drones[i].at;
+                    [
+                        a[0] + (d.at[0] - a[0]) * alpha,
+                        a[1] + (d.at[1] - a[1]) * alpha,
+                    ]
+                } else {
+                    d.at
+                };
+                let x = (p[0] - camera.center[0]) * ppt + sw as f32 / 2.0;
+                let y = (p[1] - camera.center[1]) * ppt + sh as f32 / 2.0;
+                let s = ppt * 0.7;
+                self.overlay.panel(
+                    [x - s * 0.3 + ppt * 0.15, y - s * 0.15 + ppt * 0.3],
+                    [s * 0.6, s * 0.3],
+                    s * 0.15,
+                    [0, 0, 0, 0x50],
+                );
+                if let Some((sprite, _)) = self.look.item(&mofact_core::ids::ItemId::from("drone"))
+                {
+                    self.overlay
+                        .icon(sprite, [x - s / 2.0, y - s / 2.0], s, [255, 255, 255, 255]);
+                }
+                let load = d
+                    .cargo
+                    .as_ref()
+                    .and_then(|c| self.look.item(c))
+                    .map(|(sprite, _)| sprite.to_owned())
+                    .or_else(|| {
+                        let b = d.building.as_ref()?;
+                        let sprite =
+                            self.look
+                                .sprite(b, mofact_core::geom::Dir::East, None, false)?;
+                        Some(sprite.to_owned())
+                    });
+                if let Some(sprite) = load {
+                    let c = s * 0.45;
+                    self.overlay
+                        .icon(&sprite, [x - c / 2.0, y + s * 0.2], c, [255, 255, 255, 255]);
+                }
             }
         }
         self.controls.slop = 12.0 * scale.max(0.5);
@@ -856,7 +990,28 @@ impl Game {
             Action::PlacePaste => {
                 self.built.update(&self.sim.latest());
                 if self.controls.builder.blocked(&self.built).is_empty() {
-                    let commands = self.controls.builder.build_paste();
+                    let mut commands = self.controls.builder.build_paste();
+                    // Where drones reach, they build it as the stock comes
+                    // in (T50); a move is always done at once.
+                    if self.drones_cover(&commands) {
+                        self.hud.toast(tr("toast.planned"));
+                        for c in &mut commands {
+                            if let mofact_core::command::Command::Place {
+                                building,
+                                pos,
+                                dir,
+                                recipe,
+                            } = c.clone()
+                            {
+                                *c = mofact_core::command::Command::Plan {
+                                    building,
+                                    pos,
+                                    dir,
+                                    recipe,
+                                };
+                            }
+                        }
+                    }
                     self.sim.send_all(commands);
                 } else {
                     self.hud.toast(tr("toast.paste_blocked"));

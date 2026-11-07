@@ -2431,3 +2431,117 @@ pub fn radar_turned(c: &mut Canvas, z: f32, fine: bool, angle: f32) {
     c.fill_circle(s * 0.78, s * 0.78, s * 0.035, pal::MACHINE_EDGE);
     c.fill_circle(s * 0.78, s * 0.78, s * 0.022, pal::GLASS);
 }
+
+/// A drone port (T49), two tiles a side: a bolted plate with a landing
+/// pad ringed in the accent colour, and the lamp of its charger.
+pub fn drone_port(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.06 + sh,
+            s * 0.06 + sh * 1.3,
+            s * 0.88,
+            s * 0.88,
+            s * 0.1,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.09, s * 0.09, s * 0.82, s * 0.82, s * 0.08),
+        pal::MACHINE,
+    );
+    fill(
+        c,
+        rr(s * 0.12, s * 0.1, s * 0.76, s * 0.05, s * 0.02),
+        shade(pal::MACHINE, 0.12),
+    );
+    if fine {
+        for (bx, by) in [(0.15, 0.15), (0.85, 0.15), (0.15, 0.85), (0.85, 0.85)] {
+            bolt(c, bx * s, by * s, s * 0.018);
+        }
+    }
+    let (cx, cy) = (s * 0.5, s * 0.5);
+    c.fill_circle(cx, cy, s * 0.3, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.27, pal::PAD);
+    c.stroke_circle(cx, cy, s * 0.24, pal::ACCENT, (s * 0.02).max(1.0));
+    // The pad's H, as on a helipad.
+    let w = s * 0.045;
+    fill(
+        c,
+        rect(cx - s * 0.1, cy - s * 0.11, w, s * 0.22),
+        pal::ACCENT,
+    );
+    fill(
+        c,
+        rect(cx + s * 0.1 - w, cy - s * 0.11, w, s * 0.22),
+        pal::ACCENT,
+    );
+    fill(c, rect(cx - s * 0.1, cy - w / 2.0, s * 0.2, w), pal::ACCENT);
+    c.fill_circle(s * 0.8, s * 0.8, s * 0.035, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.8, s * 0.8, s * 0.022, pal::TIER[0]);
+}
+
+/// A logistic chest (T49), one tile: a steel box with a lid and a band
+/// of `trim`. A requester's box is cut to a diamond, so it is told from a
+/// provider by its shape as well as its colour.
+pub fn logistic_chest(c: &mut Canvas, z: f32, fine: bool, trim: Rgba, requester: bool) {
+    if requester {
+        let s = z;
+        let sh = z * 0.08;
+        let pts = |k: f32| {
+            [
+                (s * 0.5, s * (0.5 - k)),
+                (s * (0.5 + k), s * 0.5),
+                (s * 0.5, s * (0.5 + k)),
+                (s * (0.5 - k), s * 0.5),
+            ]
+        };
+        let shift = |p: [(f32, f32); 4]| p.map(|(x, y)| (x + sh, y + sh * 1.3));
+        shadow(c, poly(&shift(pts(0.42)), 0.0, 0.0, 1.0));
+        fill(c, poly(&pts(0.42), 0.0, 0.0, 1.0), pal::MACHINE_EDGE);
+        fill(c, poly(&pts(0.37), 0.0, 0.0, 1.0), pal::MACHINE_HI);
+        fill(c, poly(&pts(0.22), 0.0, 0.0, 1.0), trim);
+        c.fill_circle(s * 0.5, s * 0.5, s * 0.08, pal::MACHINE_EDGE);
+        return;
+    }
+    let s = z;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.12 + sh,
+            s * 0.14 + sh * 1.3,
+            s * 0.76,
+            s * 0.72,
+            s * 0.08,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.12, s * 0.14, s * 0.76, s * 0.72, s * 0.08),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.16, s * 0.18, s * 0.68, s * 0.64, s * 0.06),
+        pal::MACHINE_HI,
+    );
+    fill(c, rect(s * 0.16, s * 0.42, s * 0.68, s * 0.14), trim);
+    fill(
+        c,
+        rr(s * 0.42, s * 0.4, s * 0.16, s * 0.18, s * 0.03),
+        pal::MACHINE_EDGE,
+    );
+    if fine {
+        for (bx, by) in [(0.22, 0.24), (0.78, 0.24), (0.22, 0.76), (0.78, 0.76)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+}

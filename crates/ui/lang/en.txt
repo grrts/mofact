@@ -30,6 +30,9 @@ tip.locomotive = Tap track to place, then tap the train to give it stops.
 tip.tank_train = Tap track to place. It fills from pipes beside a stop and empties into a pipe out of the stop's arrow.
 tip.wind_turbine = Tap to place next to a pole. Each turbine powers one lab.
 tip.radar = Tap to place next to a pole. With power it charts the land around it, nearest first.
+tip.drone_port = Tap to place next to a pole. Its drones carry between chests and build what you paste in reach.
+tip.provider_chest = Tap to place where a belt ends. Drones take what it holds to requester chests.
+tip.requester_chest = Tap to place, then tap it to pick what drones should bring.
 tip.place = Tap to place. Pick a recipe, or let it pick from what arrives.
 tip.remove = Tap or drag to mark, lift to remove. Undo brings things back.
 
@@ -118,6 +121,7 @@ list.join = {0}, {1}
 unit.per_min = {0}/min
 unit.seconds = {0}s
 recipe.auto = Auto
+request.none = None
 build.title = Build
 
 # The full game.
@@ -159,6 +163,10 @@ inspect.train_stop = Trains stop here to load and unload
 inspect.locomotive = A train: give it stops to run between
 inspect.no_grid = No power: put a pole next to it, in reach of a wind turbine's pole
 inspect.no_turbine = No power: this grid has no turbine giving power yet
+inspect.port = Keeps {0} drones, flying {1} tiles across
+inspect.provider = Belts fill it, and drones take from it for requester chests
+inspect.requester = Pick what drones should bring it
+inspect.requests = Drones keep {0} {1} in it
 state.idle = Idle
 state.working = Working
 state.starved = Starved
@@ -231,3 +239,4 @@ blueprint.empty = No blueprints yet. Select some buildings and tap Save.
 toast.blueprint_saved = Saved as {0}
 toast.library_full = The library is full: delete a blueprint first.
 toast.paste_blocked = Something is in the way: slide it onto clear ground.
+toast.planned = Drones will build it as the stock comes in

@@ -9,6 +9,7 @@ fn content() -> Content {
 
 fn snapshot() -> Snapshot {
     let entity = |id, building: &str, x| EntityView {
+        request: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, 0),
@@ -40,6 +41,9 @@ fn snapshot() -> Snapshot {
         trains: vec![train()],
         mega: None,
         explored: Default::default(),
+        drones: Vec::new(),
+        ghosts: Vec::new(),
+        marked: Vec::new(),
     }
 }
 
@@ -536,6 +540,7 @@ fn the_more_slot_opens_every_other_building() {
 fn a_pole_sheet_shows_its_grid() {
     let mut f = Fixture::new();
     f.snapshot.entities.push(EntityView {
+        request: None,
         id: EntityId(9),
         building: "pole".into(),
         pos: TilePos::new(9, 0),
@@ -718,6 +723,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
     use mofact_core::snapshot::GridView;
     let mut f = Fixture::new();
     let at = |id, building: &str, x, y, state| EntityView {
+        request: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, y),
@@ -881,6 +887,7 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                 "unlock",
                 "selection",
                 "library",
+                "requester",
             ] {
                 let mut f = Fixture::new();
                 f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
@@ -912,6 +919,15 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                         f.hud.picking = Some(EntityId(10));
                     }
                     "selection" => f.selection = 12,
+                    "requester" => {
+                        let mut chest = f.snapshot.entities[2].clone();
+                        chest.id = EntityId(7);
+                        chest.building = "requester-chest".into();
+                        chest.pos = TilePos::new(8, 0);
+                        chest.request = Some(("iron-plate".into(), 100));
+                        f.snapshot.entities.push(chest);
+                        f.hud.select(Some(EntityId(7)));
+                    }
                     "library" => {
                         f.hud.library = true;
                         f.blueprints = vec![mofact_input::Blueprint::capture(
@@ -1628,4 +1644,38 @@ fn the_select_tool_offers_what_to_do_with_a_selection_and_the_library() {
         f.hud.hits.iter().all(|(_, h)| !matches!(h, Hit::Pick(_))),
         "picking one closes the library"
     );
+}
+
+#[test]
+fn a_requester_chest_sheet_picks_what_drones_bring_and_how_many() {
+    let mut f = Fixture::new();
+    let mut chest = f.snapshot.entities[2].clone();
+    chest.id = EntityId(7);
+    chest.building = "requester-chest".into();
+    chest.pos = TilePos::new(8, 0);
+    f.snapshot.entities.push(chest);
+    f.hud.select(Some(EntityId(7)));
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    // Nothing asked for yet: pick one of the items in stock.
+    let iron = Hit::SetRequest(EntityId(7), Some(("iron-plate".into(), 50)));
+    assert_eq!(
+        f.tap(centre(f.find(&iron))).1,
+        vec![Action::Send(Command::SetRequest {
+            entity: EntityId(7),
+            request: Some(("iron-plate".into(), 50))
+        })]
+    );
+    assert!(
+        f.hud
+            .hits
+            .iter()
+            .all(|(_, h)| *h != Hit::SetRequest(EntityId(7), Some(("iron-plate".into(), 200)))),
+        "no counts until it asks for something"
+    );
+    // Asking for iron: the counts show, and none turns it off.
+    f.snapshot.entities[3].request = Some(("iron-plate".into(), 50));
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    let more = Hit::SetRequest(EntityId(7), Some(("iron-plate".into(), 200)));
+    f.find(&more);
+    f.find(&Hit::SetRequest(EntityId(7), None));
 }

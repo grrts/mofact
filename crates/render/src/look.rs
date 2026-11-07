@@ -83,6 +83,12 @@ enum Art {
     Radar,
     /// The radar with its dish turned to frame `0` of [`RADAR_FRAMES`].
     RadarSpin(u8),
+    /// A drone port (T49).
+    DronePort,
+    /// A logistic chest; `requester` tells its band's colour.
+    Chest {
+        requester: bool,
+    },
     Splitter,
     Underground {
         exit: bool,
@@ -226,6 +232,8 @@ enum Kind {
     Train,
     Mega,
     Radar,
+    Port,
+    Chest,
 }
 
 impl Kind {
@@ -527,6 +535,10 @@ impl Look {
                 BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
                 BuildingRole::Megaproject { .. } => (Kind::Mega, Vec::new()),
                 BuildingRole::Radar { .. } => (Kind::Radar, Vec::new()),
+                BuildingRole::DronePort { .. } => (Kind::Port, Vec::new()),
+                BuildingRole::ProviderChest { .. } | BuildingRole::RequesterChest { .. } => {
+                    (Kind::Chest, Vec::new())
+                }
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -679,6 +691,11 @@ impl Look {
                             Art::RadarSpin(k),
                         );
                     }
+                }
+                Kind::Port => push(&mut look, id.to_owned(), b.size, Art::DronePort),
+                Kind::Chest => {
+                    let requester = matches!(b.role, BuildingRole::RequesterChest { .. });
+                    push(&mut look, id.to_owned(), b.size, Art::Chest { requester });
                 }
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
@@ -1085,7 +1102,7 @@ impl Look {
             // A pipe or rail on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
-            Kind::Train | Kind::Mega | Kind::Radar => b.base,
+            Kind::Train | Kind::Mega | Kind::Radar | Kind::Port | Kind::Chest => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
@@ -1228,9 +1245,9 @@ const ROTOR_SECONDS: f64 = 1.4;
 /// scan there and back takes, and how far it swings each way (radians).
 /// The atlas has room for only a few 2x2 frames, so it swings rather than
 /// turning all the way round.
-const RADAR_FRAMES: u8 = 6;
+const RADAR_FRAMES: u8 = 4;
 const RADAR_SECONDS: f64 = 4.0;
-const RADAR_SWING: f32 = 0.9;
+const RADAR_SWING: f32 = 0.6;
 
 /// The side of the atlas for the band of `px` pixels a tile. Each sprite
 /// carries its padding, which is most of a tile's room in the smallest band,
@@ -1290,6 +1307,15 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             let along = f32::from(k) / f32::from(RADAR_FRAMES - 1) * 2.0 - 1.0;
             let angle = -std::f32::consts::FRAC_PI_4 + along * RADAR_SWING;
             draw::radar_turned(&mut c, z, fine, angle)
+        }
+        Art::DronePort => draw::drone_port(&mut c, z, fine),
+        Art::Chest { requester } => {
+            let trim = if requester {
+                mofact_artkit::palette::GLASS
+            } else {
+                mofact_artkit::palette::ACCENT
+            };
+            draw::logistic_chest(&mut c, z, fine, trim, requester)
         }
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
@@ -1612,6 +1638,5 @@ pub(crate) mod tests {
         );
         assert_eq!(at(RADAR_SECONDS * 0.99), "radar:spin:1", "and back");
         assert_eq!(at(RADAR_SECONDS), "radar:spin:0");
-        assert_eq!(at(RADAR_SECONDS * 0.4), at(RADAR_SECONDS * 0.6));
     }
 }
