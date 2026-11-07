@@ -69,6 +69,7 @@ struct Fixture {
     overlay: Overlay,
     hud: Hud,
     belt: BuildingId,
+    slots: Vec<SlotView>,
 }
 
 impl Fixture {
@@ -82,6 +83,21 @@ impl Fixture {
             snapshot: snapshot(),
             hud: Hud::new(),
             belt: "belt".into(),
+            slots: vec![
+                SlotView {
+                    used: true,
+                    current: true,
+                    title: "Standard · seed 42".into(),
+                    detail: "1 h 2 min played · 120 built".into(),
+                },
+                SlotView {
+                    used: true,
+                    current: false,
+                    title: "Lakes · seed 123456789".into(),
+                    detail: "just started · 14 built".into(),
+                },
+                SlotView::default(),
+            ],
         }
     }
 
@@ -99,6 +115,7 @@ impl Fixture {
             history: (true, false),
             safe: [0.0; 4],
             nudge: None,
+            slots: &self.slots,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -842,6 +859,9 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                 "problems",
                 "train",
                 "train-pick",
+                "menu",
+                "menu-delete",
+                "new-game",
             ] {
                 let mut f = Fixture::new();
                 f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
@@ -857,6 +877,12 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                     "recipes" => f.hud.browse = Some("iron-plate".into()),
                     "problems" => f.hud.problems = true,
                     "train" => f.hud.select(Some(EntityId(10))),
+                    "menu" => f.hud.open_menu(None),
+                    "menu-delete" => {
+                        f.hud.open_menu(None);
+                        f.hud.confirm_delete = Some(1);
+                    }
+                    "new-game" => f.hud.open_menu(Some((2, 123_456_789))),
                     "train-pick" => {
                         f.hud.select(Some(EntityId(10)));
                         f.hud.picking = Some(EntityId(10));
@@ -980,6 +1006,61 @@ fn alternate_recipes_show_under_their_product() {
 }
 
 #[test]
+fn the_game_menu_loads_deletes_after_asking_and_starts_a_seeded_game() {
+    let mut f = Fixture::new();
+    let screen = (390, 844);
+    f.draw(screen, 1.0, &Tool::Hand);
+    // The menu button opens it, and asks for the slots afresh.
+    let (_, actions) = f.tap(centre(f.find(&Hit::Menu)));
+    assert_eq!(actions, vec![Action::MenuOpened]);
+    f.draw(screen, 1.0, &Tool::Hand);
+    // Delete asks first; the second tap deletes.
+    let (_, actions) = f.tap(centre(f.find(&Hit::SlotDelete(1))));
+    assert!(actions.is_empty());
+    f.draw(screen, 1.0, &Tool::Hand);
+    let (_, actions) = f.tap(centre(f.find(&Hit::SlotDelete(1))));
+    assert_eq!(actions, vec![Action::DeleteSlot(1)]);
+    f.draw(screen, 1.0, &Tool::Hand);
+    // The playing slot can be neither loaded nor deleted.
+    assert!(f
+        .hud
+        .hits
+        .iter()
+        .all(|(_, h)| *h != Hit::SlotLoad(0) && *h != Hit::SlotDelete(0)));
+    let (_, actions) = f.tap(centre(f.find(&Hit::SlotLoad(1))));
+    assert_eq!(actions, vec![Action::LoadSlot(1)]);
+    assert!(!f.hud.menu_open());
+
+    // A new game: type a seed, pick a preset, start.
+    f.hud.open_menu(None);
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::SlotNew(2))));
+    f.draw(screen, 1.0, &Tool::Hand);
+    // Clear the rolled seed, then type 7, 0, 7 and take the last back.
+    for _ in 0..12 {
+        f.tap(centre(f.find(&Hit::Backspace)));
+        f.draw(screen, 1.0, &Tool::Hand);
+    }
+    for d in [7, 0, 7, 3] {
+        f.tap(centre(f.find(&Hit::Digit(d))));
+        f.draw(screen, 1.0, &Tool::Hand);
+    }
+    f.tap(centre(f.find(&Hit::Backspace)));
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::Preset(2))));
+    f.draw(screen, 1.0, &Tool::Hand);
+    let (_, actions) = f.tap(centre(f.find(&Hit::StartNew)));
+    assert_eq!(
+        actions,
+        vec![Action::NewGame {
+            slot: 2,
+            seed: 707,
+            preset: 2
+        }]
+    );
+}
+
+#[test]
 fn every_recipe_fits_a_small_phone() {
     let mut f = Fixture::new();
     f.snapshot.research.done = f.content.research.iter().map(|r| r.id.clone()).collect();
@@ -995,4 +1076,17 @@ fn every_recipe_fits_a_small_phone() {
             );
         }
     }
+}
+
+#[test]
+fn the_die_rolls_a_different_seed_each_time() {
+    let mut f = Fixture::new();
+    f.hud.open_menu(Some((0, 1)));
+    let mut seeds = std::collections::HashSet::new();
+    for _ in 0..20 {
+        f.draw((390, 844), 1.0, &Tool::Hand);
+        f.tap(centre(f.find(&Hit::Dice)));
+        seeds.insert(f.hud.new_game.as_ref().unwrap().seed.clone());
+    }
+    assert!(seeds.len() >= 19, "{seeds:?}");
 }

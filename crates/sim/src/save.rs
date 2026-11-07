@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 12;
+pub const VERSION: u16 = 13;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -67,6 +67,26 @@ struct World {
     ore_left: Vec<u32>,
     depleted: Vec<TilePos>,
     /// The player's pins on the world map.
+    pins: Vec<TilePos>,
+    /// The map's seed and preset (S4); none in saves from before them,
+    /// which were all seed 42, standard.
+    world: Option<(u64, u8)>,
+}
+
+/// Version 12: the same, before the map's seed was saved.
+#[derive(Deserialize)]
+struct WorldV12 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
     pins: Vec<TilePos>,
 }
 
@@ -243,6 +263,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -264,6 +285,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -283,6 +305,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -302,6 +325,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
                 pins: Vec::new(),
+                world: None,
             })
         }
         // Version 12 adds pins on the world map.
@@ -320,9 +344,29 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 ore_left: v11.ore_left,
                 depleted: v11.depleted,
                 pins: Vec::new(),
+                world: None,
             })
         }
-        12 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 13 saves the map's seed and preset.
+        12 => {
+            let v: WorldV12 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: None,
+            })
+        }
+        13 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -511,6 +555,7 @@ impl Sim {
             ore_left,
             depleted: self.depleted.to_vec(),
             pins: self.pins.to_vec(),
+            world: self.world.map(|w| (w.seed, w.preset as u8)),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -581,6 +626,9 @@ impl Sim {
         pins.dedup();
         pins.truncate(crate::MAX_PINS);
         sim.pins = std::sync::Arc::new(pins);
+        if let Some((seed, preset)) = world.world {
+            sim.set_world_gen(seed, mofact_world::Preset::from_u8(preset));
+        }
         sim.goal = match &world.goal {
             None => content.goals.len() as u16,
             Some(id) => content

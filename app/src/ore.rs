@@ -53,6 +53,17 @@ impl OreMap {
         }
     }
 
+    /// The same map under `preset` (S4). Only before anything is generated.
+    pub fn with_preset(mut self, preset: mofact_world::Preset) -> Self {
+        self.gen = self.gen.with_preset(preset);
+        self
+    }
+
+    /// Another map from `seed` and `preset`, with the same hand-placed ore.
+    pub fn regen(&self, content: &Content, seed: u64, preset: mofact_world::Preset) -> Self {
+        Self::new(content, seed, self.extra.clone()).with_preset(preset)
+    }
+
     /// The generator the map comes from.
     pub fn gen(&self) -> WorldGen {
         self.gen

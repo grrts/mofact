@@ -266,8 +266,19 @@ impl Sim {
 
     /// Mine the map generated from `seed`, the same one the player sees.
     pub fn set_world(&mut self, seed: u64) {
+        self.set_world_gen(seed, mofact_world::Preset::Standard);
+    }
+
+    /// Mine the map generated from `seed` under `preset` (S4).
+    pub fn set_world_gen(&mut self, seed: u64, preset: mofact_world::Preset) {
         let n = self.tables.ores.len() as u8;
-        self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n));
+        self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n).with_preset(preset));
+    }
+
+    /// The seed and preset of the map, if there is one. A loaded save
+    /// brings its own, so the player finds the same map again.
+    pub fn world_seed(&self) -> Option<(u64, mofact_world::Preset)> {
+        self.world.map(|w| (w.seed, w.preset))
     }
 
     /// Dig one ore from under `pos`; the tile is mined out when it runs dry.

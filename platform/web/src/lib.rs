@@ -14,6 +14,7 @@
 #![cfg(target_arch = "wasm32")]
 
 use mofact::game::{self, Game};
+use mofact::slots::Store;
 use mofact_input::{Pointer, MOUSE, MOUSE_PAN};
 use mofact_render::{Gpu, Target};
 use mofact_sim::Sim;
@@ -24,6 +25,8 @@ use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, PointerEvent, WheelEvent};
 
 const SAVE_KEY: &str = "mofact-save";
+/// Where the other save slots go, and which slot is played (T63).
+const SLOT_KEY: &str = "mofact-slot";
 /// Whether low-power mode is on: "1" or "0". A setting of this browser,
 /// not of the save.
 const LOW_POWER_KEY: &str = "mofact-low-power";
@@ -79,6 +82,13 @@ impl Shell {
                 let _ = st.set_item(LOW_POWER_KEY, if low { "1" } else { "0" });
             }
         }
+        if self.game.wants_slots() {
+            let mut store = Slots(self.window.local_storage().ok().flatten());
+            if let Err(e) = self.game.serve(&mut store) {
+                log(&format!("mofact: {e}"));
+            }
+            self.saved = self.now();
+        }
         if self.now() - self.saved >= SAVE_EVERY {
             self.save();
         }
@@ -125,10 +135,10 @@ impl Shell {
         let Ok(bytes) = self.game.sim.save().try_recv() else {
             return;
         };
-        if let Ok(Some(storage)) = self.window.local_storage() {
-            if storage.set_item(SAVE_KEY, &hex(&bytes)).is_err() {
-                log("mofact: the browser refused the save (storage full?)");
-            }
+        let mut store = Slots(self.window.local_storage().ok().flatten());
+        let slot = store.current();
+        if let Err(e) = store.write(slot, &bytes) {
+            log(&format!("mofact: {e}"));
         }
     }
 
@@ -193,14 +203,57 @@ fn unhex(s: &str) -> Option<Vec<u8>> {
         .collect()
 }
 
+/// The save slots in the page's local storage, as hex text.
+struct Slots(Option<web_sys::Storage>);
+
+impl Slots {
+    fn key(slot: u8) -> String {
+        if slot == 0 {
+            SAVE_KEY.to_string()
+        } else {
+            format!("{SAVE_KEY}-{}", u32::from(slot) + 1)
+        }
+    }
+}
+
+impl Store for Slots {
+    fn read(&self, slot: u8) -> Option<Vec<u8>> {
+        unhex(&self.0.as_ref()?.get_item(&Self::key(slot)).ok()??)
+    }
+    fn write(&mut self, slot: u8, bytes: &[u8]) -> Result<(), String> {
+        let st = self.0.as_ref().ok_or("no local storage")?;
+        st.set_item(&Self::key(slot), &hex(bytes))
+            .map_err(|_| "the browser refused the save (storage full?)".to_string())
+    }
+    fn remove(&mut self, slot: u8) {
+        if let Some(st) = &self.0 {
+            let _ = st.remove_item(&Self::key(slot));
+        }
+    }
+    fn current(&self) -> u8 {
+        self.0
+            .as_ref()
+            .and_then(|st| st.get_item(SLOT_KEY).ok().flatten())
+            .and_then(|s| s.parse().ok())
+            .filter(|n| mofact::slots::valid(*n))
+            .unwrap_or(0)
+    }
+    fn set_current(&mut self, slot: u8) {
+        if let Some(st) = &self.0 {
+            let _ = st.set_item(SLOT_KEY, &slot.to_string());
+        }
+    }
+}
+
 /// The saved game, unless there is none, it is damaged, or the address asks for a new one.
 fn saved(window: &web_sys::Window, content: &mofact_core::content::Content) -> Option<Sim> {
     let search = window.location().search().unwrap_or_default();
     if search.contains("new") {
         return None;
     }
-    let text = window.local_storage().ok()??.get_item(SAVE_KEY).ok()??;
-    match Sim::load(content, &unhex(&text)?) {
+    let store = Slots(window.local_storage().ok()?);
+    let bytes = store.read(store.current())?;
+    match Sim::load(content, &bytes) {
         Ok((sim, warnings)) => {
             for w in warnings {
                 log(&format!("mofact: save: {w}"));

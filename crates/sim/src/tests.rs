@@ -1576,3 +1576,20 @@ fn a_two_tile_machine_puts_out_along_its_whole_front() {
     assert!((gears - 25.0).abs() <= 1.0, "{gears} gears a minute");
     assert_ne!(state_of(&sim, asm), MachineState::Blocked);
 }
+
+#[test]
+fn the_map_seed_and_preset_save_and_older_saves_keep_seed_42() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.set_world_gen(7_777, mofact_world::Preset::Lakes);
+    let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+    assert_eq!(
+        loaded.world_seed(),
+        Some((7_777, mofact_world::Preset::Lakes))
+    );
+    // Version 12 had no seed: the game goes on using the default map.
+    let (old, warnings) = Sim::load(&content, include_bytes!("../tests/v12.mofact")).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(old.world_seed(), None);
+    assert_eq!(*old.snapshot().pins, vec![TilePos::new(5, 6)]);
+}
