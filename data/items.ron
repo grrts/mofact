@@ -30,4 +30,18 @@
     (id: "bauxite",      name: "Bauxite",      kind: Solid, shape: Ore,     color: "bauxite",    tier: 5),
     (id: "titanium-ore", name: "Titanium ore", kind: Solid, shape: Ore,     color: "titanium-ore", tier: 6),
     (id: "rare-earth",   name: "Rare earths",  kind: Solid, shape: Ore,     color: "rare-earth", tier: 7),
+    // Tier 4: chemistry and electronics (T53). Tar gives up its sulfur, the
+    // acid makes batteries, and plastic boards make advanced circuits.
+    (id: "sulfur",       name: "Sulfur",       kind: Solid, shape: Powder,  color: "sulfur",     tier: 4),
+    (id: "sulfuric-acid", name: "Sulfuric acid", kind: Fluid, shape: Droplet, color: "sulfuric-acid", tier: 4),
+    (id: "battery",      name: "Battery",      kind: Solid, shape: Cell,    color: "battery",    tier: 4),
+    (id: "advanced-circuit", name: "Advanced circuit", kind: Solid, shape: Circuit, color: "advanced-circuit", tier: 4),
+    (id: "chemistry-pack", name: "Chemistry pack", kind: Solid, shape: Pack, color: "pack-chemistry", tier: 4),
+    // Tier 5: precision. Silicon wafers etched in acid become processors,
+    // and processors drive robot frames.
+    (id: "silicon",      name: "Silicon wafer", kind: Solid, shape: Wafer,  color: "silicon",    tier: 5),
+    (id: "processor",    name: "Processor",    kind: Solid, shape: Chip,    color: "processor",  tier: 5),
+    (id: "robot-frame",  name: "Robot frame",  kind: Solid, shape: Frame,   color: "robot-frame", tier: 5),
+    (id: "low-density-structure", name: "Low density structure", kind: Solid, shape: Plate, color: "low-density", tier: 5),
+    (id: "precision-pack", name: "Precision pack", kind: Solid, shape: Pack, color: "pack-precision", tier: 5),
 ]

@@ -286,6 +286,15 @@ impl Scene {
                 continue;
             }
             machines.push(instance);
+            for l in look.layers(&e.building, e.recipe.as_ref().map(|r| r.as_str())) {
+                machines.push(Instance {
+                    pos: [x + l.offset[0], y + l.offset[1]],
+                    size: l.size,
+                    uv: uv(l.sprite),
+                    tint: l.tint,
+                    turns: 0,
+                });
+            }
             if let Some(platform) = look.platform(&e.building) {
                 machines.push(Instance {
                     uv: uv(platform),

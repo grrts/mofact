@@ -239,6 +239,7 @@ fn makeable<'a>(
 ) -> HashSet<&'a ItemId> {
     let mut categories = HashSet::new();
     let mut miner = false;
+    let mut pumped: HashSet<&'a ItemId> = HashSet::new();
     for b in content
         .buildings
         .iter()
@@ -249,6 +250,10 @@ fn makeable<'a>(
                 categories.extend(c.iter().map(String::as_str))
             }
             BuildingRole::Miner { .. } => miner = true,
+            // Wells pump their fluid out of the ground.
+            BuildingRole::Well { fluid, .. } => {
+                pumped.insert(fluid);
+            }
             _ => {}
         }
     }
@@ -262,6 +267,7 @@ fn makeable<'a>(
         .iter()
         .filter(|i| miner && i.shape == IconShape::Ore && !made.contains(&i.id))
         .map(|i| &i.id)
+        .chain(pumped)
         .collect();
     loop {
         let before = have.len();
@@ -407,6 +413,8 @@ mod tests {
         assert!(report.problems.is_empty(), "{}", report.text());
         assert_eq!(report.depth[&ItemId::from("circuit")], 3);
         assert_eq!(report.depth[&ItemId::from("engineering-pack")], 4);
+        // Tier 5 (T53) runs deeper than anything before it.
+        assert!(report.depth[&ItemId::from("precision-pack")] >= 7);
         // Bricks go into labs; research takes the packs.
         assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
@@ -422,7 +430,15 @@ mod tests {
                 "steam-power",
                 "oil-processing",
                 "fast-assembly",
-                "railways"
+                "railways",
+                "sulfur-processing",
+                "advanced-electronics",
+                "chemistry",
+                "electric-smelting",
+                "silicon-processing",
+                "solar-energy",
+                "precision-engineering",
+                "precision-assembly"
             ]
         );
     }
