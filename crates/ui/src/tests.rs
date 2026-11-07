@@ -72,6 +72,7 @@ impl Fixture {
             recipe: None,
             belt: &self.belt,
             history: (true, false),
+            safe: [0.0; 4],
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -719,4 +720,126 @@ fn the_sound_button_turns_sound_off_and_on() {
         (true, vec![Action::Mute(false)])
     );
     assert!(!f.hud.muted());
+}
+
+/// The screens the HUD is checked on (T40): a small phone, a large phone
+/// and a tablet, each held both ways, at their own pixel densities.
+const SCREENS: [((u32, u32), f32); 6] = [
+    ((640, 1136), 2.0),
+    ((1136, 640), 2.0),
+    ((1179, 2556), 3.0),
+    ((2556, 1179), 3.0),
+    ((2048, 2732), 2.0),
+    ((2732, 2048), 2.0),
+];
+
+/// Every state of the HUD worth a look: each tool, each sheet.
+fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)) {
+    let tools = [
+        Tool::Hand,
+        Tool::Belt,
+        Tool::Place("assembler".into()),
+        Tool::Remove,
+    ];
+    for (size, scale) in SCREENS {
+        for tool in &tools {
+            for state in [
+                "plain", "inspect", "research", "build", "radial", "recipes", "problems",
+            ] {
+                let mut f = Fixture::new();
+                f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
+                    index: 0,
+                    have: 3,
+                    need: 10,
+                });
+                match state {
+                    "inspect" => f.hud.select(Some(EntityId(2))),
+                    "research" => f.hud.research = true,
+                    "build" => f.hud.more = true,
+                    "radial" => f.hud.radial = Some([size.0 as f32 / 2.0, size.1 as f32 / 2.0]),
+                    "recipes" => f.hud.browse = Some("iron-plate".into()),
+                    "problems" => f.hud.problems = true,
+                    _ => {}
+                }
+                // Lay out once so the problems list knows what is stuck.
+                f.draw(size, scale, tool);
+                if state == "problems" {
+                    f.hud.problems = true;
+                }
+                f.draw(size, scale, tool);
+                check(&mut f, size, scale, tool, state);
+            }
+        }
+    }
+}
+
+#[test]
+fn every_control_is_a_finger_wide_on_every_screen() {
+    let mut small = Vec::new();
+    every_state(|f, size, scale, tool, state| {
+        let finger = 44.0 * scale - 0.5;
+        for (r, hit) in &f.hud.hits {
+            if matches!(hit, Hit::Block) {
+                continue;
+            }
+            let r = f.hud.target(r);
+            if r[2] < finger || r[3] < finger {
+                let line = format!(
+                    "{hit:?} is {:.0}x{:.0} pt on {size:?}@{scale} ({tool:?}, {state})",
+                    r[2] / scale,
+                    r[3] / scale
+                );
+                if !small.contains(&line) {
+                    small.push(line);
+                }
+            }
+        }
+    });
+    assert!(
+        small.is_empty(),
+        "{} too small:\n{}",
+        small.len(),
+        small.join("\n")
+    );
+}
+
+#[test]
+fn a_tap_anywhere_on_a_control_or_its_target_picks_it() {
+    let mut wrong = Vec::new();
+    every_state(|f, size, scale, tool, state| {
+        let hits = f.hud.hits.clone();
+        for (k, (r, hit)) in hits.iter().enumerate() {
+            if matches!(hit, Hit::Block) || hits[k + 1..].iter().any(|(o, _)| overlaps(o, r)) {
+                // Covered by something drawn later, such as a sheet.
+                continue;
+            }
+            let c = centre(*r);
+            if f.hud.hit(c) != Some(hit) {
+                wrong.push(format!(
+                    "{hit:?}: its centre picks {:?} on {size:?}@{scale} ({tool:?}, {state})",
+                    f.hud.hit(c)
+                ));
+            }
+            // Just past a small control's edge, still within a finger of it.
+            if r[3] < FINGER * scale - 2.0 {
+                let t = f.hud.target(r);
+                let below = [c[0], (r[1] + r[3] + t[1] + t[3]) / 2.0];
+                let got = f.hud.hit(below);
+                let taken = hits
+                    .iter()
+                    .any(|(o, h)| !matches!(h, Hit::Block) && h != hit && inside(o, below));
+                if !taken && got != Some(hit) {
+                    wrong.push(format!(
+                        "{hit:?}: just below it picks {got:?} on {size:?}@{scale} ({tool:?}, {state})"
+                    ));
+                }
+            }
+        }
+    });
+    wrong.dedup();
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+fn overlaps(a: &Rect, b: &Rect) -> bool {
+    a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
 }
