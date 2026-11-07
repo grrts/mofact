@@ -1312,6 +1312,32 @@ impl Sim {
                     }
                     None => lab.idle += 1,
                 }
+                self.share_packs(e, lab);
+            }
+        }
+    }
+
+    /// A lab hands packs to the labs beside it, one at a time to whichever
+    /// holds fewer, so a row of labs pools the belts brought to its sides:
+    /// research needing more pack types than a lab has sides still runs.
+    fn share_packs(&mut self, e: &Entity, lab: &mut Lab) {
+        for d in Dir::ALL {
+            let Some(id) = self.entities.at(e.pos.step(d)) else {
+                continue;
+            };
+            let Some(State::Lab(next)) = self.states[id.0 as usize].as_mut() else {
+                continue;
+            };
+            for p in lab.packs.iter_mut() {
+                let theirs = next.packs.iter().position(|q| q.0 == p.0);
+                let has = theirs.map_or(0, |k| next.packs[k].1);
+                if p.1 > has + 1 && has < LAB_CAP {
+                    p.1 -= 1;
+                    match theirs {
+                        Some(k) => next.packs[k].1 += 1,
+                        None => next.packs.push((p.0, 1)),
+                    }
+                }
             }
         }
     }

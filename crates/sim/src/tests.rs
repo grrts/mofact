@@ -1738,3 +1738,69 @@ fn the_skyhook_takes_its_stages_in_order_and_keeps_them_through_a_save() {
         "a built skyhook takes nothing"
     );
 }
+
+#[test]
+fn a_row_of_labs_pools_more_pack_types_than_a_lab_has_sides() {
+    let mut sim = Sim::with_content(&content());
+    sim.complete_research(&"satellites".into());
+    for r in [
+        "superconductors",
+        "drones",
+        "fusion",
+        "electric-engines",
+        "titanium-smelting",
+        "aluminium-processing",
+        "rare-earth-processing",
+        "precision-engineering",
+        "silicon-processing",
+        "chemistry",
+        "sulfur-processing",
+        "advanced-electronics",
+        "oil-processing",
+        "steam-power",
+        "fluid-handling",
+        "motors",
+        "steel-working",
+    ] {
+        sim.complete_research(&r.into());
+    }
+    for (i, n) in [
+        ("brick", 30),
+        ("gear", 50),
+        ("circuit", 15),
+        ("iron-plate", 40),
+        ("wire", 20),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    let labs: Vec<_> = (0..3)
+        .map(|x| place(&mut sim, "lab", x, 0, Dir::East, None))
+        .collect();
+    place(&mut sim, "pole", 1, 1, Dir::East, None);
+    for x in 0..3 {
+        place(&mut sim, "wind-turbine", x, 2, Dir::East, None);
+    }
+    let pick = Command::SetResearch {
+        research: Some("skyhook".into()),
+    };
+    assert!(matches!(sim.apply(&pick), CommandResult::Applied { .. }));
+    // Five pack types reach the first lab and two the last: no lab is
+    // brought all seven.
+    let packs = [
+        "survey-pack",
+        "engineering-pack",
+        "chemistry-pack",
+        "precision-pack",
+        "aerospace-pack",
+        "orbital-pack",
+        "stellar-pack",
+    ];
+    for _ in 0..120 {
+        for (k, p) in packs.iter().enumerate() {
+            sim.feed(labs[if k < 5 { 0 } else { 2 }], &item(p));
+        }
+        run(&mut sim, 20);
+    }
+    let r = sim.snapshot().research;
+    assert!(r.progress.0 >= 60, "{r:?}");
+}
