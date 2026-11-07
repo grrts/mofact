@@ -227,6 +227,8 @@ fn speaker(
 struct Args {
     frames: Option<u64>,
     screenshot: Option<String>,
+    /// Write the store screenshots of the scenario to this folder.
+    store: Option<String>,
     /// A scenario named on the command line starts fresh instead of loading the save.
     scenario: Option<String>,
     save: Option<String>,
@@ -238,6 +240,7 @@ fn args() -> Result<Args, String> {
     let mut args = Args {
         frames: None,
         screenshot: None,
+        store: None,
         scenario: None,
         save: None,
         data: None,
@@ -260,9 +263,10 @@ fn args() -> Result<Args, String> {
             "--screenshot" => {
                 args.screenshot = Some(it.next().ok_or("--screenshot needs a folder")?)
             }
+            "--store" => args.store = Some(it.next().ok_or("--store needs a folder")?),
             other => {
                 return Err(format!(
-                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --scenario FILE, --save FILE, --seed N, --data DIR)"
+                    "unknown argument `{other}` (try --frames N, --screenshot DIR, --store DIR, --scenario FILE, --save FILE, --seed N, --data DIR)"
                 ))
             }
         }
@@ -283,6 +287,43 @@ pub fn main() -> ExitCode {
 
 /// Run the game, reporting why it could not start or stopped early.
 pub fn run() -> Result<(), String> {
+    run_with(Platform::default())
+}
+
+/// Makes the platform's [`Shop`](crate::shop::Shop) from whether the full
+/// game is remembered as bought, and a way to remember it.
+pub type MakeShop = Box<dyn FnOnce(bool, Box<dyn FnMut(bool)>) -> Box<dyn crate::shop::Shop>>;
+
+/// Send the slot being played, as just saved at `path`, to the cloud.
+fn upload(cloud: &mut Option<Box<dyn crate::cloud::Cloud>>, files: &autosave::Files, path: &Path) {
+    if let (Some(c), Ok(bytes)) = (cloud, std::fs::read(path)) {
+        c.upload(crate::slots::Store::current(files), &bytes);
+    }
+}
+
+/// What a phone brings to [`run_with`] that SDL doesn't give.
+#[derive(Default)]
+pub struct Platform {
+    /// Its store for the full game; with none, the
+    /// [`Sandbox`](crate::shop::Sandbox).
+    pub shop: Option<MakeShop>,
+    /// Plays a feel on the device.
+    pub haptic: Option<fn(crate::haptics::Haptic)>,
+    /// Its cloud for the save slots (T62); with none they stay on the device.
+    pub cloud: Option<Box<dyn crate::cloud::Cloud>>,
+    /// Whether the device's accessibility settings ask for less motion;
+    /// the game follows until the player sets reduce motion themselves.
+    pub reduce_motion: Option<fn() -> bool>,
+}
+
+/// [`run`], with what the platform brings.
+pub fn run_with(platform: Platform) -> Result<(), String> {
+    let Platform {
+        shop,
+        haptic,
+        mut cloud,
+        reduce_motion,
+    } = platform;
     let args = args()?;
     let content = match &args.data {
         Some(dir) => mofact_content::load_dir(Path::new(dir)).map_err(|e| e.to_string())?,
@@ -293,13 +334,27 @@ pub fn run() -> Result<(), String> {
         None => bundled::STARTER.to_owned(),
     };
     let scenario = mofact_headless::parse(&scenario)?;
+    if let Some(dir) = &args.store {
+        let sim = mofact_headless::build(&content, &scenario)?;
+        let ore = game::ore_for(&content, &scenario, args.seed);
+        return store_shots(&content, sim, ore, scenario.warmup_seconds, Path::new(dir));
+    }
     let save_path = match &args.save {
         Some(p) => PathBuf::from(p),
         None => sdl3::filesystem::get_pref_path("mofact", "mofact")
             .map(|d| d.join("autosave.mofact"))
             .unwrap_or_else(|_| PathBuf::from("autosave.mofact")),
     };
+    // Crash reports go next to the saves, and nowhere else.
+    let crash = crate::crash::File(save_path.with_file_name("crash.txt"));
+    let crashed = crash.take();
+    crate::crash::install(Box::new(crate::crash::File(crash.0.clone())));
     let mut files = autosave::Files::new(save_path);
+    if let (Some(c), None, None) = (&mut cloud, &args.scenario, &args.screenshot) {
+        for slot in crate::cloud::pull(&content, c.as_mut(), &mut files) {
+            println!("mofact: slot {} came down from the cloud", slot + 1);
+        }
+    }
     let save_path = files.path(crate::slots::Store::current(&files));
     let saved = match (&args.scenario, &args.screenshot) {
         (None, None) => autosave::load(&save_path, &content),
@@ -324,6 +379,14 @@ pub fn run() -> Result<(), String> {
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut app = App::new(&video, content.clone(), sim, ore, camera)?;
+    // The language first, so the first words shown are in it.
+    let mut settings = files.settings();
+    app.game.set_device_lang(crate::locale::device());
+    app.game.set_language(settings.language);
+    if let Some(report) = crashed {
+        eprintln!("mofact: the last run crashed; its report is in the game menu");
+        app.game.set_crash_report(report);
+    }
     let speaker = speaker(&sdl, app.game.sound.audio());
     // Quiet in the background, as the game is paused there.
     let hush = |quiet: bool| {
@@ -341,9 +404,17 @@ pub fn run() -> Result<(), String> {
     );
 
     let mut saves = autosave::Autosave::new(save_path);
-    let mut settings = files.settings();
-    app.game.set_low_power(settings.0);
-    app.game.set_colour_blind(settings.1);
+    app.game.set_low_power(settings.low_power);
+    app.game.set_colour_blind(settings.colour_blind);
+    app.game.set_large_text(settings.large_text);
+    let device_motion = reduce_motion.is_some_and(|asks| asks());
+    app.game
+        .set_reduce_motion(settings.reduce_motion.unwrap_or(device_motion));
+    let (owned, keep) = (files.full_game(), Box::new(files.keep_full_game()));
+    app.game.set_shop(match shop {
+        Some(make) => make(owned, keep),
+        None => Box::new(crate::shop::Sandbox::new(owned, keep)),
+    });
     let mut presented = 0u64;
     let mut cycled = false;
     let mut second = (Instant::now(), 0u32);
@@ -385,6 +456,7 @@ pub fn run() -> Result<(), String> {
                     app.suspend();
                     hush(true);
                     report(saves.now(&app.game.sim));
+                    upload(&mut cloud, &files, saves.path());
                 }
                 Event::AppDidEnterForeground { .. } => {
                     app.resume()?;
@@ -395,6 +467,7 @@ pub fn run() -> Result<(), String> {
                         app.suspend();
                         hush(true);
                         report(saves.now(&app.game.sim));
+                        upload(&mut cloud, &files, saves.path());
                     }
                     WindowEvent::Restored | WindowEvent::Shown | WindowEvent::Maximized => {
                         app.resume()?;
@@ -413,7 +486,17 @@ pub fn run() -> Result<(), String> {
             report(app.game.serve(&mut files));
             saves.set_path(files.path(crate::slots::Store::current(&files)));
         }
-        let now = (app.game.low_power(), app.game.colour_blind());
+        let now = autosave::Settings {
+            low_power: app.game.low_power(),
+            colour_blind: app.game.colour_blind(),
+            large_text: app.game.large_text(),
+            // Still the device's call until the player turns it the other way.
+            reduce_motion: match (settings.reduce_motion, app.game.reduce_motion()) {
+                (None, on) if on == device_motion => None,
+                (_, on) => Some(on),
+            },
+            language: app.game.language(),
+        };
         if now != settings {
             settings = now;
             report(files.set_settings(now));
@@ -424,7 +507,19 @@ pub fn run() -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
-        match app.draw() {
+        let frame = app.draw();
+        if let Some(text) = app.game.clipboard.take() {
+            report(
+                video
+                    .clipboard()
+                    .set_clipboard_text(&text)
+                    .map_err(|e| e.to_string()),
+            );
+        }
+        if let (Some(play), Some(feel)) = (haptic, app.game.haptic.take()) {
+            play(feel);
+        }
+        match frame {
             Frame::Presented => {
                 presented += 1;
                 second.1 += 1;
@@ -489,6 +584,9 @@ fn screenshots(
     camera: Camera,
     dir: &Path,
 ) -> Result<(), String> {
+    // In the device's language: `MOFACT_LANG=ja` shoots the Japanese HUD.
+    mofact_ui::i18n::set_lang(crate::locale::device());
+    let shown = mofact_ui::i18n::localize(content);
     for _ in 0..10 * mofact_core::TICKS_PER_SECOND {
         sim.step();
     }
@@ -502,12 +600,20 @@ fn screenshots(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let size = (960, 540);
     // The last at the dead of night (S9).
-    for (ppt, night) in [(14.0, 0.0), (32.0, 0.0), (64.0, 0.0), (32.0, 1.0)] {
+    // Then in low-power mode, which draws the cheap ground.
+    for (ppt, night, low) in [
+        (14.0, 0.0, false),
+        (32.0, 0.0, false),
+        (64.0, 0.0, false),
+        (32.0, 1.0, false),
+        (32.0, 0.0, true),
+    ] {
         let camera = Camera {
             pixels_per_tile: ppt,
             ..camera
         };
         scene.night = night;
+        scene.low_power = low;
         scene.build(
             &look,
             renderer.atlases(),
@@ -524,7 +630,9 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
-        let path = if night > 0.0 {
+        let path = if low {
+            dir.join(format!("low-power-{ppt}.png"))
+        } else if night > 0.0 {
             dir.join(format!("night-{ppt}.png"))
         } else {
             dir.join(format!("zoom-{ppt}.png"))
@@ -538,6 +646,7 @@ fn screenshots(
         );
     }
     scene.night = 0.0;
+    scene.low_power = false;
     // The world around the start and further out, on a phone held upright.
     let size = (1080, 2340);
     for (name, center, ppt) in [
@@ -638,7 +747,7 @@ fn screenshots(
         let view = View {
             size,
             scale,
-            content,
+            content: &shown,
             look: &look,
             snapshot: &latest,
             tool: &Tool::Hand,
@@ -649,6 +758,8 @@ fn screenshots(
             safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
             nudge: None,
             slots: &[],
+            store: &mofact_ui::StoreView::default(),
+            crash: false,
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -706,7 +817,7 @@ fn screenshots(
             let view = View {
                 size,
                 scale,
-                content,
+                content: &shown,
                 look: &look,
                 snapshot: &stuck,
                 tool: &Tool::Hand,
@@ -717,6 +828,8 @@ fn screenshots(
                 safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
                 nudge: None,
                 slots: &slots,
+                store: &mofact_ui::StoreView::default(),
+                crash: false,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -744,9 +857,27 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
-            "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
-            "menu", "new-game", "plan", "mega",
+            "toolbar",
+            "build",
+            "research",
+            "radial",
+            "recipes",
+            "problems",
+            "train",
+            "machine",
+            "menu",
+            "new-game",
+            "plan",
+            "mega",
+            "unlock",
+            "large-text",
         ];
+        // As a fresh install sees it: the demo, with the price known.
+        let store = mofact_ui::StoreView {
+            demo: Some(crate::shop::DEMO_TIER),
+            price: Some("$9.99".into()),
+            ..Default::default()
+        };
         for sheet in sheets {
             let mut hud = Hud::new();
             match sheet {
@@ -773,11 +904,16 @@ fn screenshots(
                 },
                 "build" => hud.toggle_build_sheet(),
                 "research" => hud.toggle_research(),
+                "unlock" => hud.open_unlock(),
                 "problems" => hud.toggle_problems(),
                 "recipes" => hud.browse("iron-plate".into()),
                 // A whole chain for the ratio calculator.
                 "plan" => hud.browse("circuit".into()),
                 "menu" => hud.open_menu(None),
+                "large-text" => {
+                    hud.set_large_text(true);
+                    hud.open_menu(None);
+                }
                 "new-game" => hud.open_menu(Some((2, 271_828))),
                 "radial" => {
                     hud.pointer(Pointer::Down {
@@ -793,7 +929,7 @@ fn screenshots(
             let view = View {
                 size,
                 scale,
-                content,
+                content: &shown,
                 look: &look,
                 snapshot: if sheet == "problems" { &stuck } else { &latest },
                 tool: &Tool::Hand,
@@ -804,6 +940,8 @@ fn screenshots(
                 safe: safe.map(|v| v * scale),
                 nudge: None,
                 slots: &slots,
+                store: &store,
+                crash: sheet == "menu",
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -814,6 +952,224 @@ fn screenshots(
     }
     Ok(())
 }
+
+/// One store screenshot: its file name, the sheet open, the tile the camera
+/// looks at, zoom in points per tile, and
+/// how dark the night is (0 to 1).
+type Shot = (&'static str, &'static str, [f32; 2], f32, f32);
+
+/// Store screenshots (docs/store): the scenario in `sim`, run for
+/// `seconds`, at every size the stores ask for, with the HUD as a player sees it in the full game, then
+/// the same world with no HUD for the feature graphic and Steam's capsules,
+/// which `tools/store/compose.py` puts the name on.
+fn store_shots(
+    content: &Content,
+    mut sim: Sim,
+    mut ore: OreMap,
+    seconds: u32,
+    dir: &Path,
+) -> Result<(), String> {
+    for _ in 0..seconds * mofact_core::TICKS_PER_SECOND {
+        sim.step();
+    }
+    let prev = sim.snapshot();
+    sim.step();
+    let mut latest = sim.snapshot();
+    // The stores get a factory that works: a stuck machine means the
+    // showcase no longer suits the content, so say where.
+    if let Some(e) = latest.entities.iter().find(|e| {
+        use mofact_core::snapshot::MachineState::{Blocked, NoPower, Starved};
+        matches!(e.state, Starved | Blocked | NoPower)
+    }) {
+        return Err(format!(
+            "the {} at {},{} is {:?}; fix the store scenario",
+            e.building.as_str(),
+            e.pos.x,
+            e.pos.y,
+            e.state
+        ));
+    }
+    // The goal a player with this factory is on, folded to its title.
+    let goal = STORE_GOAL;
+    latest.goal = content
+        .goals
+        .get(usize::from(goal))
+        .map(|_| mofact_core::snapshot::GoalView {
+            index: goal,
+            have: 0,
+            need: 1,
+        });
+    let gpu = Gpu::headless().map_err(|e| e.to_string())?;
+    let look = Look::new(content);
+    let mut renderer = Renderer::new(&gpu, look.atlases());
+    let mut scene = Scene::default();
+    let mut overlay = Overlay::new(&look);
+    std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    let mut draw = |scene: &mut Scene,
+                    overlay: &mut Overlay,
+                    renderer: &mut Renderer,
+                    camera: Camera,
+                    size: (u32, u32),
+                    hud: Option<(&mut Hud, f32, [f32; 4], bool)>,
+                    path: PathBuf|
+     -> Result<(), String> {
+        scene.build(
+            &look,
+            renderer.atlases(),
+            &camera,
+            size,
+            &prev,
+            &latest,
+            0.5,
+        );
+        scene.animate(&look, renderer.atlases(), &camera, size, &latest, 1.3);
+        ore.fill(&camera, size);
+        scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+        scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
+        scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
+        overlay.clear();
+        let with = hud.map(|(hud, scale, safe, map)| {
+            if map {
+                crate::worldmap::factory(overlay, content, &look, &camera, size, scale, &latest);
+                let patches = ore.patches(&camera, size);
+                crate::worldmap::patches(overlay, &look, &camera, size, scale, &patches);
+            }
+            let view = View {
+                size,
+                scale,
+                content,
+                look: &look,
+                snapshot: &latest,
+                tool: &Tool::Hand,
+                dir: mofact_core::geom::Dir::East,
+                recipe: None,
+                belt: &"belt".into(),
+                history: (false, false),
+                safe: safe.map(|v| v * scale),
+                nudge: None,
+                slots: &[],
+                // The full game, as the stores sell it.
+                store: &mofact_ui::StoreView::default(),
+                crash: false,
+            };
+            hud.draw(&view, overlay);
+        });
+        let pixels = renderer.capture(&gpu, size, &camera, scene, with.map(|()| &*overlay), FLOOR);
+        write_png(&path, size, &pixels)?;
+        println!("{}", path.display());
+        Ok(())
+    };
+    for (store, size, scale, safe) in STORE_SCREENS {
+        let sub = dir.join(store);
+        std::fs::create_dir_all(&sub).map_err(|e| e.to_string())?;
+        for (name, sheet, at, zoom, night) in STORE_SHOTS {
+            let mut hud = Hud::new();
+            hud.fold_goal(goal);
+            match sheet {
+                "build" => hud.toggle_build_sheet(),
+                "research" => hud.toggle_research(),
+                "plan" => hud.browse("circuit".into()),
+                "map" => hud.set_map(true),
+                "train" => {
+                    if let Some(t) = latest.trains.first() {
+                        hud.select(Some(t.id));
+                    }
+                }
+                _ => {}
+            }
+            scene.night = night;
+            // A screen held sideways is wider than the factory: look at its
+            // middle, closer, so the factory fills it.
+            let (center, ppt) = if size.0 > size.1 {
+                (
+                    [at[0] + 5.0, at[1]],
+                    (zoom * scale).max(size.0 as f32 / 44.0),
+                )
+            } else {
+                (at, zoom * scale)
+            };
+            let camera = Camera {
+                center,
+                pixels_per_tile: ppt,
+            };
+            draw(
+                &mut scene,
+                &mut overlay,
+                &mut renderer,
+                camera,
+                size,
+                Some((&mut hud, scale, safe, sheet == "map")),
+                sub.join(format!("{name}.png")),
+            )?;
+        }
+    }
+    scene.night = 0.0;
+    // Art with no HUD, for the feature graphic and Steam's capsules.
+    let art = dir.join("art");
+    std::fs::create_dir_all(&art).map_err(|e| e.to_string())?;
+    for (name, size, at, ppt) in STORE_ART {
+        let camera = Camera {
+            center: at,
+            pixels_per_tile: ppt,
+        };
+        draw(
+            &mut scene,
+            &mut overlay,
+            &mut renderer,
+            camera,
+            size,
+            None,
+            art.join(format!("{name}.png")),
+        )?;
+    }
+    Ok(())
+}
+
+/// Each store's screenshot size: folder, size in pixels, pixels per point,
+/// and the insets (top, right, bottom, left, in points) its screens cover.
+const STORE_SCREENS: [Screen; 5] = [
+    // App Store: the 6.9-inch iPhone and the 13-inch iPad, which Apple
+    // scales down for every smaller device.
+    (
+        "app-store-iphone",
+        (1320, 2868),
+        3.0,
+        [62.0, 0.0, 34.0, 0.0],
+    ),
+    ("app-store-ipad", (2064, 2752), 2.0, [24.0, 0.0, 20.0, 0.0]),
+    // Google Play: phones (16:9) and 10-inch tablets, held sideways.
+    ("play-phone", (1080, 1920), 2.5, [24.0, 0.0, 0.0, 0.0]),
+    ("play-tablet", (2560, 1600), 2.0, [24.0, 0.0, 0.0, 0.0]),
+    // Steam: 1080p, at 1.5 pixels per point.
+    ("steam", (1920, 1080), 1.5, [0.0; 4]),
+];
+
+/// The goal the showcase's player is on: "Build a lab", as its wind
+/// turbines are up.
+const STORE_GOAL: u16 = 7;
+
+/// The store screenshots, in the order the stores show them.
+const STORE_SHOTS: [Shot; 6] = [
+    ("1-factory", "", [11.0, 20.0], 24.0, 0.0),
+    ("2-build", "build", [11.0, 20.0], 24.0, 0.0),
+    ("3-research", "research", [11.0, 20.0], 24.0, 0.0),
+    ("4-ratios", "plan", [11.0, 20.0], 24.0, 0.0),
+    ("5-train", "train", [14.0, 12.0], 36.0, 0.0),
+    ("6-night", "", [12.0, 21.0], 36.0, 0.85),
+];
+
+/// Art with no HUD: name, size in pixels, the tile at its centre and pixels
+/// per tile.
+type Art = (&'static str, (u32, u32), [f32; 2], f32);
+
+const STORE_ART: [Art; 6] = [
+    ("play-feature", (1024, 500), [12.0, 19.0], 36.0),
+    ("steam-header", (920, 430), [12.0, 19.0], 34.0),
+    ("steam-small", (462, 174), [11.0, 19.0], 24.0),
+    ("steam-main", (1232, 706), [12.0, 19.0], 38.0),
+    ("steam-library", (600, 900), [10.0, 20.0], 32.0),
+    ("steam-hero", (3840, 1240), [15.0, 19.0], 64.0),
+];
 
 /// A screen to show the HUD on: its name, size in pixels, pixels per point
 /// and the insets its display covers, in points.

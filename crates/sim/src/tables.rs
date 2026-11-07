@@ -117,6 +117,10 @@ pub struct ResearchDef {
     pub cost: Vec<(Item, u32)>,
     pub units: u32,
     pub seconds: f32,
+    /// The tier it opens.
+    pub tier: u8,
+    /// Repeatable research's bonus per level (S2).
+    pub repeat: Option<mofact_core::content::Repeat>,
 }
 
 #[derive(Clone, Debug)]
@@ -305,6 +309,8 @@ impl Tables {
                 cost: stacks(&t, &r.cost),
                 units: r.units.max(1),
                 seconds: r.seconds,
+                tier: r.tier,
+                repeat: r.repeat,
             };
             for &(item, _) in &def.cost {
                 if !t.packs.contains(&item) {

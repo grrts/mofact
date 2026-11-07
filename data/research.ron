@@ -273,4 +273,24 @@
         recipes: ["tether-segment", "climber", "orbital-beacon", "counterweight"],
         buildings: ["skyhook"],
     ),
+    // Repeatable research (S2): it never runs out. Each level is a bonus
+    // to every machine of a kind, and costs one base's units more than the last.
+    (
+        id: "deep-survey", name: "Deep survey", tier: 8, requires: ["satellites"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1)],
+        units: 50, seconds: 60.0,
+        repeat: Some((bonus: Mining, per_level: 0.1)),
+    ),
+    (
+        id: "lean-assembly", name: "Lean assembly", tier: 8, requires: ["satellites"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1)],
+        units: 50, seconds: 60.0,
+        repeat: Some((bonus: Crafting, per_level: 0.05)),
+    ),
+    (
+        id: "lab-automation", name: "Lab automation", tier: 8, requires: ["satellites"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1)],
+        units: 50, seconds: 60.0,
+        repeat: Some((bonus: Research, per_level: 0.1)),
+    ),
 ]

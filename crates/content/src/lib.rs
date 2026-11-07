@@ -430,9 +430,9 @@ mod tests {
                 c.items.len(), // with the three far ores (T42) and tiers 9 to 12
                 c.recipes.len(),
                 c.buildings.len(),
-                c.research.len()
+                c.research.len() // with three repeatable (S2)
             ),
-            (69, 84, 32, 44)
+            (69, 84, 32, 47)
         );
         let circuit = c
             .recipes

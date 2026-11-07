@@ -162,12 +162,17 @@ fn labels(content: &Content, snap: &Snapshot) -> Vec<(TilePos, (u8, u8), &'stati
     let first = |id: &str| snap.entities.iter().find(|e| e.building.as_str() == id);
     let mut out = Vec::new();
     for (id, text, below) in [
-        ("drill", "Drill: digs iron ore", false),
-        ("furnace", "Furnace: makes plates", true),
-        ("hub", "Hub: plates go to your stock", false),
+        ("drill", "guide.drill", false),
+        ("furnace", "guide.furnace", true),
+        ("hub", "guide.hub", false),
     ] {
         if let Some(e) = first(id) {
-            out.push((e.pos, size(content, &e.building), text, below));
+            out.push((
+                e.pos,
+                size(content, &e.building),
+                mofact_ui::tr(text),
+                below,
+            ));
         }
     }
     out

@@ -69,6 +69,8 @@ pub struct Scene {
     /// How far into the night it is (S9): 0 by day, 1 at its darkest.
     pub night: f32,
     pub low_power: bool,
+    /// Reduce motion: trees and water hold still, at full detail.
+    pub still: bool,
     /// The tiles buildings stand on, from the last [`Scene::build`]: no
     /// decorations are drawn there.
     occupied: HashSet<TilePos>,
@@ -599,7 +601,7 @@ impl Scene {
             // Trees and bushes sway in the wind (S8): a slow lean and a
             // breath of the canopy, each on its own beat, the wind's gusts
             // rolling across the land. Still in low-power mode.
-            let sway = if self.low_power || !matches!(kind, 1..=3) {
+            let sway = if self.low_power || self.still || !matches!(kind, 1..=3) {
                 0.0
             } else {
                 let gust = 0.6 + 0.4 * (self.time * 0.35 - tile.x as f32 * 0.07).sin();
@@ -835,13 +837,14 @@ mod tests {
     }
 
     #[test]
-    fn trees_sway_in_the_wind_but_stones_and_low_power_stay_still() {
+    fn trees_sway_in_the_wind_but_stones_low_power_and_reduce_motion_stay_still() {
         let look = Look::new(&content());
         let atlases = look.atlases();
-        let at = |time: f32, low_power: bool| {
+        let at_with = |time: f32, low_power: bool, still: bool| {
             let mut scene = Scene {
                 time,
                 low_power,
+                still,
                 ..Scene::default()
             };
             let decor = [(TilePos::new(1, 0), 1u8), (TilePos::new(3, 0), 4u8)];
@@ -852,6 +855,7 @@ mod tests {
                 .map(|i| (i.pos, i.size))
                 .collect::<Vec<_>>()
         };
+        let at = |time: f32, low_power: bool| at_with(time, low_power, false);
         let (a, b) = (at(0.0, false), at(0.7, false));
         assert_ne!(a[0], b[0], "the tree moves");
         assert_eq!(a[1], b[1], "the stone does not");
@@ -859,6 +863,11 @@ mod tests {
             at(0.0, true),
             at(0.7, true),
             "nothing moves in low-power mode"
+        );
+        assert_eq!(
+            at_with(0.0, false, true),
+            at_with(0.7, false, true),
+            "nor with reduce motion"
         );
         // A sway, not a walk: it stays within a few hundredths of a tile.
         assert!((a[0].0[0] - b[0].0[0]).abs() < 0.1);

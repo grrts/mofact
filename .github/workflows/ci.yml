@@ -55,6 +55,14 @@ jobs:
       - name: App shell smoke test
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo run -p mofact -- --frames 120
+      # Airplane mode (T64): the same run with no network at all, as a
+      # fresh network namespace has none. Nothing may wait on it.
+      - name: App shell offline
+        if: runner.os == 'Linux'
+        run: |
+          cargo build -p mofact
+          # As root: it saves under /root, which is writable for it.
+          sudo unshare -n -- xvfb-run -a ./target/debug/mofact --frames 120
       - name: App shell smoke test
         if: runner.os == 'macOS'
         run: cargo run -p mofact -- --frames 120
@@ -65,6 +73,11 @@ jobs:
           cargo test -p mofact-render -- --ignored
           cargo run -p mofact -- --screenshot screenshots/starter-line
           cargo run -p mofact -- --screenshot screenshots/circuit-chain --scenario scenarios/circuit-chain.ron
+          # The store screenshots (docs/store): fails if a machine in the showcase is stuck.
+          cargo run -p mofact -- --store screenshots/store --scenario tools/store/showcase.ron
+          python3 tools/store/check.py
+          # The app icon at every size (T68) matches its drawing.
+          cargo run -p mofact-icon -- --check
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:

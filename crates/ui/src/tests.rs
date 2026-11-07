@@ -71,6 +71,8 @@ struct Fixture {
     hud: Hud,
     belt: BuildingId,
     slots: Vec<SlotView>,
+    store: StoreView,
+    crash: bool,
 }
 
 impl Fixture {
@@ -99,6 +101,8 @@ impl Fixture {
                 },
                 SlotView::default(),
             ],
+            store: StoreView::default(),
+            crash: false,
         }
     }
 
@@ -117,6 +121,8 @@ impl Fixture {
             safe: [0.0; 4],
             nudge: None,
             slots: &self.slots,
+            store: &self.store,
+            crash: self.crash,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -475,6 +481,7 @@ fn the_research_sheet_picks_what_labs_study() {
         current: None,
         progress: (0, 0),
         done: vec!["steel-working".into()],
+        ..Default::default()
     };
     f.draw((1080, 2340), 3.0, &Tool::Hand);
     f.find(&Hit::Study(Some("motors".into())));
@@ -863,6 +870,7 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                 "menu",
                 "menu-delete",
                 "new-game",
+                "unlock",
             ] {
                 let mut f = Fixture::new();
                 f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
@@ -884,6 +892,11 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                         f.hud.confirm_delete = Some(1);
                     }
                     "new-game" => f.hud.open_menu(Some((2, 123_456_789))),
+                    "unlock" => {
+                        f.store.demo = Some(3);
+                        f.store.price = Some("4,99 €".into());
+                        f.hud.open_unlock();
+                    }
                     "train-pick" => {
                         f.hud.select(Some(EntityId(10)));
                         f.hud.picking = Some(EntityId(10));
@@ -1153,4 +1166,317 @@ fn the_skyhook_sheet_shows_what_its_stage_still_needs() {
             "the needs fit the screen"
         );
     }
+}
+
+#[test]
+fn research_past_the_demo_opens_the_full_game_sheet() {
+    let mut f = Fixture::new();
+    f.snapshot.research.done = [
+        "steel-working",
+        "motors",
+        "fluid-handling",
+        "steam-power",
+        "oil-processing",
+        "sulfur-processing",
+        "advanced-electronics",
+        "chemistry",
+        "silicon-processing",
+        "precision-engineering",
+    ]
+    .map(ResearchId::from)
+    .to_vec();
+    f.store.demo = Some(4);
+    f.store.price = Some("€4.99".into());
+    for (size, scale) in [((1280, 720), 1.0), ((1080, 2340), 3.0)] {
+        f.hud = Hud::new();
+        f.draw(size, scale, &Tool::Hand);
+        f.hud.toggle_research();
+        f.draw(size, scale, &Tool::Hand);
+        assert!(
+            f.hud
+                .hits
+                .iter()
+                .any(|(_, h)| h == &Hit::Study(Some("solar-energy".into()))),
+            "the demo's own tiers can still be studied"
+        );
+        f.tap(centre(f.find(&Hit::Unlock)));
+        f.draw(size, scale, &Tool::Hand);
+        let buy = f.find(&Hit::Buy);
+        assert!(buy[0] + buy[2] <= size.0 as f32);
+        assert_eq!(f.tap(centre(buy)).1, vec![Action::Buy]);
+        assert_eq!(
+            f.tap(centre(f.find(&Hit::Restore))).1,
+            vec![Action::Restore]
+        );
+    }
+    // Once bought the sheet goes, and the rows say Study.
+    f.store.demo = None;
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| h == &Hit::Buy));
+    f.hud.toggle_research();
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    assert!(f
+        .hud
+        .hits
+        .iter()
+        .any(|(_, h)| h == &Hit::Study(Some("titanium-smelting".into()))));
+}
+
+#[test]
+fn late_and_repeatable_research_shows_on_a_phone_and_can_be_studied_again() {
+    let mut f = Fixture::new();
+    // Everything done that can be: only the repeatable research is left.
+    f.snapshot.research.done = f.content.research.iter().map(|r| r.id.clone()).collect();
+    f.snapshot.research.levels = vec![("deep-survey".into(), 2)];
+    f.hud.toggle_research();
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    for id in ["deep-survey", "lean-assembly", "lab-automation"] {
+        f.find(&Hit::Study(Some(id.into())));
+    }
+}
+
+#[test]
+fn a_waiting_crash_report_can_be_copied_from_the_game_menu() {
+    let mut f = Fixture::new();
+    for (size, scale) in [((1280, 720), 1.0), ((1080, 2340), 3.0)] {
+        f.hud = Hud::new();
+        f.crash = false;
+        f.hud.open_menu(None);
+        f.draw(size, scale, &Tool::Hand);
+        assert!(!f.hud.hits.iter().any(|(_, h)| h == &Hit::CopyCrash));
+        f.crash = true;
+        f.draw(size, scale, &Tool::Hand);
+        let b = f.find(&Hit::CopyCrash);
+        assert!(b[1] + b[3] <= size.1 as f32, "it fits on screen");
+        assert_eq!(f.tap(centre(b)).1, vec![Action::CopyCrash]);
+    }
+}
+
+/// Every character in `lang`'s strings and content names.
+fn texts(lang: i18n::Lang) -> Vec<String> {
+    i18n::set_lang(lang);
+    let mut out: Vec<String> = i18n::table(i18n::Lang::En)
+        .keys()
+        .map(|k| tr(k).to_string())
+        .collect();
+    let c = i18n::localize(&content());
+    out.extend(i18n::content_keys(&c).into_iter().map(|(_, v)| v));
+    out.extend(i18n::Lang::ALL.iter().map(|l| l.native().to_string()));
+    i18n::set_lang(i18n::Lang::En);
+    out
+}
+
+#[test]
+fn every_character_has_a_glyph() {
+    let o = Overlay::new(&Look::default());
+    let mut missing = Vec::new();
+    for lang in i18n::Lang::ALL {
+        for text in texts(lang) {
+            for c in text.chars().filter(|c| !o.has_glyph(*c)) {
+                let line = format!("{}: {c:?} in {text:?}", lang.code());
+                if !missing.contains(&line) {
+                    missing.push(line);
+                }
+            }
+        }
+    }
+    assert!(
+        missing.is_empty(),
+        "no glyph for these: run tools/fonts/subset.py\n{}",
+        missing.join("\n")
+    );
+}
+
+#[test]
+fn nearly_every_content_name_is_translated() {
+    // New content shows in English until it is translated; this catches a
+    // language falling far behind, not each new name.
+    let keys = i18n::content_keys(&content());
+    for lang in i18n::Lang::ALL.into_iter().skip(1) {
+        let t = i18n::table(lang);
+        let done = keys
+            .iter()
+            .filter(|(k, _)| t.contains_key(k.as_str()))
+            .count();
+        assert!(
+            done * 10 >= keys.len() * 9,
+            "{}: only {done} of {} content names translated",
+            lang.code(),
+            keys.len()
+        );
+    }
+}
+
+/// Draw every state in `lang`, with the content in that language as the
+/// app shows it, and say where words run off the screen or out of their
+/// button.
+fn overflows(lang: i18n::Lang) -> Vec<String> {
+    overflows_with(lang, false)
+}
+
+fn overflows_with(lang: i18n::Lang, large: bool) -> Vec<String> {
+    let mut wrong = Vec::new();
+    every_state(|f, size, scale, tool, state| {
+        f.hud.set_large_text(large);
+        i18n::set_lang(lang);
+        f.content = i18n::localize(&f.content);
+        f.draw(size, scale, tool);
+        let (w, h) = (size.0 as f32, size.1 as f32);
+        let o = &f.overlay;
+        // A control whose panel goes down after the words lies over them.
+        let over_it = |r: &Rect, at: usize| {
+            o.panels
+                .iter()
+                .any(|(p, i)| *i > at && (0..4).all(|k| (p[k] - r[k]).abs() < 1.0))
+        };
+        for &([x, y, rw, rh], at) in &o.runs {
+            let mut why = None;
+            if x < -0.5 || y < -0.5 || x + rw > w + 0.5 || y + rh > h + 0.5 {
+                why = Some("off the screen".to_string());
+            }
+            // Words shrink to fit, but not past reading.
+            if rh / scale < 7.0 {
+                why = Some(format!("shrunk to {:.1} pt", rh / scale));
+            }
+            // The control the words are centred in, innermost: they start
+            // and end in it too.
+            let inside = f
+                .hud
+                .hits
+                .iter()
+                .filter(|(r, hit)| {
+                    // Item icons and the round × and ☰ buttons hold no words.
+                    !matches!(hit, Hit::Block | Hit::Item(_) | Hit::Close | Hit::Menu)
+                        && x + rw / 2.0 >= r[0]
+                        && x + rw / 2.0 <= r[0] + r[2]
+                        && y + rh / 2.0 >= r[1]
+                        && y + rh / 2.0 <= r[1] + r[3]
+                        && !over_it(r, at)
+                })
+                .min_by(|a, b| (a.0[2] * a.0[3]).total_cmp(&(b.0[2] * b.0[3])));
+            if let Some((r, hit)) = inside {
+                let over = (r[0] - x).max(x + rw - r[0] - r[2]);
+                if over > 1.0 {
+                    why = Some(format!("out of {hit:?} by {over:.0} px"));
+                }
+            }
+            if let Some(why) = why {
+                let line = format!(
+                    "{}: text at {:.0},{:.0} ({:.0} wide) {why} on {size:?}@{scale} ({tool:?}, {state})",
+                    lang.code(),
+                    x,
+                    y,
+                    rw
+                );
+                if !wrong.contains(&line) {
+                    wrong.push(line);
+                }
+            }
+        }
+        i18n::set_lang(i18n::Lang::En);
+    });
+    wrong
+}
+
+#[test]
+fn english_fits_every_screen() {
+    let wrong = overflows(i18n::Lang::En);
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn large_text_fits_every_screen_in_english_and_german() {
+    let mut wrong = overflows_with(i18n::Lang::En, true);
+    wrong.extend(overflows_with(i18n::Lang::De, true));
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn large_text_draws_bigger_and_the_menu_toggles_both_settings() {
+    let mut f = Fixture::new();
+    let size = (1170, 2532);
+    f.hud.open_menu(None);
+    f.draw(size, 3.0, &Tool::Hand);
+    let small = f.hud.unit;
+    let large = centre(f.find(&Hit::LargeText));
+    assert_eq!(f.tap(large).1, vec![Action::LargeText(true)]);
+    assert!(f.hud.large_text());
+    f.draw(size, 3.0, &Tool::Hand);
+    assert!(f.hud.unit > small * 1.1, "{} after {small}", f.hud.unit);
+    let motion = centre(f.find(&Hit::Motion));
+    assert_eq!(f.tap(motion).1, vec![Action::ReduceMotion(true)]);
+    assert!(f.hud.reduce_motion());
+}
+
+#[test]
+fn german_and_french_fit_every_screen() {
+    let mut wrong = overflows(i18n::Lang::De);
+    wrong.extend(overflows(i18n::Lang::Fr));
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn spanish_and_portuguese_fit_every_screen() {
+    let mut wrong = overflows(i18n::Lang::Es);
+    wrong.extend(overflows(i18n::Lang::PtBr));
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn japanese_and_chinese_fit_every_screen() {
+    let mut wrong = overflows(i18n::Lang::Ja);
+    wrong.extend(overflows(i18n::Lang::ZhHans));
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn a_whole_session_of_han_text_fits_the_atlas() {
+    // One overlay lives as long as the app: every sheet's glyphs, at every
+    // size, on a 3x phone, must find room alongside the icons.
+    for lang in [i18n::Lang::Ja, i18n::Lang::ZhHans] {
+        let mut f = Fixture::new();
+        i18n::set_lang(lang);
+        f.content = i18n::localize(&f.content);
+        let size = (1179, 2556);
+        for open in 0..6 {
+            f.hud.research = open == 1;
+            f.hud.more = open == 2;
+            f.hud
+                .select(if open == 3 { Some(EntityId(2)) } else { None });
+            if open == 4 {
+                f.hud.open_menu(Some((1, 42)));
+            }
+            if open == 5 {
+                f.hud.browse = Some("iron-plate".into());
+            }
+            f.draw(size, 3.0, &Tool::Place("assembler".into()));
+            f.draw((2556, 1179), 3.0, &Tool::Belt);
+        }
+        // And every string at every size text comes in, a sheetful of
+        // characters a frame.
+        let all: Vec<char> = texts(lang).concat().chars().collect();
+        i18n::set_lang(lang);
+        for px in [30.0, 33.0, 36.0, 39.0, 42.0, 45.0] {
+            for sheet in all.chunks(150) {
+                f.overlay.clear();
+                let sheet: String = sheet.iter().collect();
+                f.overlay.text(&sheet, [0.0, 100.0], px, [255; 4]);
+            }
+        }
+        i18n::set_lang(i18n::Lang::En);
+        assert_eq!(f.overlay.dropped, 0, "{}: glyphs left out", lang.code());
+    }
+}
+
+#[test]
+fn a_tap_on_the_tool_tip_builds_nothing_under_it() {
+    let mut f = Fixture::new();
+    let size = (1170, 2532);
+    f.draw(size, 3.0, &Tool::Belt);
+    let done = f.find(&Hit::Done);
+    // The card beside Done, in its middle.
+    let at = [done[0] / 2.0, done[1] + done[3] / 2.0];
+    assert!(f.tap(at).0, "the card takes the tap");
+    // Out on the map the tap is the game's.
+    assert!(!f.tap([size.0 as f32 / 2.0, size.1 as f32 * 0.6]).0);
 }

@@ -73,6 +73,8 @@ pub enum CommandError {
     Terrain,
     /// A tree or boulder is in the way until it is cleared.
     Overgrown,
+    /// The research is past the demo: it needs the full game.
+    FullGame,
 }
 
 /// The outcome of applying one command, sent back to the main thread.

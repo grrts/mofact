@@ -21,8 +21,13 @@
 mod autosave;
 mod built;
 mod bundled;
+pub mod cloud;
+pub mod crash;
 pub mod game;
 mod guide;
+pub mod haptics;
+#[cfg(not(target_arch = "wasm32"))]
+mod locale;
 #[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod ore;
@@ -30,6 +35,7 @@ mod ore;
 mod perf;
 #[cfg(test)]
 mod replay;
+pub mod shop;
 pub mod slots;
 pub mod sound;
 #[cfg(not(target_arch = "wasm32"))]
@@ -39,4 +45,20 @@ mod worldmap;
 pub use bundled::content;
 pub use game::Game;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{main, run};
+pub use native::{main, run, run_with, MakeShop, Platform};
+
+#[cfg(test)]
+mod version {
+    /// Every platform ships one version: the workspace's.
+    #[test]
+    fn the_ios_bundle_carries_the_workspace_version() {
+        let plist = include_str!("../../platform/ios/Info.plist");
+        let at = plist
+            .find("<key>CFBundleShortVersionString</key>")
+            .expect("Info.plist names a version");
+        let rest = &plist[at..];
+        let start = rest.find("<string>").expect("a value") + "<string>".len();
+        let end = rest.find("</string>").expect("a value");
+        assert_eq!(&rest[start..end], env!("CARGO_PKG_VERSION"));
+    }
+}

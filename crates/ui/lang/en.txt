@@ -1,0 +1,199 @@
+# Mofact's words in English: the source every other language translates.
+# One `key = text` per line; {0}, {1} … are filled in by the game.
+# Content names (items, buildings, research, goals) come from data/*.ron.
+# A new key here shows in English until the other languages add it.
+
+# The toolbar.
+tool.move = Move
+tool.belt = Belt
+tool.drill = Drill
+tool.furnace = Furnace
+tool.assembler = Assembler
+tool.more = More
+tool.remove = Remove
+
+# Tips for the tool in hand.
+tip.build = Build
+tip.named = {0}: {1}
+tip.hand = Drag to look around, pinch or scroll to zoom. Tap a machine to inspect it.
+tip.belt = Drag to draw a belt along your path. Two fingers pan and zoom.
+tip.drill = Tap any ore tile. Face the drill into a belt, or straight into a furnace.
+tip.furnace = Put it where ore arrives. Plates come out of the arrow: belt them to the hub.
+tip.lab = Tap to place. Belt research packs into it, and give it power.
+tip.pole = Tap to place. Poles link up to 7 tiles apart and power what's next to them.
+tip.splitter = Tap to place facing along a belt. Items go out left and right in turn.
+tip.underground_belt = Place an entrance, then an exit up to 5 tiles on facing the same way.
+tip.rail = Drag to lay track; it joins up by itself. Signals and stops go on top.
+tip.rail_signal = Tap track to split it into blocks. Only one train at a time goes past.
+tip.train_stop = Tap track. Belts pointed in load the train; it unloads out of the arrow.
+tip.locomotive = Tap track to place, then tap the train to give it stops.
+tip.wind_turbine = Tap to place next to a pole. Each turbine powers one lab.
+tip.place = Tap to place. Pick a recipe, or let it pick from what arrives.
+tip.remove = Tap or drag to mark, lift to remove. Undo brings things back.
+
+# Buttons used in several places.
+button.done = Done
+button.undo = ← Undo
+button.redo = Redo →
+button.cancel = Cancel
+button.rotate = Rotate
+
+# The game menu.
+menu.title = Game
+menu.new_game_in_slot = New game in slot {0}
+menu.seed_note = The same seed and preset always make the same map.
+menu.seed = Seed
+key.delete = Delete
+menu.start = Start
+menu.playing = Playing
+menu.delete_ask = Delete?
+menu.load = Load
+menu.new_game = New game
+menu.slot_used = Slot {0} · {1}
+menu.slot_empty = Slot {0} · empty
+preset.standard = Standard
+preset.rich = Rich ore
+preset.lakes = Lakes
+preset.dry = Dry
+setting.low_power = Low power
+setting.colour_blind = Colour-blind
+setting.large_text = Large text
+setting.reduce_motion = Reduce motion
+setting.state = {0}: {1}
+setting.on = on
+setting.off = off
+setting.language = Language: {0}
+setting.language_auto = Auto ({0})
+toast.colour_blind_on = Colour-blind mode: safer colours, and marks on look-alike items.
+toast.colour_blind_off = Colour-blind mode off.
+toast.low_power_on = Low-power mode: 30 fps and calmer ground, to save battery.
+toast.low_power_off = Low-power mode off.
+toast.large_text_on = Large text: bigger words and buttons.
+toast.large_text_off = Large text off.
+toast.reduce_motion_on = Reduce motion: trees, water and hints hold still.
+toast.reduce_motion_off = Reduce motion off.
+
+# Save slots.
+slot.title = {0} · seed {1}
+slot.just_started = just started
+slot.minutes = {0} min played
+slot.hours = {0} h {1} min played
+slot.detail = {0} · {1} built
+
+# Goals.
+goal.met = Goal met! Next: {0}
+goal.progress = Goal {0} of {1}: {2}
+
+# Problems.
+problems.title = Problems
+problems.one = 1 problem
+problems.many = {0} problems
+problems.power = Power: {0} of {1} kW · {2}% met
+problems.what = {0} · {1}
+trouble.no_power = no power
+trouble.starved = waiting for input
+trouble.blocked = output full
+trouble.empty = empty
+trouble.idle = no recipe
+
+# Research.
+research.title = Research
+research.pick = Pick research
+research.all_done = Research done
+research.done = Done
+research.studying = Studying
+research.full_game = Full game
+research.study = Study
+state.locked = Locked
+
+# The recipe browser.
+browser.none = Nothing makes or uses this yet.
+browser.made_by = MADE BY
+browser.used_in = USED IN
+browser.research = RESEARCH
+browser.to_make = TO MAKE
+list.join = {0}, {1}
+unit.per_min = {0}/min
+unit.seconds = {0}s
+recipe.auto = Auto
+build.title = Build
+
+# The full game.
+unlock.title = Unlock the full game
+unlock.long = The demo goes up to tier {0}. The full game opens tiers {1} to {2} and the skyhook, with one purchase. Your factory stays just as it is.
+unlock.short = Tiers {0} to {1} and the skyhook. Your factory stays.
+unlock.waiting = Waiting for the store
+unlock.buy_price = Buy the full game · {0}
+unlock.buy = Buy the full game
+unlock.restore = Restore a purchase
+toast.full_game_open = The full game is open. Thank you!
+store.cancelled = Purchase cancelled: nothing was charged.
+store.not_found = No purchase found on this account.
+store.unreachable = The store couldn't be reached.
+
+# The inspect sheet.
+inspect.hub = Everything delivered here joins your stock.
+inspect.won = Built. Your factory has won!
+inspect.stage = {0} · {1} of {2}
+inspect.engine_on = Gives {0} of {1} kW, burning {2}
+inspect.engine_off = Gives up to {0} kW once a pole covers it
+inspect.grid = Grid: {0} of {1} kW asked for · {2}% met
+inspect.generator_off = Gives {0} kW once a pole covers it
+inspect.unlinked = Not linked to anything
+inspect.well = Draws {0} from the ground
+inspect.pump = Pushes fluid the way its arrow points
+inspect.fluid = {0} · {1}% full
+inspect.empty = Empty: nothing is flowing in
+inspect.recipe_any = Picks its recipe from what arrives
+inspect.drill = Mines the ore under it
+state.idle = Idle
+state.working = Working
+state.starved = Starved
+state.blocked = Output full
+state.no_power = No power
+
+# Trains.
+train.no_stops = No stops
+train.moving = On its way
+train.waiting = Waiting for track
+train.loading = Loading
+train.unloading = Unloading
+train.no_route = No route
+train.empty = Empty · holds {0}
+train.of = of {0}
+train.held = {0} of {1}
+train.hint = Add a stop to load at, then one to unload at.
+train.stops = Stops
+train.stop_at = {0}. Stop at {1}, {2}
+train.load = Load
+train.unload = Unload
+train.pick = Tap a train stop on the map to add it.
+train.add = Add stop
+toast.tap_stop = Tap a train stop to add it
+
+# Building a thing that can't go there.
+error.blocked = Something is in the way.
+error.cannot_afford = Not enough plates in stock.
+error.locked = That isn't unlocked yet.
+error.no_such_entity = That's already gone.
+error.unknown_content = That isn't in this game's data.
+error.fluids_mix = That would mix two fluids.
+error.no_ore = Drills only go on ore: tap a coloured ore tile.
+error.terrain = Nothing can be built on water or cliffs.
+error.overgrown = Trees in the way: drag over them with Remove to clear them.
+error.full_game = That research needs the full game.
+toast.slot_loaded = Slot {0} loaded
+
+# The first-hour guide's labels over the first buildings.
+guide.drill = Drill: digs iron ore
+guide.furnace = Furnace: makes plates
+guide.hub = Hub: plates go to your stock
+
+# Crash reports and repeatable research.
+menu.copy_crash = Copy last crash report
+toast.crashed = Mofact stopped unexpectedly last time. Nothing was sent; the menu can copy the report.
+toast.crash_copied = Crash report copied: paste it into a bug report or an email.
+research.repeat = {0} {1} · +{2}% {3}
+bonus.mining = drills
+bonus.crafting = crafting
+bonus.research = labs

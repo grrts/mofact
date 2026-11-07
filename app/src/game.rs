@@ -7,6 +7,7 @@
 use crate::built::Built;
 use crate::guide::{Coach, Guide};
 use crate::ore::OreMap;
+use crate::shop::Purchase;
 use crate::slots::{Request, Store};
 use crate::sound::Sound;
 use mofact_core::content::Content;
@@ -14,7 +15,7 @@ use mofact_core::geom::TilePos;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
-use mofact_ui::{Action, Hud, SlotView, View};
+use mofact_ui::{tr, trf, Action, Hud, SlotView, StoreView, View};
 use web_time::{Duration, Instant};
 
 /// Frame pacing (T66): 60 fps while playing, 30 in low-power mode or once
@@ -43,6 +44,10 @@ pub struct Game {
     /// A letter key for each building the toolbar has no number for.
     hotkeys: Vec<(char, mofact_core::ids::BuildingId)>,
     content: Content,
+    /// The content with its names in the player's language, for the HUD,
+    /// and the language it is in.
+    shown: Content,
+    shown_lang: mofact_ui::i18n::Lang,
     ore: OreMap,
     pub controls: Controls,
     built: Built,
@@ -67,6 +72,17 @@ pub struct Game {
     /// and the slots as it lists them.
     requests: Vec<Request>,
     slots: Vec<SlotView>,
+    /// The full game's purchase; none where nothing is sold, which plays
+    /// the full game (tests, tools).
+    purchase: Option<Purchase>,
+    store: StoreView,
+    /// What the phone should feel this frame, for the platform to play.
+    haptics: crate::haptics::Haptics,
+    pub haptic: Option<crate::haptics::Haptic>,
+    /// Last time's crash report, until the player copies it.
+    crash: Option<String>,
+    /// Text for the platform to put on the clipboard.
+    pub clipboard: Option<String>,
 }
 
 impl Game {
@@ -134,11 +150,34 @@ impl Game {
             touched: Instant::now(),
             requests: Vec::new(),
             slots: Vec::new(),
+            purchase: None,
+            store: StoreView::default(),
+            haptics: Default::default(),
+            haptic: None,
+            crash: None,
+            clipboard: None,
+            shown: content.clone(),
+            shown_lang: mofact_ui::i18n::Lang::En,
             content,
             ore,
             controls,
             latest: (0, Instant::now()),
         }
+    }
+
+    /// The language the player chose (T65): the device's, or one of their own.
+    pub fn language(&self) -> mofact_ui::i18n::Choice {
+        self.hud.language()
+    }
+
+    /// Choose the language, as a saved setting does at start.
+    pub fn set_language(&mut self, choice: mofact_ui::i18n::Choice) {
+        self.hud.set_language(choice);
+    }
+
+    /// Tell the game the device's language, from its preferred locales.
+    pub fn set_device_lang(&mut self, lang: mofact_ui::i18n::Lang) {
+        self.hud.set_device_lang(lang);
     }
 
     /// Whether low-power mode is on (T66).
@@ -163,7 +202,43 @@ impl Game {
         self.use_colour_blind(on);
     }
 
+    /// Whether large text is on.
+    pub fn large_text(&self) -> bool {
+        self.hud.large_text()
+    }
+
+    /// Turn large text on or off, as a platform does from a saved setting.
+    pub fn set_large_text(&mut self, on: bool) {
+        self.hud.set_large_text(on);
+    }
+
+    /// Whether reduce motion is on.
+    pub fn reduce_motion(&self) -> bool {
+        self.hud.reduce_motion()
+    }
+
+    /// Turn reduce motion on or off, as a platform does from a saved setting.
+    pub fn set_reduce_motion(&mut self, on: bool) {
+        self.hud.set_reduce_motion(on);
+        self.scene.still = on;
+    }
+
     /// Paint everything again in the colour-blind look, or the usual one.
+    /// The game crashed last time: say so, and offer the report in the menu.
+    pub fn set_crash_report(&mut self, report: String) {
+        self.crash = Some(report);
+        self.hud.toast(tr("toast.crashed"));
+    }
+
+    /// Sell the full game through `shop`: the demo's gate holds until it
+    /// is bought (T61).
+    pub fn set_shop(&mut self, shop: Box<dyn crate::shop::Shop>) {
+        let p = Purchase::new(shop);
+        self.sim.set_demo(p.demo());
+        self.store = p.view();
+        self.purchase = Some(p);
+    }
+
     fn use_colour_blind(&mut self, on: bool) {
         if self.look.colour_blind() == on {
             return;
@@ -191,23 +266,32 @@ impl Game {
             return Frame::Skipped;
         }
         self.drawn = Some(now);
+        if let Some(p) = &mut self.purchase {
+            if p.poll() {
+                self.sim.set_demo(None);
+                self.hud.toast(tr("toast.full_game_open"));
+            }
+            self.store = p.view();
+        }
         self.sim.pump();
         let results: Vec<_> = self.sim.results().collect();
         self.sound.results(&results);
+        self.haptic = self.haptics.frame(&results, &self.sim.latest());
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
-                self.hud.toast(match why {
-                    E::Blocked => "Something is in the way.",
-                    E::CannotAfford => "Not enough plates in stock.",
-                    E::Locked => "That isn't unlocked yet.",
-                    E::NoSuchEntity => "That's already gone.",
-                    E::UnknownContent => "That isn't in this game's data.",
-                    E::FluidsMix => "That would mix two fluids.",
-                    E::NoOre => "Drills only go on ore: tap a coloured ore tile.",
-                    E::Terrain => "Nothing can be built on water or cliffs.",
-                    E::Overgrown => "Trees in the way: drag over them with Remove to clear them.",
-                });
+                self.hud.toast(tr(match why {
+                    E::Blocked => "error.blocked",
+                    E::CannotAfford => "error.cannot_afford",
+                    E::Locked => "error.locked",
+                    E::NoSuchEntity => "error.no_such_entity",
+                    E::UnknownContent => "error.unknown_content",
+                    E::FluidsMix => "error.fluids_mix",
+                    E::NoOre => "error.no_ore",
+                    E::Terrain => "error.terrain",
+                    E::Overgrown => "error.overgrown",
+                    E::FullGame => "error.full_game",
+                }));
             }
         }
         for action in self.hud.poll(Instant::now()) {
@@ -393,11 +477,15 @@ impl Game {
             scale,
             t,
         );
+        if self.shown_lang != mofact_ui::i18n::lang() {
+            self.shown_lang = mofact_ui::i18n::lang();
+            self.shown = mofact_ui::i18n::localize(&self.content);
+        }
         let builder = &self.controls.builder;
         let view = View {
             size: target.size(),
             scale,
-            content: &self.content,
+            content: &self.shown,
             look: &self.look,
             snapshot: &latest,
             tool: &builder.tool,
@@ -408,6 +496,8 @@ impl Game {
             safe: self.safe,
             nudge,
             slots: &self.slots,
+            store: &self.store,
+            crash: self.crash.is_some(),
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -473,12 +563,30 @@ impl Game {
             Action::Send(command) => self.sim.send(command),
             Action::Undo => self.sim.undo(),
             Action::MenuOpened => self.requests.push(Request::Refresh),
+            // The slots' words are in the language they were listed in.
+            Action::Language(_) => self.requests.push(Request::Refresh),
             Action::LoadSlot(n) => self.requests.push(Request::Load(n)),
             Action::DeleteSlot(n) => self.requests.push(Request::Delete(n)),
             Action::NewGame { slot, seed, preset } => {
                 self.requests.push(Request::New { slot, seed, preset })
             }
             Action::Redo => self.sim.redo(),
+            Action::CopyCrash => {
+                if let Some(r) = self.crash.take() {
+                    self.clipboard = Some(r);
+                    self.hud.toast(tr("toast.crash_copied"));
+                }
+            }
+            Action::Buy => {
+                if let Some(p) = &mut self.purchase {
+                    p.buy();
+                }
+            }
+            Action::Restore => {
+                if let Some(p) = &mut self.purchase {
+                    p.restore();
+                }
+            }
             // With the hand, a tap inspects what's there or closes the sheet.
             // With a building in hand, a tap on something already built
             // inspects it instead of trying to build on top of it.
@@ -513,7 +621,7 @@ impl Game {
                             });
                             self.hud.stop_picked();
                         }
-                        _ => self.hud.toast("Tap a train stop to add it"),
+                        _ => self.hud.toast(tr("toast.tap_stop")),
                     }
                     return;
                 }
@@ -543,6 +651,8 @@ impl Game {
             Action::Mute(muted) => self.sound.set_muted(muted),
             Action::LowPower(on) => self.scene.low_power = on,
             Action::ColourBlind(on) => self.use_colour_blind(on),
+            Action::LargeText(_) => {}
+            Action::ReduceMotion(on) => self.scene.still = on,
             Action::Map(open) => {
                 let cam = &mut self.controls.camera;
                 let scale = cam.scale();
@@ -646,7 +756,7 @@ impl Game {
                     store.write(current, &self.save_bytes()?)?;
                     self.switch(sim);
                     store.set_current(n);
-                    self.hud.toast(format!("Slot {} loaded", n + 1));
+                    self.hud.toast(trf("toast.slot_loaded", &[&(n + 1)]));
                 }
                 Request::New { slot, seed, preset } => {
                     if !crate::slots::valid(slot) {
@@ -660,7 +770,7 @@ impl Game {
                     store.write(slot, &sim.save())?;
                     self.switch(sim);
                     store.set_current(slot);
-                    self.hud.toast(format!("New game in slot {}", slot + 1));
+                    self.hud.toast(trf("menu.new_game_in_slot", &[&(slot + 1)]));
                 }
             }
         }
@@ -684,6 +794,7 @@ impl Game {
         self.ore = self.ore.regen(&self.content, seed, preset);
         sim.set_world_gen(seed, preset);
         let camera = framing(&self.content, &sim);
+        sim.set_demo(self.purchase.as_ref().and_then(Purchase::demo));
         self.sim = SimHandle::spawn(sim);
         self.built = Built::new(&self.content);
         self.built.world = Some(self.ore.gen());
