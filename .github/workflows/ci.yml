@@ -73,6 +73,9 @@ jobs:
           cargo test -p mofact-render -- --ignored
           cargo run -p mofact -- --screenshot screenshots/starter-line
           cargo run -p mofact -- --screenshot screenshots/circuit-chain --scenario scenarios/circuit-chain.ron
+          # The store screenshots (docs/store): fails if a machine in the showcase is stuck.
+          cargo run -p mofact -- --store screenshots/store --scenario tools/store/showcase.ron
+          python3 tools/store/check.py
       - uses: actions/upload-artifact@v4
         if: runner.os == 'Linux'
         with:
