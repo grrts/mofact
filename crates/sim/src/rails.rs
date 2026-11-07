@@ -10,18 +10,23 @@
 //! A train visits the stops on its schedule in turn. It finds its way with
 //! a search over (tile, heading) that never turns back except at the end
 //! of a line. At a stop it loads what belts push into the stop until full,
-//! or unloads out of the side the stop faces until empty.
+//! or unloads out of the side the stop faces until empty. A tank train (S5)
+//! does the same with fluid: it fills from the pipes beside the stop and
+//! empties into a pipe on the side the stop faces.
 
 use crate::entities::Entity;
-use crate::tables::{Item, Role, UNIT};
+use crate::tables::{Item, Role, FLUID, UNIT};
 use crate::{Sim, State};
 use mofact_core::command::TrainStop;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::EntityId;
+use mofact_core::TICKS_PER_SECOND;
 use std::collections::{HashMap, VecDeque};
 
 /// How long a loading train that holds something waits for more before it leaves.
 pub(crate) const PATIENCE: u32 = 300;
+/// Milli-units a tank train pumps in or out a tick: 1200 units a second.
+const TANK_FLOW: u64 = 1200 * FLUID / TICKS_PER_SECOND as u64;
 /// How long a train with no way to its stop waits before it looks again.
 const RETRY: u32 = 60;
 /// The most (tile, heading) states one path search visits.
@@ -223,10 +228,20 @@ impl Sim {
     }
 
     /// Step the train `id`.
-    pub(crate) fn step_train(&mut self, id: EntityId, t: &mut Train, capacity: u32, speed: u32) {
+    pub(crate) fn step_train(
+        &mut self,
+        id: EntityId,
+        t: &mut Train,
+        capacity: u32,
+        speed: u32,
+        tank: bool,
+    ) {
         match t.phase {
             Phase::Loading => {
                 t.wait += 1;
+                if tank {
+                    self.fill_tank(t, capacity);
+                }
                 if t.load() >= capacity || (t.load() > 0 && t.wait >= PATIENCE) {
                     self.depart(t);
                 }
@@ -238,7 +253,10 @@ impl Sim {
                     return;
                 };
                 let (front, dir) = (stop.pos.step(stop.dir), stop.dir);
-                if let Some(slot) = t.cargo.iter().position(|c| c.1 > 0) {
+                if tank {
+                    let stop = *stop;
+                    self.drain_tank(&stop, t);
+                } else if let Some(slot) = t.cargo.iter().position(|c| c.1 > 0) {
                     if self.push(front, t.cargo[slot].0, dir) {
                         t.cargo[slot].1 -= 1;
                     }
@@ -361,6 +379,58 @@ impl Sim {
         t.wait = 0;
     }
 
+    /// Pump fluid into a tank train loading at a stop, from the pipes on
+    /// every side of the stop but the one it faces. A tank holds one fluid:
+    /// an empty one takes the first it finds.
+    fn fill_tank(&mut self, t: &mut Train, capacity: u32) {
+        let Some(stop) = self
+            .entities
+            .at(t.at)
+            .and_then(|s| self.entities.get(s))
+            .copied()
+        else {
+            return;
+        };
+        let room = capacity.saturating_sub(t.load());
+        if room == 0 {
+            return;
+        }
+        let back = |d: Dir| d != stop.dir;
+        let fluid = match t.cargo.first() {
+            Some(&(f, _)) => f,
+            None => {
+                let segs = self.fluids.around(&self.entities, &stop, back);
+                match segs
+                    .iter()
+                    .find_map(|&s| self.fluids.segs[s as usize].fluid)
+                {
+                    Some(f) => f,
+                    None => return,
+                }
+            }
+        };
+        let want = u64::from(room).min(TANK_FLOW);
+        let got = self.fluids.pull(&self.entities, &stop, back, fluid, want) as u32;
+        if got > 0 {
+            match t.cargo.first_mut() {
+                Some(c) => c.1 += got,
+                None => t.cargo.push((fluid, got)),
+            }
+            t.wait = 0;
+        }
+    }
+
+    /// Pump a tank train's fluid out into the pipe on the side `stop` faces.
+    fn drain_tank(&mut self, stop: &Entity, t: &mut Train) {
+        let Some(&(fluid, n)) = t.cargo.first() else {
+            return;
+        };
+        let out = |d: Dir| d == stop.dir;
+        let give = u64::from(n).min(TANK_FLOW);
+        let given = self.fluids.fill(&self.entities, stop, out, fluid, give) as u32;
+        t.cargo[0].1 -= given;
+    }
+
     /// Load one `item` into the train docked at a stop. False if none is
     /// loading there, it is full, or the item is a fluid.
     pub(crate) fn load_train(&mut self, docked: Option<EntityId>, item: Item) -> bool {
@@ -369,10 +439,10 @@ impl Sim {
             .entities
             .get(id)
             .map(|e| &self.tables.buildings[e.kind as usize].role);
-        let Some(&Role::Train { capacity, .. }) = capacity else {
+        let Some(&Role::Train { capacity, tank, .. }) = capacity else {
             return false;
         };
-        if self.tables.fluid[item as usize] {
+        if tank || self.tables.fluid[item as usize] {
             return false;
         }
         let Some(Some(State::Train(t))) = self.states.get_mut(id.0 as usize) else {

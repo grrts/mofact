@@ -3610,6 +3610,7 @@ fn tip(tool: &Tool) -> &'static str {
             "rail-signal" => "tip.rail_signal",
             "train-stop" => "tip.train_stop",
             "locomotive" => "tip.locomotive",
+            "tank-train" => "tip.tank_train",
             "wind-turbine" => "tip.wind_turbine",
             "radar" => "tip.radar",
             _ => "tip.place",

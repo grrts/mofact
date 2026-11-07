@@ -156,9 +156,15 @@ pub enum BuildingRole {
     TrainStop,
     /// A train: runs at `tiles_per_second` along rails and carries up to
     /// `capacity` items between the stops on its schedule.
+    ///
+    /// A `tank` train (S5) carries `capacity` units of one fluid instead:
+    /// it fills at a stop from the pipes beside it, and empties into a
+    /// pipe out of the side the stop faces.
     Locomotive {
         tiles_per_second: f32,
         capacity: u32,
+        #[serde(default)]
+        tank: bool,
     },
     /// The game's last build (T54): takes the items of each stage in turn
     /// from belts, and when the last stage is in, the factory has won.
