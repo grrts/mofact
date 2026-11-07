@@ -17,6 +17,8 @@ pub mod overlay;
 pub mod palette;
 mod pipeline;
 pub mod scene;
+#[cfg(test)]
+mod sheet;
 
 pub use look::Look;
 pub use mofact_core as core;

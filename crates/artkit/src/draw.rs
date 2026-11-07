@@ -845,27 +845,37 @@ pub fn tank(c: &mut Canvas, z: f32, fine: bool) {
     let s = z * 2.0;
     let (cx, cy) = (s / 2.0, s / 2.0);
     let sh = z * 0.08;
-    // A square footing the pipes around it join onto.
-    shadow(
-        c,
-        rr(
-            s * 0.04 + sh,
-            s * 0.04 + sh * 1.3,
-            s * 0.92,
-            s * 0.92,
-            s * 0.16,
-        ),
-    );
-    fill(
-        c,
-        rr(s * 0.04, s * 0.04, s * 0.92, s * 0.92, s * 0.16),
-        pal::MACHINE_EDGE,
-    );
-    fill(
-        c,
-        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.14),
-        pal::MACHINE,
-    );
+    // A pipe stub out to each side, where the pipes around it join on.
+    for &(dx, dy) in &DIRS {
+        let (w, h) = if dx != 0.0 {
+            (s * 0.5, s * 0.16)
+        } else {
+            (s * 0.16, s * 0.5)
+        };
+        let x = cx + dx * s * 0.23 - w / 2.0;
+        let y = cy + dy * s * 0.23 - h / 2.0;
+        fill(c, rr(x + sh, y + sh * 1.3, w, h, s * 0.03), pal::SHADOW);
+        fill(c, rr(x, y, w, h, s * 0.03), pal::MACHINE_EDGE);
+        let (iw, ih) = if dx != 0.0 {
+            (w, h - s * 0.05)
+        } else {
+            (w - s * 0.05, h)
+        };
+        fill(
+            c,
+            rr(x + (w - iw) / 2.0, y + (h - ih) / 2.0, iw, ih, s * 0.02),
+            pal::PIPE,
+        );
+        // A flange at the edge.
+        let (fw, fh) = if dx != 0.0 {
+            (s * 0.05, s * 0.2)
+        } else {
+            (s * 0.2, s * 0.05)
+        };
+        let fx = cx + dx * s * 0.47 - fw / 2.0;
+        let fy = cy + dy * s * 0.47 - fh / 2.0;
+        fill(c, rr(fx, fy, fw, fh, s * 0.01), pal::MACHINE_EDGE);
+    }
     shadow(c, ellipse(cx + sh * 0.5, cy + sh * 0.6, s * 0.42, s * 0.42));
     c.fill_circle(cx, cy, s * 0.42, pal::MACHINE_EDGE);
     c.fill_circle(cx, cy, s * 0.39, pal::PIPE);
@@ -955,51 +965,6 @@ pub fn underground_pipe(c: &mut Canvas, z: f32, fine: bool, exit: bool) {
     }
 }
 
-/// A water well: a concrete pad with a wellhead and its valve wheel.
-pub fn well(c: &mut Canvas, z: f32, fine: bool, water: Rgba) {
-    let s = z;
-    let sh = z * 0.07;
-    shadow(
-        c,
-        rr(
-            s * 0.06 + sh,
-            s * 0.06 + sh * 1.3,
-            s * 0.88,
-            s * 0.88,
-            s * 0.14,
-        ),
-    );
-    fill(
-        c,
-        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.14),
-        pal::MACHINE_EDGE,
-    );
-    fill(
-        c,
-        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.8, s * 0.12),
-        pal::CONCRETE,
-    );
-    c.fill_circle(s * 0.5, s * 0.5, s * 0.3, pal::MACHINE_EDGE);
-    c.fill_circle(s * 0.5, s * 0.5, s * 0.26, water);
-    c.fill_circle(s * 0.5, s * 0.5, s * 0.16, shade(water, -0.35));
-    c.stroke_circle(s * 0.5, s * 0.5, s * 0.2, pal::ACCENT, (z * 0.05).max(1.0));
-    c.line(
-        &[(s * 0.3, s * 0.5), (s * 0.7, s * 0.5)],
-        pal::ACCENT,
-        (z * 0.04).max(1.0),
-    );
-    c.line(
-        &[(s * 0.5, s * 0.3), (s * 0.5, s * 0.7)],
-        pal::ACCENT,
-        (z * 0.04).max(1.0),
-    );
-    if fine {
-        for (bx, by) in [(0.18, 0.18), (0.82, 0.18), (0.18, 0.82), (0.82, 0.82)] {
-            bolt(c, bx * s, by * s, s * 0.03);
-        }
-    }
-}
-
 /// A boiler: a steel drum lying along the way it faces, a firebox at its
 /// back that glows while it works, and the steam outlet on its front.
 pub fn boiler(c: &mut Canvas, z: f32, fine: bool, pose: &Pose) {
@@ -1080,24 +1045,25 @@ pub fn boiler(c: &mut Canvas, z: f32, fine: bool, pose: &Pose) {
 pub fn engine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
     let s = z * 2.0;
     let sh = z * 0.08;
+    // A skid under the cylinder; the flywheel stands free beside it.
     shadow(
         c,
         rr(
             s * 0.04 + sh,
-            s * 0.06 + sh * 1.3,
-            s * 0.92,
-            s * 0.88,
-            s * 0.1,
+            s * 0.26 + sh * 1.3,
+            s * 0.6,
+            s * 0.48,
+            s * 0.06,
         ),
     );
     fill(
         c,
-        rr(s * 0.04, s * 0.06, s * 0.92, s * 0.88, s * 0.1),
+        rr(s * 0.04, s * 0.26, s * 0.6, s * 0.48, s * 0.06),
         pal::MACHINE_EDGE,
     );
     fill(
         c,
-        rr(s * 0.06, s * 0.08, s * 0.88, s * 0.84, s * 0.08),
+        rr(s * 0.06, s * 0.28, s * 0.56, s * 0.44, s * 0.05),
         pal::MACHINE,
     );
     // The cylinder on the left, lying east to west.
@@ -1114,7 +1080,7 @@ pub fn engine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
     );
     c.fill_rect(s * 0.14, cy0 + s * 0.04, s * 0.28, s * 0.03, pal::PIPE_HI);
     // The flywheel on the right, and the rod between them.
-    let (wx, wy, wr) = (s * 0.7, s * 0.5, s * 0.22);
+    let (wx, wy, wr) = (s * 0.7, s * 0.5, s * 0.27);
     let a = t * 2.0;
     let crank = (wx + a.cos() * wr * 0.45, wy + a.sin() * wr * 0.45);
     shadow(c, ellipse(wx + sh * 0.6, wy + sh * 0.8, wr, wr));
@@ -1137,12 +1103,13 @@ pub fn engine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
     c.fill_circle(wx, wy, s * 0.05, pal::ACCENT);
     c.fill_circle(crank.0, crank.1, s * 0.03, pal::ACCENT);
     if fine {
-        for (bx, by) in [(0.1, 0.13), (0.9, 0.13), (0.1, 0.87), (0.9, 0.87)] {
+        for (bx, by) in [(0.09, 0.31), (0.09, 0.69), (0.42, 0.31), (0.42, 0.69)] {
             bolt(c, bx * s, by * s, z * 0.04);
         }
         // Steam pipe into the cylinder from the top.
-        c.fill_rect(s * 0.24, s * 0.12, s * 0.08, s * 0.24, pal::MACHINE_EDGE);
-        c.fill_rect(s * 0.255, s * 0.12, s * 0.05, s * 0.24, pal::PIPE);
+        c.fill_rect(s * 0.24, s * 0.1, s * 0.08, s * 0.26, pal::MACHINE_EDGE);
+        c.fill_rect(s * 0.255, s * 0.1, s * 0.05, s * 0.26, pal::PIPE);
+        c.fill_rect(s * 0.22, s * 0.08, s * 0.12, s * 0.04, pal::MACHINE_EDGE);
     }
 }
 
@@ -1161,24 +1128,22 @@ fn port(c: &mut Canvas, s: f32, pose: &Pose, fx: f32, fy: f32, fluid: Rgba) {
 pub fn refinery(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, light: Rgba, tar: Rgba) {
     let s = z * 2.0;
     let sh = z * 0.08;
-    shadow(
+    // A concrete slab under the heater at the back; the columns stand
+    // forward of it on their own footings.
+    let (a, b) = (pose.local(s, -0.45, -0.45), pose.local(s, 0.16, 0.45));
+    let (x0, y0) = (a.0.min(b.0), a.1.min(b.1));
+    let (w, h) = ((a.0 - b.0).abs(), (a.1 - b.1).abs());
+    shadow(c, rr(x0 + sh, y0 + sh * 1.3, w, h, s * 0.08));
+    fill(c, rr(x0, y0, w, h, s * 0.08), pal::MACHINE_EDGE);
+    fill(
         c,
         rr(
-            s * 0.05 + sh,
-            s * 0.05 + sh * 1.3,
-            s * 0.9,
-            s * 0.9,
-            s * 0.1,
+            x0 + s * 0.02,
+            y0 + s * 0.02,
+            w - s * 0.04,
+            h - s * 0.04,
+            s * 0.06,
         ),
-    );
-    fill(
-        c,
-        rr(s * 0.05, s * 0.05, s * 0.9, s * 0.9, s * 0.1),
-        pal::MACHINE_EDGE,
-    );
-    fill(
-        c,
-        rr(s * 0.07, s * 0.07, s * 0.86, s * 0.86, s * 0.08),
         pal::CONCRETE,
     );
     if fine {
@@ -1239,8 +1204,8 @@ pub fn refinery(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, light: Rgba, ta
     }
     // Two columns, seen from above: a tall one for light oil, a squat one
     // for tar, each ringed by its trays and capped by a walkway.
-    for (fy, r, cap) in [(-0.2, 0.17, light), (0.2, 0.14, tar)] {
-        let (x, y) = pose.local(s, 0.12, fy);
+    for (fy, r, cap) in [(-0.22, 0.21, light), (0.22, 0.18, tar)] {
+        let (x, y) = pose.local(s, 0.22, fy);
         shadow(c, ellipse(x + sh * 0.8, y + sh, r * s, r * s));
         c.fill_circle(x, y, r * s, pal::MACHINE_EDGE);
         c.fill_circle(x, y, (r - 0.02) * s, pal::PIPE);
@@ -1276,25 +1241,30 @@ pub fn refinery(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, light: Rgba, ta
     let w = (s * 0.045).max(1.0);
     let front = pose.local(s, 0.44, 0.0);
     c.line(
-        &[pose.local(s, 0.12, -0.2), pose.local(s, 0.44, -0.2), front],
+        &[
+            pose.local(s, 0.22, -0.22),
+            pose.local(s, 0.44, -0.22),
+            front,
+        ],
         pal::MACHINE_EDGE,
         w * 1.4,
     );
     c.line(
-        &[pose.local(s, 0.12, -0.2), pose.local(s, 0.44, -0.2), front],
+        &[
+            pose.local(s, 0.22, -0.22),
+            pose.local(s, 0.44, -0.22),
+            front,
+        ],
         pal::PIPE,
         w,
     );
-    let right = pose.local(s, 0.12, 0.44);
-    c.line(
-        &[pose.local(s, 0.12, 0.2), right],
-        pal::MACHINE_EDGE,
-        w * 1.4,
-    );
-    c.line(&[pose.local(s, 0.12, 0.2), right], pal::PIPE, w);
+    let right = pose.local(s, 0.08, 0.44);
+    let from = [pose.local(s, 0.22, 0.22), pose.local(s, 0.08, 0.3), right];
+    c.line(&from, pal::MACHINE_EDGE, w * 1.4);
+    c.line(&from, pal::PIPE, w);
     port(c, s, pose, 0.44, 0.0, light);
-    port(c, s, pose, 0.12, 0.44, tar);
-    let (ax, ay) = pose.local(s, 0.37, 0.22);
+    port(c, s, pose, 0.08, 0.44, tar);
+    let (ax, ay) = pose.local(s, 0.3, 0.0);
     arrow(c, ax, ay, pose.dir % 4, z * 0.32, pal::ACCENT);
 }
 
@@ -1303,35 +1273,35 @@ pub fn refinery(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, light: Rgba, ta
 pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: Option<Rgba>) {
     let s = z;
     let sh = z * 0.07;
+    let liquid = product.unwrap_or(pal::PIPE_EMPTY);
+    // A feed tank on each corner, braced to the vat in the middle.
+    let corners = [(0.19, 0.19), (0.81, 0.19), (0.19, 0.81), (0.81, 0.81)];
+    let w = (s * 0.12).max(1.0);
+    for &(x, y) in &corners {
+        c.line(&[(x * s, y * s), (s * 0.5, s * 0.5)], pal::MACHINE_EDGE, w);
+        c.line(&[(x * s, y * s), (s * 0.5, s * 0.5)], pal::MACHINE, w * 0.6);
+    }
+    for &(x, y) in &corners {
+        shadow(
+            c,
+            ellipse(x * s + sh * 0.6, y * s + sh * 0.9, s * 0.16, s * 0.16),
+        );
+        c.fill_circle(x * s, y * s, s * 0.17, pal::MACHINE_EDGE);
+        c.fill_circle(x * s, y * s, s * 0.14, pal::MACHINE_HI);
+        c.fill_circle(
+            x * s - s * 0.03,
+            y * s - s * 0.03,
+            s * 0.06,
+            shade(pal::MACHINE_HI, 0.25),
+        );
+    }
     shadow(
         c,
-        rr(
-            s * 0.07 + sh,
-            s * 0.07 + sh * 1.3,
-            s * 0.86,
-            s * 0.86,
-            s * 0.16,
-        ),
-    );
-    fill(
-        c,
-        rr(s * 0.07, s * 0.07, s * 0.86, s * 0.86, s * 0.16),
-        pal::MACHINE_EDGE,
-    );
-    fill(
-        c,
-        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.8, s * 0.14),
-        pal::MACHINE,
-    );
-    fill(
-        c,
-        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.08, s * 0.04),
-        pal::MACHINE_HI,
+        ellipse(s * 0.5 + sh * 0.6, s * 0.5 + sh, s * 0.33, s * 0.33),
     );
     // The vat, and what's in it.
-    let (vx, vy) = pose.local(s, -0.04, 0.0);
-    let liquid = product.unwrap_or(pal::PIPE_EMPTY);
-    c.fill_circle(vx, vy, s * 0.3, pal::MACHINE_EDGE);
+    let (vx, vy) = (s * 0.5, s * 0.5);
+    c.fill_circle(vx, vy, s * 0.31, pal::MACHINE_EDGE);
     c.fill_circle(vx, vy, s * 0.27, pal::PIPE);
     c.fill_circle(vx, vy, s * 0.22, shade(liquid, -0.3));
     c.fill_circle(vx - s * 0.03, vy - s * 0.03, s * 0.17, liquid);
@@ -1366,7 +1336,7 @@ pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: 
     c.fill_circle(vx, vy, s * 0.06, pal::MACHINE_EDGE);
     c.fill_circle(vx, vy, s * 0.035, pal::ACCENT);
     if fine {
-        for (bx, by) in [(0.17, 0.17), (0.83, 0.17), (0.17, 0.83), (0.83, 0.83)] {
+        for &(bx, by) in &corners {
             bolt(c, bx * s, by * s, s * 0.025);
         }
     }
@@ -1393,4 +1363,296 @@ pub fn fx_ring(c: &mut Canvas, s: f32) {
 /// Plain white filling a `w`×`h` canvas, for progress bars and veils.
 pub fn fx_bar(c: &mut Canvas, w: f32, h: f32) {
     c.fill_rect(0.0, 0.0, w, h, pal::WHITE);
+}
+
+/// A closed shape through `points`, given as fractions of an `s`-pixel
+/// square at (`x`, `y`).
+fn shape_at(c: &mut Canvas, points: &[(f32, f32)], x: f32, y: f32, s: f32, col: Rgba) {
+    fill(c, poly(points, x, y, s), col);
+}
+
+/// An octagon filling the unit square, its corners cut `k` deep and inset `i`.
+fn octagon(k: f32, i: f32) -> [(f32, f32); 8] {
+    let (a, b) = (i, 1.0 - i);
+    [
+        (a + k, a),
+        (b - k, a),
+        (b, a + k),
+        (b, b - k),
+        (b - k, b),
+        (a + k, b),
+        (a, b - k),
+        (a, a + k),
+    ]
+}
+
+/// A faster belt's icon: the belt, its rails in its tier's `trim`.
+pub fn belt_icon(c: &mut Canvas, z: f32, fine: bool, trim: Option<Rgba>) {
+    belt(c, z, fine, 0.0, 2.0);
+    let Some(t) = trim else {
+        return;
+    };
+    let (h, rail) = if fine {
+        (0.09, shade(t, -0.3))
+    } else {
+        (0.07, shade(t, -0.25))
+    };
+    let top = if fine { 0.1 } else { 0.12 };
+    for y in [top, 0.81] {
+        c.fill_rect(0.0, z * y, z, z * h, rail);
+        c.fill_rect(0.0, z * y, z, z * 0.025, t);
+    }
+}
+
+/// A lab: a six-sided housing round a glass dome, where the research pack
+/// it studies glows in its colour.
+pub fn lab(c: &mut Canvas, z: f32, fine: bool, pack: Rgba) {
+    let (s, sh) = (z, z * 0.07);
+    let hex = [
+        (0.03, 0.5),
+        (0.26, 0.07),
+        (0.74, 0.07),
+        (0.97, 0.5),
+        (0.74, 0.93),
+        (0.26, 0.93),
+    ];
+    let inner: Vec<(f32, f32)> = hex
+        .iter()
+        .map(|&(x, y)| (0.5 + (x - 0.5) * 0.9, 0.5 + (y - 0.5) * 0.9))
+        .collect();
+    shape_at(c, &hex, sh, sh * 1.3, s, pal::SHADOW);
+    shape_at(c, &hex, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    shape_at(c, &inner, 0.0, 0.0, s, pal::MACHINE);
+    // A lit top edge, as the other machines have.
+    let top: Vec<(f32, f32)> = [(0.3, 0.12), (0.7, 0.12), (0.74, 0.19), (0.26, 0.19)].into();
+    shape_at(c, &top, 0.0, 0.0, s, shade(pal::MACHINE, 0.12));
+    let (cx, cy) = (s * 0.5, s * 0.52);
+    // The pack's colour round the dome, and the dome itself.
+    c.fill_circle(cx, cy, s * 0.3, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.27, shade(pack, -0.3));
+    c.fill_circle(cx, cy, s * 0.21, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.185, shade(pal::GLASS, -0.45));
+    c.fill_circle(cx, cy + s * 0.03, s * 0.12, pack);
+    c.fill_circle(cx, cy + s * 0.03, s * 0.06, shade(pack, 0.45));
+    c.fill_circle(
+        cx - s * 0.07,
+        cy - s * 0.08,
+        s * 0.045,
+        alpha(pal::WHITE, 0.7),
+    );
+    if fine {
+        // Flasks at the two side points, and bolts round the dome.
+        for fx in [0.15, 0.85] {
+            c.fill_circle(fx * s, s * 0.5, s * 0.06, pal::MACHINE_EDGE);
+            c.fill_circle(fx * s, s * 0.5, s * 0.04, shade(pack, 0.2));
+        }
+        for k in 0..6 {
+            let a = k as f32 / 6.0 * TAU + PI / 6.0;
+            bolt(
+                c,
+                cx + a.cos() * s * 0.24,
+                cy + a.sin() * s * 0.24,
+                s * 0.02,
+            );
+        }
+    }
+}
+
+/// A faster assembler: the assembler's works in an eight-sided housing
+/// trimmed in its tier's colour.
+pub fn fast_assembler(
+    c: &mut Canvas,
+    z: f32,
+    product: Option<(Shape, Rgba)>,
+    fine: bool,
+    pose: &Pose,
+    trim: Rgba,
+) {
+    let (s, sh) = (z, z * 0.07);
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let outer = octagon(0.22, 0.03);
+    let inner = octagon(0.2, 0.07);
+    shape_at(c, &outer, sh, sh * 1.3, s, pal::SHADOW);
+    shape_at(c, &outer, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    shape_at(c, &inner, 0.0, 0.0, s, pal::MACHINE);
+    // Tier trim on the four cut corners.
+    let w = (s * 0.05).max(1.0);
+    for (a, b) in [(0, 7), (1, 2), (3, 4), (5, 6)] {
+        let p = |i: usize| (inner[i].0 * s, inner[i].1 * s);
+        c.line(&[p(a), p(b)], trim, w);
+    }
+    let col = product.map_or(trim, |p| p.1);
+    c.save();
+    if let Some(p) = poly(&inner, 0.0, 0.0, s) {
+        c.clip(&p);
+    }
+    c.fill_rect(0.0, s * 0.07, s, s * 0.12, col);
+    if fine {
+        for k in 0..8 {
+            let k = k as f32;
+            c.line(
+                &[
+                    (s * (0.1 + k * 0.12), s * 0.19),
+                    (s * (0.16 + k * 0.12), s * 0.07),
+                ],
+                shade(col, -0.35),
+                s * 0.04,
+            );
+        }
+    }
+    c.restore();
+    // Two windows onto twin gears: it works twice as fast.
+    for gx in [-0.14, 0.14] {
+        let (x, y) = (cx + gx * s, cy + s * 0.04);
+        c.fill_circle(x, y, s * 0.15, pal::WINDOW);
+        if fine {
+            c.save();
+            c.translate(x, y);
+            c.rotate(if pose.working {
+                pose.t * 3.0 * gx.signum()
+            } else {
+                0.0
+            });
+            c.set_alpha(c.alpha() * 0.4);
+            fill(
+                c,
+                poly(&gear_points(14, 0.1, 0.135), 0.0, 0.0, s),
+                pal::MACHINE_HI,
+            );
+            c.restore();
+        }
+        c.stroke_circle(x, y, s * 0.15, trim, (s * 0.02).max(1.0));
+    }
+    if let Some((shape, color)) = product {
+        item(c, shape, color, cx, cy + s * 0.04, s * 0.26, !fine);
+    }
+    c.fill_rect(s * 0.26, s * 0.8, s * 0.48, s * 0.05, pal::WINDOW);
+    if pose.working {
+        let w = s * 0.48 * pose.progress.clamp(0.0, 1.0);
+        c.fill_rect(s * 0.26, s * 0.8, w, s * 0.05, trim);
+    }
+    notch(c, z, pose);
+}
+
+/// A water well: a wellhead on a diamond of concrete, the water showing
+/// through its grate.
+pub fn water_well(c: &mut Canvas, z: f32, fine: bool, water: Rgba) {
+    let (s, sh) = (z, z * 0.07);
+    let pad = [(0.5, 0.01), (0.99, 0.5), (0.5, 0.99), (0.01, 0.5)];
+    let inner = [(0.5, 0.07), (0.93, 0.5), (0.5, 0.93), (0.07, 0.5)];
+    shape_at(c, &pad, sh, sh * 1.3, s, pal::SHADOW);
+    shape_at(c, &pad, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    shape_at(c, &inner, 0.0, 0.0, s, pal::CONCRETE);
+    let (cx, cy) = (s * 0.5, s * 0.5);
+    c.fill_circle(cx, cy, s * 0.27, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.23, water);
+    c.fill_circle(cx, cy, s * 0.14, shade(water, -0.35));
+    c.stroke_circle(cx, cy, s * 0.18, pal::ACCENT, (z * 0.045).max(1.0));
+    let w = (z * 0.04).max(1.0);
+    c.line(&[(s * 0.3, cy), (s * 0.7, cy)], pal::ACCENT, w);
+    c.line(&[(cx, s * 0.3), (cx, s * 0.7)], pal::ACCENT, w);
+    if fine {
+        for (bx, by) in [(0.5, 0.14), (0.86, 0.5), (0.5, 0.86), (0.14, 0.5)] {
+            bolt(c, bx * s, by * s, s * 0.03);
+        }
+    }
+}
+
+/// An oil well: a pumpjack seen from above, its walking beam running from
+/// the crank weights at the back to the horse head over the wellhead.
+pub fn pumpjack(c: &mut Canvas, z: f32, fine: bool, oil: Rgba, t: f32) {
+    let (s, sh) = (z, z * 0.07);
+    // The skid it stands on, and the wellhead at the front.
+    shadow(
+        c,
+        rr(
+            s * 0.08 + sh,
+            s * 0.36 + sh * 1.3,
+            s * 0.84,
+            s * 0.28,
+            s * 0.05,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.08, s * 0.36, s * 0.84, s * 0.28, s * 0.05),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.1, s * 0.38, s * 0.8, s * 0.24, s * 0.04),
+        pal::CONCRETE,
+    );
+    c.fill_circle(s * 0.82, s * 0.5, s * 0.11, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.82, s * 0.5, s * 0.075, oil);
+    // Crank weights either side at the back, turning with the crank.
+    let a = t * 2.5;
+    for side in [-1.0f32, 1.0] {
+        let (x, y) = (s * 0.24, s * (0.5 + side * 0.27));
+        shadow(c, ellipse(x + sh * 0.6, y + sh * 0.8, s * 0.13, s * 0.13));
+        c.fill_circle(x, y, s * 0.14, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, s * 0.115, pal::MACHINE_HI);
+        let (px, py) = (x + a.cos() * s * 0.06, y + a.sin() * s * 0.06 * side);
+        c.fill_circle(px, py, s * 0.04, pal::ACCENT);
+    }
+    // The samson post, an A-frame under the middle of the beam.
+    let w = (s * 0.05).max(1.0);
+    for side in [-1.0f32, 1.0] {
+        c.line(
+            &[(s * 0.5, s * 0.5), (s * 0.42, s * (0.5 + side * 0.3))],
+            pal::MACHINE_EDGE,
+            w * 1.5,
+        );
+        c.line(
+            &[(s * 0.5, s * 0.5), (s * 0.42, s * (0.5 + side * 0.3))],
+            pal::PIPE,
+            w * 0.8,
+        );
+    }
+    // The walking beam, and the horse head at its front end.
+    shadow(
+        c,
+        rr(
+            s * 0.2 + sh,
+            s * 0.44 + sh * 1.3,
+            s * 0.56,
+            s * 0.12,
+            s * 0.03,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.2, s * 0.44, s * 0.56, s * 0.12, s * 0.03),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.22, s * 0.46, s * 0.52, s * 0.08, s * 0.02),
+        pal::ACCENT,
+    );
+    let head = [
+        (0.66, 0.34),
+        (0.8, 0.38),
+        (0.86, 0.5),
+        (0.8, 0.62),
+        (0.66, 0.66),
+    ];
+    shape_at(c, &head, 0.0, 0.0, s, pal::MACHINE_EDGE);
+    let head_in: Vec<(f32, f32)> = head
+        .iter()
+        .map(|&(x, y)| (0.73 + (x - 0.73) * 0.75, 0.5 + (y - 0.5) * 0.75))
+        .collect();
+    shape_at(c, &head_in, 0.0, 0.0, s, pal::MACHINE_HI);
+    if fine {
+        c.fill_circle(s * 0.5, s * 0.5, s * 0.04, pal::MACHINE_EDGE);
+        c.fill_circle(s * 0.5, s * 0.5, s * 0.022, pal::DRILL_BIT);
+        for k in 0..5 {
+            let x = s * (0.28 + k as f32 * 0.09);
+            c.line(
+                &[(x, s * 0.46), (x + s * 0.04, s * 0.54)],
+                pal::HAZARD_DARK,
+                w * 0.5,
+            );
+        }
+    }
 }
