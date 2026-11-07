@@ -410,9 +410,14 @@ pub fn run() -> Result<(), String> {
             std::thread::sleep(Duration::from_millis(50));
             continue;
         }
-        if app.draw() == Frame::Presented {
-            presented += 1;
-            second.1 += 1;
+        match app.draw() {
+            Frame::Presented => {
+                presented += 1;
+                second.1 += 1;
+            }
+            // Not due yet (30 fps pacing): wait a moment rather than spin.
+            Frame::Skipped => std::thread::sleep(Duration::from_millis(2)),
+            Frame::Reconfigured => {}
         }
 
         if second.0.elapsed() >= Duration::from_secs(1) {
