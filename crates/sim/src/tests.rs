@@ -1588,8 +1588,89 @@ fn the_map_seed_and_preset_save_and_older_saves_keep_seed_42() {
         Some((7_777, mofact_world::Preset::Lakes))
     );
     // Version 12 had no seed: the game goes on using the default map.
-    let (old, warnings) = Sim::load(&content, include_bytes!("../tests/v12.mofact")).unwrap();
+    let (old, warnings) = Sim::load(&content, include_bytes!("../tests/v12-pins.mofact")).unwrap();
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(old.world_seed(), None);
     assert_eq!(*old.snapshot().pins, vec![TilePos::new(5, 6)]);
+}
+
+/// The save compatibility sweep (T67, R54): a save from every version the
+/// game has shipped is kept in `tests/`, and each must load without a
+/// warning, keep its factory, play on, and save again as the current
+/// version. A version bump must add a save from the version before it.
+#[test]
+fn a_save_from_every_earlier_version_loads_and_plays_on() {
+    let content = content();
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    // Version 2 never reached the main branch, so no player has one.
+    let unshipped = [2u16];
+    let mut missing = Vec::new();
+    for v in 1..crate::save::VERSION {
+        if unshipped.contains(&v) {
+            continue;
+        }
+        let path = dir.join(format!("v{v}.mofact"));
+        let Ok(bytes) = std::fs::read(&path) else {
+            missing.push(v);
+            continue;
+        };
+        let (mut sim, warnings) =
+            Sim::load(&content, &bytes).unwrap_or_else(|e| panic!("v{v} does not load: {e}"));
+        assert!(warnings.is_empty(), "v{v}: {warnings:?}");
+        let before = sim.snapshot();
+        assert!(!before.entities.is_empty(), "v{v} lost its factory");
+        assert!(before.tick > 0, "v{v} lost its clock");
+        for _ in 0..120 {
+            sim.step();
+        }
+        assert_eq!(sim.tick(), before.tick + 120, "v{v} does not play on");
+        // Saved again it is the current version, and loads back the same.
+        let again = sim.save();
+        let (reloaded, warnings) = Sim::load(&content, &again).unwrap();
+        assert!(warnings.is_empty(), "v{v} saved again: {warnings:?}");
+        assert_eq!(reloaded.save(), again, "v{v} does not round-trip");
+        assert_eq!(reloaded.snapshot().entities, sim.snapshot().entities);
+    }
+    assert!(
+        missing.is_empty(),
+        "no save kept for versions {missing:?}: write one with the game at that version into crates/sim/tests/"
+    );
+}
+
+/// A damaged save (cut short by a crash, or with bytes flipped on a bad
+/// card) must be refused or loaded, never crash the game (T67).
+#[test]
+fn a_damaged_save_is_refused_never_a_crash() {
+    let content = content();
+    let good = include_bytes!("../tests/v12.mofact").to_vec();
+    let current = {
+        let (sim, _) = Sim::load(&content, &good).unwrap();
+        sim.save()
+    };
+    for bytes in [good, current] {
+        let mut damaged: Vec<Vec<u8>> = (0..bytes.len())
+            .step_by(3)
+            .map(|n| bytes[..n].to_vec())
+            .collect();
+        let mut x = 0x2545_f491_u32;
+        for _ in 0..400 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            let mut b = bytes.clone();
+            let at = x as usize % b.len();
+            b[at] ^= 1 << (x >> 24 & 7);
+            damaged.push(b);
+        }
+        for (n, b) in damaged.iter().enumerate() {
+            let outcome = std::panic::catch_unwind(|| {
+                Sim::load(&content, b).map(|(mut s, _)| {
+                    // Whatever loads must also play and save.
+                    s.step();
+                    s.save().len()
+                })
+            });
+            assert!(outcome.is_ok(), "damaged save {n} crashed the game");
+        }
+    }
 }
