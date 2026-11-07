@@ -21,6 +21,8 @@ mod android {
         let platform = mofact::Platform {
             shop: Some(super::store::make(call)),
             haptic: Some(haptic),
+            // Play Games saved games need the Play account (T62).
+            cloud: None,
         };
         match mofact::run_with(platform) {
             Ok(()) => 0,

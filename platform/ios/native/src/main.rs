@@ -14,6 +14,8 @@ fn main() -> bool {
     let platform = mofact::Platform {
         shop: None,
         haptic: Some(haptic),
+        // iCloud needs the Apple account (T62).
+        cloud: None,
     };
     match mofact::run_with(platform) {
         Ok(()) => true,
