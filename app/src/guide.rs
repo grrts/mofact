@@ -272,7 +272,10 @@ mod tests {
         assert_eq!(plan[1].building.as_str(), "furnace");
         let drill = plan[0].tiles[0];
         assert_eq!(ore.ore_at(drill).map(|i| i.as_str()), Some("iron-ore"));
-        assert!(plan.iter().flat_map(|s| &s.tiles).all(|t| !taken.contains(t)));
+        assert!(plan
+            .iter()
+            .flat_map(|s| &s.tiles)
+            .all(|t| !taken.contains(t)));
         // The last piece sits right against the hub, facing into it.
         let last = plan.last().unwrap();
         let end = *last.tiles.last().unwrap();
