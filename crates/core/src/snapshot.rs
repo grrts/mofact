@@ -82,6 +82,10 @@ pub struct Snapshot {
     /// The goal the player is on, if any are left.
     #[serde(default)]
     pub goal: Option<GoalView>,
+    /// Tiles whose tree or boulder has been cleared, sorted. Shared, so a
+    /// snapshot costs nothing extra while it doesn't change.
+    #[serde(default)]
+    pub cleared: std::sync::Arc<Vec<TilePos>>,
 }
 
 /// The current goal and how far along it is.

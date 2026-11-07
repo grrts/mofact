@@ -1,6 +1,6 @@
 //! Content interned into dense indices for the simulation (R1).
 
-use mofact_core::content::{BuildingRole, Content, ItemKind, Stack};
+use mofact_core::content::{BuildingRole, Content, IconShape, ItemKind, Stack};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use std::collections::HashMap;
@@ -119,6 +119,8 @@ pub struct Tables {
     pub items: Vec<ItemId>,
     /// Whether each item is a fluid.
     pub fluid: Vec<bool>,
+    /// The ore items, in content order: the world generator's resource numbering.
+    pub ores: Vec<Item>,
     pub recipes: Vec<RecipeDef>,
     pub buildings: Vec<Building>,
     pub research: Vec<ResearchDef>,
@@ -160,6 +162,9 @@ impl Tables {
         for (i, item) in content.items.iter().enumerate() {
             t.items.push(item.id.clone());
             t.fluid.push(item.kind == ItemKind::Fluid);
+            if item.shape == IconShape::Ore {
+                t.ores.push(i as Item);
+            }
             t.item_index.insert(item.id.clone(), i as Item);
         }
         let stacks = |t: &Tables, list: &[Stack]| -> Vec<(Item, u32)> {

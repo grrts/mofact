@@ -34,6 +34,7 @@ fn snapshot() -> Snapshot {
         research: Default::default(),
         grids: Vec::new(),
         goal: None,
+        cleared: Default::default(),
     }
 }
 

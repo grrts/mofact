@@ -64,9 +64,9 @@ pub const TIER: [Rgba; 2] = [[0x3f, 0xc1, 0xb0, 0xff], [0xa8, 0x7c, 0xf0, 0xff]]
 /// A lab's glass dome.
 pub const GLASS: Rgba = [0x7f, 0xc8, 0xe6, 0xff];
 /// The ground, by the world's terrain number (deep water, water, sand,
-/// grass, forest, scrub, rock): muted, so the factory stands out on it. The
-/// ground shader in `crates/render` uses the same values.
-pub const TERRAIN: [Rgba; 7] = [
+/// grass, forest, scrub, rock, cliff): muted, so the factory stands out on
+/// it. The ground shader in `crates/render` uses the same values.
+pub const TERRAIN: [Rgba; 8] = [
     [0x12, 0x2c, 0x40, 0xff],
     [0x1c, 0x45, 0x5a, 0xff],
     [0x5a, 0x53, 0x40, 0xff],
@@ -74,6 +74,7 @@ pub const TERRAIN: [Rgba; 7] = [
     [0x22, 0x35, 0x22, 0xff],
     [0x47, 0x43, 0x30, 0xff],
     [0x3f, 0x42, 0x45, 0xff],
+    [0x24, 0x21, 0x1f, 0xff],
 ];
 /// Trees: broadleaf canopy and its lit side, pine needles and their lit side.
 pub const LEAF: Rgba = [0x34, 0x5e, 0x2f, 0xff];

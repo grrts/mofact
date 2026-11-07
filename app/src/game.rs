@@ -46,10 +46,12 @@ impl Game {
         gpu: Gpu,
         target: Target,
         content: Content,
-        sim: Sim,
+        mut sim: Sim,
         ore: OreMap,
         camera: Camera,
     ) -> Self {
+        // Drills mine the same generated map the player sees.
+        sim.set_world(ore.seed());
         let look = Look::new(&content);
         let (w, h) = target.size();
         let controls = Controls::new(CameraControl::new(
@@ -67,7 +69,11 @@ impl Game {
             scene: Scene::default(),
             hud: Hud::new(),
             hotkeys: mofact_ui::hotkeys(&content),
-            built: Built::new(&content),
+            built: {
+                let mut built = Built::new(&content);
+                built.world = Some(ore.gen());
+                built
+            },
             sound: Sound::new(&content),
             started: Instant::now(),
             safe: [0.0; 4],
@@ -102,6 +108,9 @@ impl Game {
                     E::NoSuchEntity => "That's already gone.",
                     E::UnknownContent => "That isn't in this game's data.",
                     E::FluidsMix => "That would mix two fluids.",
+                    E::NoOre => "Drills only go on ore: tap a coloured ore tile.",
+                    E::Terrain => "Nothing can be built on water or cliffs.",
+                    E::Overgrown => "Trees in the way: drag over them with Remove to clear them.",
                 });
             }
         }
@@ -157,7 +166,9 @@ impl Game {
             atlases,
             &camera,
             target.size(),
-            self.ore.decor(&camera, target.size()),
+            self.ore
+                .decor(&camera, target.size())
+                .filter(|(t, _)| latest.cleared.binary_search(t).is_err()),
         );
         let ore = &self.ore;
         self.scene
@@ -190,6 +201,15 @@ impl Game {
             let (w, h) = (f32::from(size.0) * ppt, f32::from(size.1) * ppt);
             self.overlay
                 .panel([x, y], [w, h], ppt * 0.12, [0xff, 0x5d, 0x5d, 0x80]);
+        }
+        // Trees it has marked to clear.
+        for t in self.controls.builder.marked_trees() {
+            let ppt = camera.pixels_per_tile;
+            let (sw, sh) = target.size();
+            let x = (t.x as f32 - camera.center[0]) * ppt + sw as f32 / 2.0;
+            let y = (t.y as f32 - camera.center[1]) * ppt + sh as f32 / 2.0;
+            self.overlay
+                .panel([x, y], [ppt, ppt], ppt * 0.3, [0xff, 0x5d, 0x5d, 0x70]);
         }
         let builder = &self.controls.builder;
         let view = View {

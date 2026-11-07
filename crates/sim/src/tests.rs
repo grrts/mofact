@@ -265,7 +265,7 @@ fn refusals_change_nothing() {
     );
     assert_eq!(
         sim.apply(&place_at(40, "drill")),
-        CommandResult::Refused(CommandError::Blocked),
+        CommandResult::Refused(CommandError::NoOre),
         "no ore there"
     );
     assert_eq!(
@@ -1306,4 +1306,105 @@ fn tar_from_a_refinery_cracks_into_more_light_oil() {
     assert!(held(&sim, light) > 0, "no light oil from the refinery");
     assert!(held(&sim, cracked) > 0, "no light oil from the tar");
     assert_ne!(state_of(&sim, plant), MachineState::Blocked);
+}
+
+#[test]
+fn drills_go_on_every_kind_of_generated_ore() {
+    // The map the player sees is generated; drills must work on all of it,
+    // not only the starter patches a scenario places by hand.
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.add_stock(&item("iron-plate"), 10_000);
+    sim.set_world(42);
+    let gen = mofact_world::WorldGen::new(42, sim.tables.ores.len() as u8);
+    let mut found = std::collections::HashMap::new();
+    'search: for y in -400..400 {
+        for x in -400..400 {
+            let t = TilePos::new(x, y);
+            if let Some(o) = mofact_world::ore_at(&gen, t) {
+                found.entry(o.resource).or_insert(t);
+                if found.len() == sim.tables.ores.len() {
+                    break 'search;
+                }
+            }
+        }
+    }
+    assert_eq!(found.len(), 4, "iron, copper, stone and coal all generate");
+    for (resource, t) in found {
+        let ore = sim.tables.items[sim.tables.ores[resource as usize] as usize].clone();
+        assert_eq!(sim.ore_at(t), Some(ore.clone()));
+        let drill = place(&mut sim, "drill", t.x, t.y, Dir::East, None);
+        run(&mut sim, 2);
+        assert_eq!(
+            sim.inventory(drill),
+            vec![(ore.clone(), 1)],
+            "a drill on {ore:?} at {t:?} mines it"
+        );
+    }
+}
+
+#[test]
+fn water_and_cliffs_block_and_trees_block_until_cleared() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.add_stock(&item("iron-plate"), 10_000);
+    sim.set_world(42);
+    let gen = mofact_world::WorldGen::new(42, sim.tables.ores.len() as u8);
+    let find = |want: &dyn Fn(mofact_world::Tile) -> bool| {
+        (-300..300)
+            .flat_map(|y| (-300..300).map(move |x| TilePos::new(x, y)))
+            .find(|&t| want(mofact_world::tile_at(&gen, t)))
+            .expect("the map has one")
+    };
+    let belt = |sim: &mut Sim, t: TilePos| {
+        sim.apply(&Command::Place {
+            building: BuildingId::from("belt"),
+            pos: t,
+            dir: Dir::East,
+            recipe: None,
+        })
+    };
+    let water = find(&|t| t.terrain.is_water());
+    let cliff = find(&|t| t.terrain == mofact_world::Terrain::Cliff);
+    for t in [water, cliff] {
+        assert_eq!(
+            belt(&mut sim, t),
+            CommandResult::Refused(CommandError::Terrain),
+            "{t:?}"
+        );
+    }
+    let tree = find(&|t| t.decor == Some(mofact_world::Decor::Tree));
+    assert_eq!(
+        belt(&mut sim, tree),
+        CommandResult::Refused(CommandError::Overgrown)
+    );
+    // Clear it, and the undo puts it back.
+    let CommandResult::Applied { undo, .. } = sim.apply(&Command::Clear { tile: tree }) else {
+        panic!("clearing a tree")
+    };
+    assert_eq!(undo, vec![Command::Regrow { tile: tree }]);
+    assert_eq!(*sim.snapshot().cleared, vec![tree]);
+    assert!(matches!(
+        sim.apply(&Command::Clear { tile: tree }),
+        CommandResult::Refused(_)
+    ));
+    // Cleared ground saves, loads, and takes a belt.
+    let (mut loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+    loaded.set_world(42);
+    assert_eq!(*loaded.snapshot().cleared, vec![tree]);
+    assert!(matches!(
+        belt(&mut loaded, tree),
+        CommandResult::Applied { .. }
+    ));
+    assert!(matches!(
+        sim.apply(&Command::Regrow { tile: tree }),
+        CommandResult::Applied { .. }
+    ));
+    assert!(sim.snapshot().cleared.is_empty());
+    // Open grass takes it straight away.
+    let grass = find(&|t| t.terrain == mofact_world::Terrain::Grass && t.decor.is_none());
+    assert!(matches!(
+        belt(&mut sim, grass),
+        CommandResult::Applied { .. }
+    ));
 }

@@ -29,6 +29,10 @@ pub enum Command {
     /// Choose what labs work on; `None` stops research. Locked until its
     /// prerequisites are done; a finished research can't be chosen again.
     SetResearch { research: Option<ResearchId> },
+    /// Clear the tree or boulder on a tile so it can be built on.
+    Clear { tile: TilePos },
+    /// Put a cleared tree or boulder back: the undo of [`Command::Clear`].
+    Regrow { tile: TilePos },
 }
 
 /// Why the simulation refused a command. Refused commands change nothing.
@@ -46,6 +50,12 @@ pub enum CommandError {
     UnknownContent,
     /// It would join two pipe segments holding different fluids.
     FluidsMix,
+    /// A drill has to stand on ore.
+    NoOre,
+    /// Water or a cliff is in the way: nothing is built there.
+    Terrain,
+    /// A tree or boulder is in the way until it is cleared.
+    Overgrown,
 }
 
 /// The outcome of applying one command, sent back to the main thread.

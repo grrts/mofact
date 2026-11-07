@@ -1,4 +1,4 @@
-//! Save format v8 (T11, R54): a versioned binary file. v2 adds research
+//! Save format v9 (T11, R54): a versioned binary file. v2 adds research
 //! progress and labs (T28).
 //!
 //! A save is the magic bytes `MOFACT`, a little-endian `u16` format version,
@@ -22,7 +22,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 8;
+pub const VERSION: u16 = 9;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -58,6 +58,21 @@ struct World {
     research: Vec<(ResearchId, u32, bool)>,
     current: Option<ResearchId>,
     /// The goal the player is on, by id; none once all are met.
+    goal: Option<String>,
+    /// Tiles whose tree or boulder was cleared.
+    cleared: Vec<TilePos>,
+}
+
+/// Versions 7 and 8: the same, before cleared trees.
+#[derive(Deserialize)]
+struct WorldV8 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
     goal: Option<String>,
 }
 
@@ -171,6 +186,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 research: Vec::new(),
                 current: None,
                 goal: Some(String::new()),
+                cleared: Vec::new(),
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -188,10 +204,26 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 research: v6.research,
                 current: v6.current,
                 goal: Some(String::new()),
+                cleared: Vec::new(),
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
-        7 | 8 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 9 adds cleared trees.
+        7 | 8 => {
+            let v8: WorldV8 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v8.tick,
+                stock: v8.stock,
+                delivered: v8.delivered,
+                ore: v8.ore,
+                entities: v8.entities,
+                research: v8.research,
+                current: v8.current,
+                goal: v8.goal,
+                cleared: Vec::new(),
+            })
+        }
+        9 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -362,6 +394,7 @@ impl Sim {
                 .current
                 .map(|r| t.research[r as usize].id.clone()),
             goal: self.goal_id(),
+            cleared: self.cleared.to_vec(),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -423,6 +456,7 @@ impl Sim {
         // An empty id, from a save older than goals, starts at the first;
         // a goal the content no longer has starts over too, and the sim
         // moves past what's already done.
+        sim.cleared = std::sync::Arc::new(world.cleared.clone());
         sim.goal = match &world.goal {
             None => content.goals.len() as u16,
             Some(id) => content
