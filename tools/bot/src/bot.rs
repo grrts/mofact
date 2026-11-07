@@ -4,8 +4,8 @@
 //! delivered; when it can't afford the next one, it waits for the stock.
 //!
 //! The headless world has no generated map, so the bot puts ore under each
-//! drill it places, as the scenarios do: it plays the game's economy, not
-//! its map.
+//! drill it places, as the scenarios do, and enough that it never runs
+//! out: it plays the game's economy, not its map.
 
 use crate::layout::{self, Block, Part, Powered};
 use crate::plan::Planner;
@@ -15,7 +15,9 @@ use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use mofact_sim::Sim;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 const STARTER: &str = include_str!("../../../scenarios/starter-line.ron");
 
@@ -61,6 +63,22 @@ pub struct Bot<'a> {
     pub log: Vec<String>,
     /// When the bot last said what it is waiting for.
     told: u64,
+    /// When to stop and save, so a run can go on in another job.
+    pub deadline: Option<Instant>,
+}
+
+/// What a paused run returns: save it and go on later.
+pub const PAUSED: &str = "paused";
+
+/// The bot's own state, beside the sim's save, in a checkpoint.
+#[derive(Serialize, Deserialize)]
+struct Saved {
+    taken: Vec<TilePos>,
+    at: (i32, i32),
+    row: i32,
+    lines: Vec<(ItemId, usize)>,
+    stations: Vec<(Vec<ItemId>, Vec<EntityId>)>,
+    told: u64,
 }
 
 impl<'a> Bot<'a> {
@@ -80,7 +98,67 @@ impl<'a> Bot<'a> {
             limit: hours * 3600 * u64::from(TICKS_PER_SECOND),
             log: Vec::new(),
             told: 0,
+            deadline: None,
         })
+    }
+
+    /// A checkpoint: the sim's save, then the bot's own state.
+    pub fn checkpoint(&self) -> Vec<u8> {
+        let mut taken: Vec<TilePos> = self.taken.iter().copied().collect();
+        taken.sort_by_key(|t| (t.y, t.x));
+        let mut lines: Vec<(ItemId, usize)> =
+            self.lines.iter().map(|(i, n)| (i.clone(), *n)).collect();
+        lines.sort();
+        let saved = Saved {
+            taken,
+            at: self.at,
+            row: self.row,
+            lines,
+            stations: self.stations.clone(),
+            told: self.told,
+        };
+        let sim = self.sim.save();
+        let mut out = (sim.len() as u64).to_le_bytes().to_vec();
+        out.extend(sim);
+        out.extend(ron::to_string(&saved).unwrap_or_default().into_bytes());
+        out
+    }
+
+    /// Go on from a checkpoint.
+    pub fn resume(content: &'a Content, hours: u64, bytes: &[u8]) -> Result<Self, String> {
+        let bad = || "not a bot checkpoint".to_owned();
+        let head: [u8; 8] = bytes
+            .get(..8)
+            .ok_or_else(bad)?
+            .try_into()
+            .map_err(|_| bad())?;
+        let end = usize::try_from(u64::from_le_bytes(head))
+            .ok()
+            .and_then(|n| n.checked_add(8))
+            .ok_or_else(bad)?;
+        let (sim, _) =
+            Sim::load(content, bytes.get(8..end).ok_or_else(bad)?).map_err(|e| format!("{e:?}"))?;
+        let text = std::str::from_utf8(&bytes[end..]).map_err(|_| bad())?;
+        let saved: Saved = ron::from_str(text).map_err(|e| e.to_string())?;
+        let mut bot = Bot::new(content, hours)?;
+        bot.sim = sim;
+        bot.taken = saved.taken.into_iter().collect();
+        bot.at = saved.at;
+        bot.row = saved.row;
+        bot.lines = saved.lines.into_iter().collect();
+        bot.stations = saved.stations;
+        bot.told = saved.told;
+        bot.refresh();
+        bot.note("going on from a checkpoint".into());
+        Ok(bot)
+    }
+
+    /// Whether it's time to stop and save.
+    fn pause(&self) -> Result<(), String> {
+        match self.deadline {
+            Some(d) if Instant::now() >= d => Err(PAUSED.into()),
+            _ => Ok(()),
+        }
     }
 
     /// Game time, as h:mm:ss.
@@ -112,6 +190,20 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    /// Fails when `progress` hasn't moved in two hours of game time:
+    /// something is stuck, and waiting out the limit would only cost time.
+    fn stalled(&self, moved: &mut (u64, u64), progress: u64, what: &str) -> Result<(), String> {
+        if progress != moved.0 {
+            *moved = (progress, self.sim.tick());
+        } else if self.sim.tick() - moved.1 > 2 * 3600 * u64::from(TICKS_PER_SECOND) {
+            return Err(format!(
+                "stalled at {}: {what} made no progress in two hours",
+                self.clock()
+            ));
+        }
+        Ok(())
+    }
+
     fn missing(&self, building: &str) -> String {
         let b = self.planner.building(building);
         let short: Vec<String> = b
@@ -125,7 +217,10 @@ impl<'a> Bot<'a> {
 
     fn place(&mut self, p: &Part) -> Result<(), String> {
         if let Some(ore) = &p.ore {
-            self.sim.set_ore(p.pos, ore);
+            // Enough for the whole game: a scenario's hand-placed ore runs
+            // out in a few hours of digging, and a player would move the
+            // drill to fresh ore. The bot plays the economy, not the map.
+            self.sim.set_ore_amount(p.pos, ore, u32::MAX / 2);
         }
         let cmd = Command::Place {
             building: p.building.clone(),
@@ -274,7 +369,30 @@ impl<'a> Bot<'a> {
         Ok(())
     }
 
+    /// Work the planner's choices out again from what the sim has researched.
+    pub fn refresh(&mut self) {
+        self.planner.update(self.done());
+    }
+
     pub fn research(&mut self, id: &ResearchId) -> Result<(), String> {
+        let name = self.begin(id)?;
+        let mut moved = (0, self.sim.tick());
+        while !self.sim.research_done(id) {
+            let r = self.sim.snapshot().research.progress;
+            self.stalled(&mut moved, u64::from(r.0), &format!("researching {id}"))?;
+            self.pause()?;
+            self.run(30, &|| {
+                format!("researching {id}, {} of {} units", r.0, r.1)
+            })?;
+        }
+        self.refresh();
+        self.note(format!("researched {name}"));
+        Ok(())
+    }
+
+    /// Build a station for `id` if none takes its packs, and pick it.
+    /// Returns its name.
+    pub fn begin(&mut self, id: &ResearchId) -> Result<String, String> {
         let def = self
             .content
             .research
@@ -295,15 +413,7 @@ impl<'a> Bot<'a> {
         if let CommandResult::Refused(e) = self.sim.apply(&pick) {
             return Err(format!("researching {id}: {e:?}"));
         }
-        while !self.sim.research_done(id) {
-            let r = self.sim.snapshot().research.progress;
-            self.run(30, &|| {
-                format!("researching {id}, {} of {} units", r.0, r.1)
-            })?;
-        }
-        self.planner.update(self.done());
-        self.note(format!("researched {}", def.name));
-        Ok(())
+        Ok(def.name.clone())
     }
 
     /// The research the megaproject needs, in an order labs can do it.
@@ -354,10 +464,14 @@ impl<'a> Bot<'a> {
         }
         let west = trees.remove(0);
         let upper: Vec<_> = trees.drain(..cols).collect();
-        let b = layout::fan_in(id.as_str(), size, 1, 0.0, upper, Some(west), trees);
-        self.build(b)?;
-        self.note(format!("built the {id}"));
+        // Going on from a checkpoint, it may be standing already.
+        if self.sim.snapshot().mega.is_none() {
+            let b = layout::fan_in(id.as_str(), size, 1, 0.0, upper, Some(west), trees);
+            self.build(b)?;
+            self.note(format!("built the {id}"));
+        }
         let mut stage = u32::MAX;
+        let mut moved = (0, self.sim.tick());
         loop {
             let mega = self
                 .sim
@@ -377,6 +491,13 @@ impl<'a> Bot<'a> {
                     mega.name
                 ));
             }
+            let have: u64 = mega.needs.iter().map(|(_, h, _)| u64::from(*h)).sum();
+            self.stalled(
+                &mut moved,
+                have + u64::from(mega.stage) * 1_000_000,
+                "building the megaproject",
+            )?;
+            self.pause()?;
             let needs: Vec<String> = mega
                 .needs
                 .iter()
@@ -393,6 +514,10 @@ impl<'a> Bot<'a> {
         let goal = self.goal()?;
         self.economy()?;
         for r in self.plan(&goal) {
+            // Going on from a checkpoint, what's done stays done.
+            if self.sim.research_done(&r) {
+                continue;
+            }
             self.research(&r)?;
             self.economy()?;
         }
@@ -443,5 +568,36 @@ mod tests {
         }
         assert!(bot.sim.research_done(&plan[1]));
         assert!(bot.sim.stock(&"steel".into()) > 0, "steel lines deliver");
+    }
+
+    /// The nightly run plays in legs: a checkpoint goes on where it stopped.
+    #[test]
+    fn a_checkpoint_goes_on_where_the_bot_stopped() {
+        let content =
+            mofact_content::load_dir(&Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data"))
+                .unwrap();
+        let mut bot = Bot::new(&content, 2).unwrap();
+        bot.economy().unwrap();
+        let first = bot.plan(&bot.goal().unwrap())[0].clone();
+        bot.begin(&first).unwrap();
+        for _ in 0..600 {
+            bot.sim.step();
+        }
+        let mut back = Bot::resume(&content, 2, &bot.checkpoint()).unwrap();
+        assert_eq!(back.sim.tick(), bot.sim.tick());
+        assert_eq!(back.entities(), bot.entities());
+        assert_eq!(
+            (back.at, back.row, back.lines.clone()),
+            (bot.at, bot.row, bot.lines.clone())
+        );
+        assert_eq!(back.stations, bot.stations);
+        // Both go on the same way.
+        for _ in 0..600 {
+            bot.sim.step();
+            back.sim.step();
+        }
+        assert_eq!(back.sim.save(), bot.sim.save());
+        assert!(bot.checkpoint().len() > 8);
+        assert!(Bot::resume(&content, 2, b"junk").is_err());
     }
 }
