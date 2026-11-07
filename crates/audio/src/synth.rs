@@ -45,6 +45,37 @@ impl Hum {
     }
 }
 
+/// The sound of the land itself, under the machines (T59): one bed per
+/// kind of ground, mixed by how much of each is in view.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Ambient {
+    /// Grassland and forest: a soft breeze and birdsong.
+    Meadow,
+    /// Desert: a dry gusting wind and hissing sand.
+    Desert,
+    /// Tundra: a cold, whistling wind.
+    Tundra,
+    /// Volcanic ground: a deep rumble, with lava popping.
+    Volcanic,
+    /// Lakes and rivers: water lapping at the shore.
+    Water,
+}
+
+/// Every ambient bed, in the order [`Synth`] holds them.
+pub const AMBIENTS: [Ambient; 5] = [
+    Ambient::Meadow,
+    Ambient::Desert,
+    Ambient::Tundra,
+    Ambient::Volcanic,
+    Ambient::Water,
+];
+
+impl Ambient {
+    fn index(self) -> usize {
+        AMBIENTS.iter().position(|&a| a == self).unwrap_or(0)
+    }
+}
+
 /// A one-shot sound.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Cue {
@@ -123,6 +154,7 @@ pub struct Synth {
     rate: f32,
     dt: f32,
     loops: [Loop; HUMS.len()],
+    beds: [Loop; AMBIENTS.len()],
     voices: Vec<Voice>,
     seed: u32,
     master: f32,
@@ -141,6 +173,7 @@ impl Synth {
             rate,
             dt: 1.0 / rate,
             loops: [Loop::default(); HUMS.len()],
+            beds: [Loop::default(); AMBIENTS.len()],
             voices: Vec::with_capacity(VOICES),
             seed: 0x9e37_79b9,
             master: 0.7,
@@ -164,6 +197,16 @@ impl Synth {
     /// A hum's loudness as last set.
     pub fn level(&self, hum: Hum) -> f32 {
         self.loops[hum.index()].target
+    }
+
+    /// Set an ambient bed's loudness, 0 to 1. It glides there.
+    pub fn set_ambient(&mut self, ambient: Ambient, level: f32) {
+        self.beds[ambient.index()].target = level.clamp(0.0, 1.0);
+    }
+
+    /// An ambient bed's loudness as last set.
+    pub fn ambient(&self, ambient: Ambient) -> f32 {
+        self.beds[ambient.index()].target
     }
 
     /// Play a cue, `pan` from -1 (left) to 1 (right).
@@ -230,6 +273,19 @@ impl Synth {
                 let (gl, gr) = pan_gains(pan);
                 l += s * gl;
                 r += s * gr;
+            }
+            for i in 0..AMBIENTS.len() {
+                let b = &mut self.beds[i];
+                // Beds change slowly, as the view drifts from one land to the next.
+                b.level += (b.target - b.level) * self.glide * 0.25;
+                if b.level < 1e-3 && b.target == 0.0 {
+                    b.level = 0.0;
+                    continue;
+                }
+                let level = b.level;
+                let (sl, sr) = self.bed(i);
+                l += sl * level;
+                r += sr * level;
             }
             let mut k = 0;
             while k < self.voices.len() {
@@ -339,6 +395,96 @@ impl Synth {
                 let swell = 0.55 + 0.45 * sine(0.13);
                 let air = lp.lp[0].run(n, a400 * (0.6 + 0.6 * swell));
                 lp.lp[1].run(air, a900) * swell * 1.6
+            }
+        }
+    }
+
+    /// One stereo sample of ambient bed `i`. Left and right differ a
+    /// little, so the land sounds wide rather than from one point.
+    fn bed(&mut self, i: usize) -> (f32, f32) {
+        let (n, m) = (self.noise(), self.noise());
+        let roll = self.noise() * 0.5 + 0.5;
+        let (a80, a300, a600, a1k) = (
+            self.cut(80.0),
+            self.cut(300.0),
+            self.cut(600.0),
+            self.cut(1200.0),
+        );
+        let (dt, rate) = (self.dt, self.rate);
+        let b = &mut self.beds[i];
+        let t = b.t;
+        b.t += dt;
+        if b.t > 600.0 {
+            b.t -= 600.0;
+        }
+        let sine = |hz: f32| (TAU * hz * t).sin();
+        match AMBIENTS[i] {
+            Ambient::Meadow => {
+                let swell = 0.6 + 0.4 * sine(0.09);
+                let breeze_l = b.lp[0].run(n, a300) * swell * 1.2;
+                let breeze_r = b.lp[1].run(m, a300) * swell * 1.2;
+                // A bird now and then: two or three quick chirps.
+                if roll < 0.7 / rate {
+                    b.burst = 1.0;
+                    b.age = 0.0;
+                }
+                b.age += dt;
+                let x = (b.age / 0.11).fract();
+                let notes = if b.age < 0.33 { 1.0 } else { 0.0 };
+                let hz = 3200.0 + 900.0 * (x * 9.0).sin();
+                let chirp = (TAU * hz * b.age).sin() * (-x * 14.0).exp() * notes * b.burst;
+                let side = if (b.burst * 7.0) as i32 % 2 == 0 {
+                    0.7
+                } else {
+                    0.3
+                };
+                (
+                    breeze_l * 0.35 + chirp * 0.08 * side,
+                    breeze_r * 0.35 + chirp * 0.08 * (1.0 - side),
+                )
+            }
+            Ambient::Desert => {
+                let gust = (0.5 + 0.3 * sine(0.07) + 0.2 * sine(0.23)).max(0.0);
+                let wind_l = b.lp[0].run(n, a600 * (0.5 + gust));
+                let wind_r = b.lp[1].run(m, a600 * (0.5 + gust));
+                // Sand: the hiss left over above the wind.
+                let hiss = (n - m) * 0.02 * gust;
+                (
+                    (wind_l * 1.4 * gust + hiss) * 0.5,
+                    (wind_r * 1.4 * gust + hiss) * 0.5,
+                )
+            }
+            Ambient::Tundra => {
+                let swell = 0.55 + 0.45 * sine(0.05);
+                let cold_l = b.lp[0].run(n, a1k) * swell;
+                let cold_r = b.lp[1].run(m, a1k) * swell;
+                // A thin whistle that bends with the wind.
+                let whistle = (TAU * (430.0 * t + 40.0 / (TAU * 0.17) * (TAU * 0.17 * t).sin()))
+                    .sin()
+                    * 0.05
+                    * swell
+                    * swell;
+                (cold_l * 0.6 + whistle, cold_r * 0.6 + whistle * 0.8)
+            }
+            Ambient::Volcanic => {
+                let rumble = b.lp[0].run(n, a80) * 5.0 * (0.8 + 0.2 * sine(0.3));
+                // Lava pops: a few a second, low and sharp.
+                if roll < 2.5 / rate {
+                    b.burst = 1.0;
+                }
+                b.burst *= 0.9985;
+                let pop = b.lp[1].run(m, a600) * b.burst * 2.0;
+                ((rumble + pop) * 0.4, (rumble + pop * 0.7) * 0.4)
+            }
+            Ambient::Water => {
+                // Waves lapping: swells of soft noise every few seconds.
+                let lap = |phase: f32| {
+                    let w = (0.5 + 0.5 * (TAU * 0.23 * t + phase).sin()).powi(3);
+                    w * 0.8 + 0.2
+                };
+                let wl = b.lp[0].run(n, a600) * lap(0.0);
+                let wr = b.lp[1].run(m, a600) * lap(1.7);
+                (wl * 0.9, wr * 0.9)
             }
         }
     }
@@ -468,6 +614,62 @@ mod tests {
             let mut tail = vec![0.0; 256];
             s.render(&mut tail);
             assert_eq!(s.playing(), 0, "{cue:?} still playing");
+        }
+    }
+
+    #[test]
+    fn every_ambient_bed_is_audible_quiet_and_never_clips() {
+        for ambient in AMBIENTS {
+            let mut s = Synth::new(48_000);
+            s.set_ambient(ambient, 1.0);
+            let mut out = vec![0.0; 48_000 * 2 * 6];
+            s.render(&mut out);
+            let loud = rms(&out[48_000 * 4..]);
+            assert!(loud > 0.01, "{ambient:?} is too quiet: {loud}");
+            // A bed sits under the machines: never louder than a drill.
+            assert!(loud < 0.3, "{ambient:?} is too loud: {loud}");
+            assert!(
+                out.iter().all(|x| x.is_finite() && x.abs() <= 1.0),
+                "{ambient:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn beds_differ_so_each_biome_sounds_like_itself() {
+        // Each bed's loudness across low, middle and high bands.
+        let print = |a: Ambient| {
+            let mut s = Synth::new(48_000);
+            s.set_ambient(a, 1.0);
+            let mut out = vec![0.0; 48_000 * 2 * 6];
+            s.render(&mut out);
+            let mono: Vec<f32> = out[48_000 * 4..].chunks(2).map(|f| f[0]).collect();
+            let (mut lo, mut prev) = (0.0f32, 0.0f32);
+            let mut bands = [0.0f32; 3];
+            for &x in &mono {
+                lo += 0.01 * (x - lo);
+                let hi = x - prev;
+                prev = x;
+                bands[0] += lo * lo;
+                bands[1] += (x - lo) * (x - lo);
+                bands[2] += hi * hi;
+            }
+            let total: f32 = bands.iter().sum::<f32>().max(1e-9);
+            bands.map(|b| b / total)
+        };
+        let prints: Vec<[f32; 3]> = AMBIENTS.iter().map(|&a| print(a)).collect();
+        for i in 0..prints.len() {
+            for j in i + 1..prints.len() {
+                let d: f32 = (0..3).map(|k| (prints[i][k] - prints[j][k]).abs()).sum();
+                assert!(
+                    d > 0.02,
+                    "{:?} and {:?} sound alike: {:?} {:?}",
+                    AMBIENTS[i],
+                    AMBIENTS[j],
+                    prints[i],
+                    prints[j]
+                );
+            }
         }
     }
 

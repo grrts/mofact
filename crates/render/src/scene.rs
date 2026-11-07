@@ -63,6 +63,9 @@ pub struct Scene {
     pub terrain: TerrainMap,
     /// Seconds since the game started, for water ripples.
     pub time: f32,
+    /// Low-power mode (T66): the ground keeps still and skips its fine
+    /// close-up detail.
+    pub low_power: bool,
     /// The tiles buildings stand on, from the last [`Scene::build`]: no
     /// decorations are drawn there.
     occupied: HashSet<TilePos>,

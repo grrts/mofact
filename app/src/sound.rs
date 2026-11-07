@@ -3,7 +3,7 @@
 //! a goal met and research finished each have a cue. The synth itself is in
 //! `mofact_audio`; the platform shell pulls its samples.
 
-use mofact_audio::{Audio, Cue, Hum, Machine, Soundscape, State};
+use mofact_audio::{Ambient, Audio, Cue, Hum, Machine, Soundscape, State, AMBIENTS};
 use mofact_core::command::{Command, CommandResult};
 use mofact_core::content::{BuildingRole, Content};
 use mofact_core::geom::TilePos;
@@ -181,6 +181,58 @@ impl Sound {
     }
 }
 
+/// Which ambient bed a terrain number (`mofact_world::Terrain`) belongs to.
+fn bed_for(terrain: u8) -> Ambient {
+    match terrain {
+        0 | 1 => Ambient::Water,
+        8 => Ambient::Desert,
+        9 | 10 => Ambient::Tundra,
+        11..=13 => Ambient::Volcanic,
+        _ => Ambient::Meadow,
+    }
+}
+
+/// How loud the land sounds at most, under the machines.
+const AMBIENT: f32 = 0.45;
+
+/// How loud each ambient bed should be for the terrain in view, given as
+/// terrain numbers sampled evenly across the screen. Water carries further
+/// than its share: a little lake in view is already heard. On the world
+/// map (`far`) it is all quieter, heard from high up.
+pub fn ambient_levels(terrain: impl IntoIterator<Item = u8>, far: bool) -> [f32; AMBIENTS.len()] {
+    let mut count = [0u32; AMBIENTS.len()];
+    let mut total = 0u32;
+    for t in terrain {
+        let i = AMBIENTS.iter().position(|&a| a == bed_for(t)).unwrap_or(0);
+        count[i] += 1;
+        total += 1;
+    }
+    let total = total.max(1) as f32;
+    let gain = if far { AMBIENT * 0.5 } else { AMBIENT };
+    let mut out = [0.0; AMBIENTS.len()];
+    for (i, a) in AMBIENTS.iter().enumerate() {
+        let share = count[i] as f32 / total;
+        out[i] = gain
+            * if *a == Ambient::Water {
+                share.sqrt()
+            } else {
+                share
+            };
+    }
+    out
+}
+
+impl Sound {
+    /// Set the land's sound from the terrain in view; see [`ambient_levels`].
+    pub fn ground(&self, terrain: impl IntoIterator<Item = u8>, far: bool) {
+        let levels = ambient_levels(terrain, far);
+        let mut synth = self.audio.lock();
+        for (a, l) in AMBIENTS.iter().zip(levels) {
+            synth.set_ambient(*a, l);
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -210,6 +262,28 @@ mod tests {
             center: [0.0, 0.0],
             pixels_per_tile: 32.0,
         }
+    }
+
+    #[test]
+    fn the_land_in_view_picks_its_ambient_bed() {
+        let idx = |a: Ambient| AMBIENTS.iter().position(|&b| b == a).unwrap();
+        // All grass: only the meadow, at full ambient loudness.
+        let l = ambient_levels([3u8; 100], false);
+        assert_eq!(l[idx(Ambient::Meadow)], AMBIENT);
+        assert_eq!(l[idx(Ambient::Desert)], 0.0);
+        // Dunes with a small oasis: mostly desert, but the water is heard.
+        let mut view = vec![8u8; 96];
+        view.extend([1u8; 4]);
+        let l = ambient_levels(view, false);
+        assert!(l[idx(Ambient::Desert)] > 0.4);
+        assert!(l[idx(Ambient::Water)] > 0.08, "{l:?}");
+        // Snow and ice, ash and lava.
+        assert!(ambient_levels([9u8, 10], false)[idx(Ambient::Tundra)] > 0.4);
+        assert!(ambient_levels([11u8, 13], false)[idx(Ambient::Volcanic)] > 0.4);
+        // From the world map it is quieter.
+        assert!(ambient_levels([3u8; 10], true)[idx(Ambient::Meadow)] < AMBIENT);
+        // Nothing in view, nothing heard.
+        assert_eq!(ambient_levels([], false), [0.0; 5]);
     }
 
     #[test]

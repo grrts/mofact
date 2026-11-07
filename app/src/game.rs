@@ -14,7 +14,20 @@ use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui::{Action, Hud, View};
-use web_time::Instant;
+use web_time::{Duration, Instant};
+
+/// Frame pacing (T66): 60 fps while playing, 30 in low-power mode or once
+/// nothing has been touched for [`IDLE`]. A frame is drawn once at least
+/// this long has passed since the last, less a little for timer jitter.
+const FAST_FRAME: Duration = Duration::from_micros(15_000);
+const SLOW_FRAME: Duration = Duration::from_micros(31_000);
+const IDLE: Duration = Duration::from_secs(20);
+
+/// Whether a frame is due at `now`, the last having been drawn at `drawn`.
+fn due(drawn: Option<Instant>, now: Instant, slow: bool) -> bool {
+    let gap = if slow { SLOW_FRAME } else { FAST_FRAME };
+    drawn.is_none_or(|t| now.duration_since(t) >= gap)
+}
 
 pub struct Game {
     /// None while the platform has taken the window away.
@@ -45,6 +58,10 @@ pub struct Game {
     guide: Guide,
     /// The zoom to go back to when the map closes, in points a tile.
     before_map: Option<f32>,
+    /// When the last frame was drawn, and when the player last touched or
+    /// pressed anything: frames are paced from these (T66).
+    drawn: Option<Instant>,
+    touched: Instant,
 }
 
 impl Game {
@@ -101,11 +118,24 @@ impl Game {
             safe: [0.0; 4],
             guide: Guide::default(),
             before_map: None,
+            drawn: None,
+            touched: Instant::now(),
             content,
             ore,
             controls,
             latest: (0, Instant::now()),
         }
+    }
+
+    /// Whether low-power mode is on (T66).
+    pub fn low_power(&self) -> bool {
+        self.hud.low_power()
+    }
+
+    /// Turn low-power mode on or off, as a platform does from a saved setting.
+    pub fn set_low_power(&mut self, on: bool) {
+        self.hud.set_low_power(on);
+        self.scene.low_power = on;
     }
 
     /// The window was resized to `w` × `h` pixels.
@@ -119,6 +149,13 @@ impl Game {
     /// One frame: run due ticks, answer finished commands, fire held
     /// presses, and draw at `size` pixels with `scale` pixels per point.
     pub fn frame(&mut self, size: (u32, u32), scale: f32) -> Frame {
+        // Low-power mode, or a while with no touch, draws at 30 fps.
+        let now = Instant::now();
+        let slow = self.hud.low_power() || now.duration_since(self.touched) >= IDLE;
+        if !due(self.drawn, now, slow) {
+            return Frame::Skipped;
+        }
+        self.drawn = Some(now);
         self.sim.pump();
         let results: Vec<_> = self.sim.results().collect();
         self.sound.results(&results);
@@ -178,6 +215,25 @@ impl Game {
         self.scene
             .animate(&self.look, atlases, &camera, target.size(), &latest, t);
         self.sound.frame(&latest, &camera, target.size());
+        // The land in view, sampled on a coarse grid, sets the ambient beds.
+        {
+            let (lo, hi) = camera.visible(target.size().0, target.size().1);
+            let stride = mofact_render::scene::map_stride(camera.pixels_per_tile);
+            let ore = &self.ore;
+            let samples = (0..12).flat_map(|j| {
+                (0..8).filter_map(move |i| {
+                    let x = lo[0] + (hi[0] - lo[0]) * (i as f32 + 0.5) / 8.0;
+                    let y = lo[1] + (hi[1] - lo[1]) * (j as f32 + 0.5) / 12.0;
+                    let t = mofact_core::geom::TilePos::new(
+                        (x / stride as f32).floor() as i32,
+                        (y / stride as f32).floor() as i32,
+                    );
+                    ore.terrain(t, stride).map(|(kind, _)| kind)
+                })
+            });
+            self.sound
+                .ground(samples, crate::worldmap::is_map(&camera, scale));
+        }
         self.ore.update(&camera, target.size());
         self.scene.ore(
             &self.look,
@@ -334,6 +390,7 @@ impl Game {
     /// Ctrl+Shift+Z (or Ctrl+Y). Every other building has a letter of its
     /// own (see [`mofact_ui::hotkeys`]).
     pub fn key(&mut self, name: &str) {
+        self.touched = Instant::now();
         let tool = match name {
             "1" | "escape" => Tool::Hand,
             "2" => Tool::Belt,
@@ -440,6 +497,7 @@ impl Game {
             // A problem from the list: look at it, with the hand, so its
             // inspect sheet (opened by the HUD) says what's wrong.
             Action::Mute(muted) => self.sound.set_muted(muted),
+            Action::LowPower(on) => self.scene.low_power = on,
             Action::Map(open) => {
                 let cam = &mut self.controls.camera;
                 let scale = cam.scale();
@@ -489,6 +547,7 @@ impl Game {
 
     /// A pointer event goes to the HUD first, then to the camera and build tools.
     pub fn handle(&mut self, p: Pointer) {
+        self.touched = Instant::now();
         let (taken, actions) = self.hud.pointer(p);
         if !actions.is_empty() && taken {
             self.sound.tap();
@@ -619,5 +678,30 @@ fn coach_marks(
             label(o, step.say(), mid, y, *below, accent);
             Some(step.tool())
         }
+    }
+}
+
+#[cfg(test)]
+mod pacing {
+    use super::*;
+
+    #[test]
+    fn sixty_a_second_normally_thirty_when_saving_power() {
+        // Frames as a 60 Hz display offers them, for one second.
+        let start = Instant::now();
+        let count = |slow: bool| {
+            let mut drawn = None;
+            let mut n = 0;
+            for k in 0..60u64 {
+                let now = start + Duration::from_micros(16_667 * k);
+                if due(drawn, now, slow) {
+                    drawn = Some(now);
+                    n += 1;
+                }
+            }
+            n
+        };
+        assert_eq!(count(false), 60);
+        assert_eq!(count(true), 30);
     }
 }

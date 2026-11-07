@@ -24,6 +24,9 @@ use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, PointerEvent, WheelEvent};
 
 const SAVE_KEY: &str = "mofact-save";
+/// Whether low-power mode is on: "1" or "0". A setting of this browser,
+/// not of the save.
+const LOW_POWER_KEY: &str = "mofact-low-power";
 /// Milliseconds between autosaves.
 const SAVE_EVERY: f64 = 30_000.0;
 
@@ -43,6 +46,8 @@ struct Shell {
     /// The page's `#safe` box, which CSS fits inside the screen's safe
     /// area: what is left round it is the notch and the home indicator.
     safe: Option<web_sys::Element>,
+    /// Low-power mode as last stored.
+    low_power: bool,
 }
 
 impl Shell {
@@ -66,6 +71,14 @@ impl Shell {
         }
         self.game.safe = self.safe_area(scale);
         self.game.frame(size, scale);
+        // Remember low-power mode for next time.
+        let low = self.game.low_power();
+        if low != self.low_power {
+            self.low_power = low;
+            if let Ok(Some(st)) = self.window.local_storage() {
+                let _ = st.set_item(LOW_POWER_KEY, if low { "1" } else { "0" });
+            }
+        }
         if self.now() - self.saved >= SAVE_EVERY {
             self.save();
         }
@@ -289,9 +302,19 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         saved: 0.0,
         sound: None,
         safe: window.document().and_then(|d| d.get_element_by_id("safe")),
+        low_power: false,
     }));
     {
         let mut s = shell.borrow_mut();
+        let stored = window
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|st| st.get_item(LOW_POWER_KEY).ok().flatten());
+        if stored.as_deref() == Some("1") {
+            s.game.set_low_power(true);
+            s.low_power = true;
+        }
         s.saved = s.now();
         match speaker(&mut s.game) {
             Ok(ctx) => s.sound = Some(ctx),
