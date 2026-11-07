@@ -1489,3 +1489,54 @@ fn version_11_saves_from_before_pins_still_load() {
     );
     assert!(sim.snapshot().pins.is_empty());
 }
+
+#[test]
+fn only_drills_need_ore() {
+    // Every other building goes on open ground with no ore under it.
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    for i in &content.items {
+        sim.add_stock(&i.id, 10_000);
+    }
+    for r in &content.research {
+        sim.complete_research(&r.id);
+    }
+    sim.set_world(42);
+    let gen = mofact_world::WorldGen::new(42, sim.tables.ores.len() as u8);
+    let mut x = 0;
+    for b in &content.buildings {
+        // Open ground near the start, big enough for it, with no ore on it.
+        let (w, h) = (i32::from(b.size.0), i32::from(b.size.1));
+        let pos = loop {
+            x += 1;
+            let at = TilePos::new(mofact_world::START.x - 12, mofact_world::START.y + 6 + x);
+            let tiles: Vec<TilePos> = (0..h)
+                .flat_map(|dy| (0..w).map(move |dx| TilePos::new(at.x + dx, at.y + dy)))
+                .collect();
+            if tiles.iter().all(|t| {
+                mofact_world::ore_at(&gen, *t).is_none()
+                    && mofact_world::obstacle(&gen, *t).is_none()
+                    && sim.entity_at(*t).is_none()
+            }) {
+                break at;
+            }
+        };
+        x += h;
+        let got = sim.apply(&Command::Place {
+            building: b.id.clone(),
+            pos,
+            dir: Dir::East,
+            recipe: None,
+        });
+        if matches!(b.role, mofact_core::content::BuildingRole::Miner { .. }) {
+            assert_eq!(got, CommandResult::Refused(CommandError::NoOre), "{}", b.id);
+        } else {
+            assert_ne!(
+                got,
+                CommandResult::Refused(CommandError::NoOre),
+                "{} needs no ore",
+                b.id
+            );
+        }
+    }
+}

@@ -125,9 +125,14 @@ impl Game {
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
+                if why == E::CannotAfford {
+                    let text = self.short_of();
+                    self.hud.toast(&text);
+                    continue;
+                }
                 self.hud.toast(match why {
                     E::Blocked => "Something is in the way.",
-                    E::CannotAfford => "Not enough plates in stock.",
+                    E::CannotAfford => "Not enough in stock.",
                     E::Locked => "That isn't unlocked yet.",
                     E::NoSuchEntity => "That's already gone.",
                     E::UnknownContent => "That isn't in this game's data.",
@@ -369,6 +374,45 @@ impl Game {
     }
 
     /// Do what the HUD asks.
+    /// What the building in hand still needs, for a refusal that says so:
+    /// "A Lab needs 10 Brick, 5 Circuit more."
+    fn short_of(&self) -> String {
+        let id = match &self.controls.builder.tool {
+            Tool::Place(b) => b.clone(),
+            Tool::Belt => self.controls.builder.belt.clone(),
+            _ => return "Not enough in stock.".into(),
+        };
+        let Some(def) = self.content.buildings.iter().find(|b| b.id == id) else {
+            return "Not enough in stock.".into();
+        };
+        let latest = self.sim.latest();
+        let have = |item: &mofact_core::ids::ItemId| {
+            latest
+                .stock
+                .iter()
+                .find(|(i, _)| i == item)
+                .map_or(0, |(_, n)| *n)
+        };
+        let missing: Vec<String> = def
+            .cost
+            .iter()
+            .filter(|c| have(&c.item) < c.count)
+            .map(|c| {
+                let name = self
+                    .content
+                    .items
+                    .iter()
+                    .find(|i| i.id == c.item)
+                    .map_or(c.item.as_str(), |i| i.name.as_str());
+                format!("{} {name}", c.count - have(&c.item))
+            })
+            .collect();
+        if missing.is_empty() {
+            return "Not enough in stock.".into();
+        }
+        format!("{} needs {} more.", def.name, missing.join(", "))
+    }
+
     fn act(&mut self, action: Action) {
         match action {
             Action::Tool(tool) => self.controls.builder.set_tool(tool),
