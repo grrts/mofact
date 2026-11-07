@@ -24,4 +24,10 @@
     (id: "light-oil",    name: "Light oil",    kind: Fluid, shape: Droplet, color: "light-oil",  tier: 3),
     (id: "tar",          name: "Tar",          kind: Fluid, shape: Droplet, color: "tar",        tier: 3),
     (id: "plastic",      name: "Plastic",      kind: Solid, shape: Plate,   color: "plastic",    tier: 3),
+    // Far raw materials, each found only in its own biome (T42): the world
+    // numbers ores in this order, so these three follow iron, copper, stone
+    // and coal as desert, tundra and volcanic ore.
+    (id: "bauxite",      name: "Bauxite",      kind: Solid, shape: Ore,     color: "bauxite",    tier: 5),
+    (id: "titanium-ore", name: "Titanium ore", kind: Solid, shape: Ore,     color: "titanium-ore", tier: 6),
+    (id: "rare-earth",   name: "Rare earths",  kind: Solid, shape: Ore,     color: "rare-earth", tier: 7),
 ]

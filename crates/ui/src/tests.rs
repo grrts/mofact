@@ -35,6 +35,7 @@ fn snapshot() -> Snapshot {
         grids: Vec::new(),
         goal: None,
         cleared: Default::default(),
+        depleted: Default::default(),
         trains: vec![train()],
     }
 }

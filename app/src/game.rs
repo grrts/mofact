@@ -176,7 +176,9 @@ impl Game {
             atlases,
             &camera,
             target.size(),
-            self.ore.tiles(),
+            self.ore
+                .tiles()
+                .filter(|(t, _)| latest.depleted.binary_search(t).is_err()),
         );
         self.scene.decor(
             atlases,

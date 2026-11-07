@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 10;
+pub const VERSION: u16 = 11;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -62,6 +62,23 @@ struct World {
     /// The goal the player is on, by id; none once all are met.
     goal: Option<String>,
     /// Tiles whose tree or boulder was cleared.
+    cleared: Vec<TilePos>,
+    /// How much ore each held tile has left, and the tiles mined out.
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+}
+
+/// Versions 9 and 10: the same, before ore that runs out.
+#[derive(Deserialize)]
+struct WorldV10 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
     cleared: Vec<TilePos>,
 }
 
@@ -205,6 +222,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: None,
                 goal: Some(String::new()),
                 cleared: Vec::new(),
+                ore_left: Vec::new(),
+                depleted: Vec::new(),
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -223,6 +242,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: v6.current,
                 goal: Some(String::new()),
                 cleared: Vec::new(),
+                ore_left: Vec::new(),
+                depleted: Vec::new(),
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -239,10 +260,29 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 current: v8.current,
                 goal: v8.goal,
                 cleared: Vec::new(),
+                ore_left: Vec::new(),
+                depleted: Vec::new(),
             })
         }
         // Version 10 adds rails and trains: new variants only.
-        9 | 10 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 11 adds ore that runs out.
+        9 | 10 => {
+            let v10: WorldV10 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v10.tick,
+                stock: v10.stock,
+                delivered: v10.delivered,
+                ore: v10.ore,
+                entities: v10.entities,
+                research: v10.research,
+                current: v10.current,
+                goal: v10.goal,
+                cleared: v10.cleared,
+                ore_left: Vec::new(),
+                depleted: Vec::new(),
+            })
+        }
+        11 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -390,8 +430,10 @@ impl Sim {
                 Some((id.0, saved))
             })
             .collect();
-        let mut ore: Vec<_> = self.ore.iter().map(|(p, &i)| (*p, item(i))).collect();
-        ore.sort_by_key(|(p, _)| (p.y, p.x)); // the same world always saves the same bytes
+        let mut held: Vec<_> = self.ore.iter().collect();
+        held.sort_by_key(|(p, _)| (p.y, p.x)); // the same world always saves the same bytes
+        let ore = held.iter().map(|(p, &(i, _))| (**p, item(i))).collect();
+        let ore_left = held.iter().map(|(_, &(_, n))| n).collect();
         let world = World {
             tick: self.tick,
             stock: self
@@ -426,6 +468,8 @@ impl Sim {
                 .map(|r| t.research[r as usize].id.clone()),
             goal: self.goal_id(),
             cleared: self.cleared.to_vec(),
+            ore_left,
+            depleted: self.depleted.to_vec(),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -461,9 +505,11 @@ impl Sim {
                 sim.delivered[i as usize] = *n;
             }
         }
-        for (pos, id) in &world.ore {
+        for (k, (pos, id)) in world.ore.iter().enumerate() {
             if let Some(i) = item(id, &mut warnings) {
-                sim.ore.insert(*pos, i);
+                // Older saves kept no amounts: give them a placed tile's worth.
+                let left = world.ore_left.get(k).copied().unwrap_or(crate::PLACED_ORE);
+                sim.ore.insert(*pos, (i, left.max(1)));
             }
         }
         let research = |id: &ResearchId, w: &mut Vec<String>| {
@@ -488,6 +534,7 @@ impl Sim {
         // a goal the content no longer has starts over too, and the sim
         // moves past what's already done.
         sim.cleared = std::sync::Arc::new(world.cleared.clone());
+        sim.depleted = std::sync::Arc::new(world.depleted.clone());
         sim.goal = match &world.goal {
             None => content.goals.len() as u16,
             Some(id) => content
