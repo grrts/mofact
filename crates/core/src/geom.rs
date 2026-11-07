@@ -61,12 +61,41 @@ impl TilePos {
         Self::new(self.x + dx, self.y + dy)
     }
 
+    /// The patch of fog (S3) this tile lies in, [`crate::FOG_CELL`] tiles a side.
+    pub const fn fog(self) -> FogCell {
+        FogCell {
+            x: self.x.div_euclid(crate::FOG_CELL),
+            y: self.y.div_euclid(crate::FOG_CELL),
+        }
+    }
+
     /// The chunk that contains this tile. Rounds towards negative infinity.
     pub const fn chunk(self) -> ChunkPos {
         ChunkPos {
             x: self.x.div_euclid(CHUNK_SIZE),
             y: self.y.div_euclid(CHUNK_SIZE),
         }
+    }
+}
+
+/// A patch of land the fog of war hides until it is explored (S3): cell
+/// (0, 0) holds tiles 0..32 on both axes. Sorted row by row.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize,
+)]
+pub struct FogCell {
+    pub y: i32,
+    pub x: i32,
+}
+
+impl FogCell {
+    pub const fn new(x: i32, y: i32) -> Self {
+        Self { x, y }
+    }
+
+    /// The top-left tile of this cell.
+    pub const fn origin(self) -> TilePos {
+        TilePos::new(self.x * crate::FOG_CELL, self.y * crate::FOG_CELL)
     }
 }
 

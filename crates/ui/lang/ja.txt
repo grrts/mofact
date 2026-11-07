@@ -23,6 +23,7 @@ tip.rail_signal = 線路をタップして区間に分けます。1区間を通�
 tip.train_stop = 線路をタップ。向けたベルトで列車に積み込み、矢印から降ろします。
 tip.locomotive = 線路をタップして置き、列車をタップして駅を設定します。
 tip.wind_turbine = 電柱の隣にタップで設置。1基で研究所1つ分の電力です。
+tip.radar = 電柱の隣にタップで設置。電力があると、近い所から周りの土地を調べます。
 tip.place = タップで設置。レシピを選ぶか、届いた物から自動で選ばせます。
 tip.remove = タップかドラッグで印を付け、指を離すと撤去。元に戻すで復元できます。
 
@@ -301,6 +302,7 @@ building.underground-belt = 地下ベルト
 building.lab = 研究所
 building.pole = 電柱
 building.wind-turbine = 風力タービン
+building.radar = レーダー
 building.pipe = パイプ
 building.underground-pipe = 地下パイプ
 building.tank = タンク

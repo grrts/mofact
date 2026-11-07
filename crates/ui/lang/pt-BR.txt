@@ -23,6 +23,7 @@ tip.rail_signal = Toque no trilho para dividi-lo em blocos. Só passa um trem po
 tip.train_stop = Toque no trilho. Esteiras apontadas para dentro carregam o trem; ele descarrega pela seta.
 tip.locomotive = Toque no trilho para colocar e depois no trem para dar estações a ele.
 tip.wind_turbine = Toque para colocar perto de um poste. Cada turbina energiza um laboratório.
+tip.radar = Toque para colocar perto de um poste. Com energia, mapeia a terra ao redor, a mais próxima primeiro.
 tip.place = Toque para colocar. Escolha uma receita ou deixe que ela escolha pelo que chega.
 tip.remove = Toque ou arraste para marcar, solte para remover. Desfazer traz tudo de volta.
 
@@ -301,6 +302,7 @@ building.underground-belt = Esteira subterrânea
 building.lab = Laboratório
 building.pole = Poste
 building.wind-turbine = Turbina eólica
+building.radar = Radar
 building.pipe = Cano
 building.underground-pipe = Cano subterrâneo
 building.tank = Tanque

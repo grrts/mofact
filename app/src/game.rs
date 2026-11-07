@@ -409,6 +409,7 @@ impl Game {
             ghosts.iter().map(|g| (&g.building, g.tile, g.dir, recipe)),
         );
         self.overlay.clear();
+        crate::fog::draw(&mut self.overlay, &camera, target.size(), &latest.explored);
         self.controls.slop = 12.0 * scale.max(0.5);
         // What a remove drag has marked, in red, before it goes.
         for id in self.controls.builder.marked() {
@@ -443,7 +444,9 @@ impl Game {
                 scale,
                 &latest,
             );
-            let patches = self.ore.patches(&camera, target.size());
+            // Patches under the fog stay unknown.
+            let mut patches = self.ore.patches(&camera, target.size());
+            patches.retain(|(p, _)| crate::fog::charted(&latest.explored, p.center));
             crate::worldmap::patches(
                 &mut self.overlay,
                 &self.look,

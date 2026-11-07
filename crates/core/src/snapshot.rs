@@ -99,6 +99,10 @@ pub struct Snapshot {
     /// The first megaproject built, and how far along it is.
     #[serde(default)]
     pub mega: Option<MegaView>,
+    /// The land explored so far (S3), sorted; the rest lies under the
+    /// fog of war. Shared like `cleared`.
+    #[serde(default)]
+    pub explored: std::sync::Arc<Vec<crate::geom::FogCell>>,
 }
 
 /// A megaproject's progress: its stage, and what that stage still takes.

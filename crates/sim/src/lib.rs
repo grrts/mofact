@@ -61,6 +61,11 @@ const LAB_CAP: u32 = 4;
 /// Three seconds: longer than a new game's furnace waits for its first ore
 /// (about two), so a fresh factory never opens on a red mark.
 const STARVED_AFTER: u32 = 3 * mofact_core::TICKS_PER_SECOND;
+/// Fog cells round a building that it lifts the fog from (S3): the hub
+/// clears the land a new game starts on, a radar a wider ring at once.
+const REVEAL: i32 = 1;
+const REVEAL_HUB: i32 = 5;
+const REVEAL_RADAR: i32 = 3;
 
 #[derive(Clone, Debug)]
 enum State {
@@ -114,6 +119,13 @@ enum State {
     Mega {
         stage: u32,
         have: Vec<u32>,
+    },
+    /// A radar (S3): ticks towards its next sweep, and the ring of cells
+    /// round it it is charting; past its reach it has nothing left to do.
+    Radar {
+        prog: u32,
+        ring: i32,
+        done: bool,
     },
 }
 
@@ -178,6 +190,8 @@ pub struct Sim {
     cleared: std::sync::Arc<Vec<TilePos>>,
     /// The player's pins on the world map, sorted.
     pins: std::sync::Arc<Vec<TilePos>>,
+    /// The land explored (S3), sorted; the rest is under the fog of war.
+    explored: std::sync::Arc<Vec<mofact_core::geom::FogCell>>,
     stock: Vec<u32>,
     delivered: Vec<u64>,
     research: Research,
@@ -569,6 +583,7 @@ impl Sim {
                     t.heading = *dir;
                 }
                 let id = self.entities.insert(entity).expect("footprint checked");
+                self.reveal_around(&entity);
                 self.states.resize(id.0 as usize + 1, None);
                 self.states[id.0 as usize] = Some(state);
                 self.pair(id);
@@ -892,7 +907,92 @@ impl Sim {
             Role::Rail { .. } => State::Rail,
             Role::Stop => State::Stop { docked: None },
             Role::Train { .. } => State::Train(rails::Train::default()),
+            Role::Radar { .. } => State::Radar {
+                prog: 0,
+                ring: 0,
+                done: false,
+            },
         }
+    }
+
+    /// Whether the fog has lifted from `cell` (S3).
+    pub fn explored(&self, cell: mofact_core::geom::FogCell) -> bool {
+        self.explored.binary_search(&cell).is_ok()
+    }
+
+    /// Lift the fog from `cell`; false if it was already explored.
+    fn reveal(&mut self, cell: mofact_core::geom::FogCell) -> bool {
+        let Err(at) = self.explored.binary_search(&cell) else {
+            return false;
+        };
+        std::sync::Arc::make_mut(&mut self.explored).insert(at, cell);
+        true
+    }
+
+    /// Lift the fog round a building: a few hundred tiles round the hub,
+    /// so a new game opens on cleared land, and a cell round anything else.
+    pub(crate) fn reveal_around(&mut self, e: &Entity) {
+        let radius = match self.tables.buildings[e.kind as usize].role {
+            Role::Hub => REVEAL_HUB,
+            Role::Radar { .. } => REVEAL_RADAR,
+            _ => REVEAL,
+        };
+        let (w, h) = (i32::from(e.size.0), i32::from(e.size.1));
+        let mid = TilePos::new(e.pos.x + w / 2, e.pos.y + h / 2).fog();
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius + radius {
+                    self.reveal(mofact_core::geom::FogCell::new(mid.x + dx, mid.y + dy));
+                }
+            }
+        }
+    }
+
+    /// Lift the fog a few cells round a building from a save made before
+    /// the fog of war, whose player had seen the land round their factory.
+    pub(crate) fn reveal_wide(&mut self, e: &Entity) {
+        let mid = e.pos.fog();
+        let r = REVEAL_RADAR;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dy * dy <= r * r + r {
+                    self.reveal(mofact_core::geom::FogCell::new(mid.x + dx, mid.y + dy));
+                }
+            }
+        }
+    }
+
+    /// A radar's sweep: lift the fog from the nearest cell round it still
+    /// hidden, working out ring by ring. Returns false once nothing within
+    /// `reach` is left.
+    fn sweep(&mut self, e: &Entity, ring: &mut i32, reach: i32) -> bool {
+        let (w, h) = (i32::from(e.size.0), i32::from(e.size.1));
+        let mid = TilePos::new(e.pos.x + w / 2, e.pos.y + h / 2).fog();
+        while *ring <= reach {
+            let r = *ring;
+            let mut best: Option<(i32, mofact_core::geom::FogCell)> = None;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    // Only the ring's edge, inside the round reach.
+                    let d = dx * dx + dy * dy;
+                    if dx.abs().max(dy.abs()) != r || d > reach * reach + reach {
+                        continue;
+                    }
+                    let cell = mofact_core::geom::FogCell::new(mid.x + dx, mid.y + dy);
+                    if !self.explored(cell) && best.is_none_or(|(bd, bc)| (d, cell) < (bd, bc)) {
+                        best = Some((d, cell));
+                    }
+                }
+            }
+            match best {
+                Some((_, cell)) => {
+                    self.reveal(cell);
+                    return true;
+                }
+                None => *ring += 1,
+            }
+        }
+        false
     }
 
     /// An underground belt or pipe end.
@@ -1024,6 +1124,7 @@ impl Sim {
             State::Crafter(c) => c.working,
             State::Lab(lab) => lab.unit.is_some(),
             State::Pump | State::Well => true,
+            State::Radar { done, .. } => !done,
             _ => false,
         }
     }
@@ -1093,6 +1194,20 @@ impl Sim {
             }
             let go = self.tables.buildings[e.kind as usize].power == 0
                 || power::runs(self.tick, self.grids.sat(i));
+            if let (State::Radar { prog, ring, done }, Role::Radar { reach, every }) =
+                (&mut state, &self.tables.buildings[e.kind as usize].role)
+            {
+                let (reach, every) = (*reach, *every);
+                if go && !*done {
+                    *prog += 1;
+                    if *prog >= every {
+                        *prog = 0;
+                        *done = !self.sweep(&e, ring, reach);
+                    }
+                }
+                self.states[i] = Some(state);
+                continue;
+            }
             self.step_one(&e, &mut state, go);
             self.states[i] = Some(state);
         }
@@ -1110,7 +1225,8 @@ impl Sim {
             | State::Rail
             | State::Stop { .. }
             | State::Train(_)
-            | State::Mega { .. } => {}
+            | State::Mega { .. }
+            | State::Radar { .. } => {}
             State::Pump => {
                 let Role::Pump { per_tick } = self.tables.buildings[e.kind as usize].role else {
                     return;
@@ -1541,7 +1657,8 @@ impl Sim {
             | State::Engine { .. }
             | State::Rail
             | State::Stop { .. }
-            | State::Train(_) => false,
+            | State::Train(_)
+            | State::Radar { .. } => false,
             State::Splitter { held, .. } => {
                 // Only from behind.
                 if dir != target.dir || held.is_some() {
@@ -1653,6 +1770,7 @@ impl Sim {
             cleared: self.cleared.clone(),
             depleted: self.depleted.clone(),
             pins: self.pins.clone(),
+            explored: self.explored.clone(),
             ..Snapshot::default()
         };
         for (id, e) in self.entities.iter() {
@@ -1762,6 +1880,18 @@ impl Sim {
                         if c.working { p } else { 0.0 },
                         c.recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
                     )
+                }
+                Some(State::Radar { prog, done, .. }) => {
+                    let every = match b.role {
+                        Role::Radar { every, .. } => every,
+                        _ => 1,
+                    };
+                    let st = if *done {
+                        MachineState::Idle
+                    } else {
+                        MachineState::Working
+                    };
+                    (st, *prog as f32 / every as f32, None)
                 }
                 Some(State::Mega { stage, have }) => {
                     let (n, frac) = match &b.role {

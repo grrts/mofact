@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 14;
+pub const VERSION: u16 = 15;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -70,6 +70,27 @@ struct World {
     pins: Vec<TilePos>,
     /// The map's seed and preset (S4); none in saves from before them,
     /// which were all seed 42, standard.
+    world: Option<(u64, u8)>,
+    /// The land explored (S3); none in saves from before the fog of war,
+    /// which open with the land round their factory explored.
+    explored: Option<Vec<mofact_core::geom::FogCell>>,
+}
+
+/// Versions 13 and 14: the same, before the fog of war.
+#[derive(Deserialize)]
+struct WorldV14 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+    pins: Vec<TilePos>,
     world: Option<(u64, u8)>,
 }
 
@@ -219,6 +240,12 @@ enum SavedState {
         stage: u32,
         have: Vec<(ItemId, u32)>,
     },
+    /// A radar's next sweep and the ring it is charting (S3).
+    Radar {
+        prog: u32,
+        ring: i32,
+        done: bool,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -269,6 +296,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -291,6 +319,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -311,6 +340,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -331,6 +361,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
             })
         }
         // Version 12 adds pins on the world map.
@@ -350,6 +381,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: v11.depleted,
                 pins: Vec::new(),
                 world: None,
+                explored: None,
             })
         }
         // Version 13 saves the map's seed and preset.
@@ -369,10 +401,31 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: v.depleted,
                 pins: v.pins,
                 world: None,
+                explored: None,
             })
         }
-        // Version 14 adds the megaproject: a new variant only.
-        13 | 14 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 14 adds the megaproject: a new variant only. Version 15
+        // saves the land explored, and adds radars: a new variant.
+        13 | 14 => {
+            let v: WorldV14 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: v.world,
+                explored: None,
+            })
+        }
+        15 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -515,6 +568,11 @@ impl Sim {
                                 .collect(),
                         }
                     }
+                    State::Radar { prog, ring, done } => SavedState::Radar {
+                        prog: *prog,
+                        ring: *ring,
+                        done: *done,
+                    },
                     State::Train(tr) => SavedState::Train(SavedTrain {
                         cargo: tr.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
                         schedule: tr.schedule.clone(),
@@ -577,6 +635,7 @@ impl Sim {
             depleted: self.depleted.to_vec(),
             pins: self.pins.to_vec(),
             world: self.world.map(|w| (w.seed, w.preset as u8)),
+            explored: Some(self.explored.to_vec()),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -772,6 +831,13 @@ impl Sim {
                     }
                     State::Mega { stage, have: held }
                 }
+                (SavedState::Radar { prog, ring, done }, Role::Radar { reach, every }) => {
+                    State::Radar {
+                        prog: prog.min(*every),
+                        ring: ring.clamp(0, reach + 1),
+                        done,
+                    }
+                }
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
                     cargo: tr
                         .cargo
@@ -834,6 +900,21 @@ impl Sim {
                 if let Some(t) = sim.tunnel_mut(id) {
                     t.partner = None;
                 }
+            }
+        }
+        // The land explored, and round every building whatever the save
+        // says; a save from before the fog of war opens with a wider ring
+        // round its factory explored, as its player had seen it.
+        let mut explored = world.explored.clone().unwrap_or_default();
+        explored.sort();
+        explored.dedup();
+        sim.explored = std::sync::Arc::new(explored);
+        let wide = world.explored.is_none();
+        let all: Vec<Entity> = sim.entities.iter().map(|(_, e)| *e).collect();
+        for e in &all {
+            sim.reveal_around(e);
+            if wide {
+                sim.reveal_wide(e);
             }
         }
         sim.rebuild_grids();

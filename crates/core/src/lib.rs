@@ -21,5 +21,8 @@ pub const TICK_SECONDS: f32 = 1.0 / TICKS_PER_SECOND as f32;
 /// Side length of a world chunk, in tiles.
 pub const CHUNK_SIZE: i32 = 64;
 
+/// The side of a patch of land the fog of war hides or shows (S3), in tiles.
+pub const FOG_CELL: i32 = 32;
+
 /// A simulation tick count since the world was created.
 pub type Tick = u64;

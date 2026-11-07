@@ -23,6 +23,7 @@ tip.rail_signal = 点击轨道把它分成区段。每段同时只能有一列�
 tip.train_stop = 点击轨道。朝内的传送带给火车装货，火车从箭头处卸货。
 tip.locomotive = 点击轨道放置，然后点击火车为它设置车站。
 tip.wind_turbine = 在电线杆旁点击放置。每台风力发电机可供一座研究站。
+tip.radar = 在电线杆旁点击放置。有电时，它会先探测最近的土地，再向外。
 tip.place = 点击放置。选择配方，或让它根据送来的物品自动选择。
 tip.remove = 点击或拖动标记，松手即拆除。撤销可以恢复。
 
@@ -301,6 +302,7 @@ building.underground-belt = 地下传送带
 building.lab = 研究站
 building.pole = 电线杆
 building.wind-turbine = 风力发电机
+building.radar = 探测站
 building.pipe = 管道
 building.underground-pipe = 地下管道
 building.tank = 储罐
