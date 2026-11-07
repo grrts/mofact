@@ -831,14 +831,16 @@ impl Hud {
             right = r[0] - gap;
         }
         if let Some(recipes) = placing.and_then(|b| view.recipes_for(b)) {
-            let pills = std::iter::once(None).chain(recipes.iter().map(|r| Some(*r)));
-            let choices: Vec<_> = pills
-                .map(|r| {
-                    let chosen = r.map(|r| &r.id) == view.recipe;
-                    recipe_pill(view, r, chosen, Hit::Recipe(r.map(|r| r.id.clone())))
-                })
-                .collect();
-            self.pills(o, choices, [left, corner[1]], right - left, true);
+            self.recipe_picker(
+                o,
+                view,
+                &recipes,
+                view.recipe,
+                Hit::Recipe,
+                [left, corner[1]],
+                right - left,
+                true,
+            );
         }
         // Belt tiers, once there is more than one to lay.
         if *view.tool == Tool::Belt {
@@ -1868,8 +1870,9 @@ impl Hud {
         let sized: Vec<_> = choices
             .into_iter()
             .map(|(name, icon, chosen, hit)| {
-                let w =
-                    14.0 * u + icon.map_or(0.0, |_| s + 6.0 * u) + o.measure(name, px) + 14.0 * u;
+                // An icon with no name sits alone in the middle.
+                let space = if name.is_empty() { 0.0 } else { 6.0 * u };
+                let w = 14.0 * u + icon.map_or(0.0, |_| s + space) + o.measure(name, px) + 14.0 * u;
                 (name, icon, w, chosen, hit)
             })
             .collect();
@@ -1910,6 +1913,84 @@ impl Hud {
             y -= h + gap;
         }
         count
+    }
+
+    /// The recipe pills for a crafter, filling up from `at`: Auto and one
+    /// pill per product, and under them, when the chosen product can be
+    /// made more than one way, a pill per way. Products lose their names
+    /// when they would take more than three rows. Returns the rows.
+    #[allow(clippy::too_many_arguments)]
+    fn recipe_picker(
+        &mut self,
+        o: &mut Overlay,
+        view: &View,
+        recipes: &[&RecipeDef],
+        current: Option<&RecipeId>,
+        hit: impl Fn(Option<RecipeId>) -> Hit,
+        at: [f32; 2],
+        width: f32,
+        draw: bool,
+    ) -> usize {
+        let product = |r: &RecipeDef| r.outputs.first().map(|s| s.item.clone());
+        let chosen = current.and_then(|c| recipes.iter().find(|r| &r.id == c));
+        let made = chosen.and_then(|r| product(r));
+        let mut firsts: Vec<&RecipeDef> = Vec::new();
+        for r in recipes {
+            if !firsts.iter().any(|f| product(f) == product(r)) {
+                firsts.push(r);
+            }
+        }
+        let products = |named: bool| -> Vec<Pill> {
+            let auto = ("Auto", None, current.is_none(), hit(None));
+            std::iter::once(auto)
+                .chain(firsts.iter().map(|r| {
+                    let item = product(r);
+                    let name = match (named, &item) {
+                        (true, Some(i)) => view
+                            .content
+                            .items
+                            .iter()
+                            .find(|d| &d.id == i)
+                            .map_or(r.name.as_str(), |d| d.name.as_str()),
+                        _ => "",
+                    };
+                    let icon = item.as_ref().and_then(|i| view.look.item(i));
+                    (
+                        name,
+                        icon,
+                        item.is_some() && item == made,
+                        hit(Some(r.id.clone())),
+                    )
+                }))
+                .collect()
+        };
+        let ways: Vec<Pill> = match &made {
+            Some(m)
+                if recipes
+                    .iter()
+                    .filter(|r| product(r).as_ref() == Some(m))
+                    .count()
+                    > 1 =>
+            {
+                recipes
+                    .iter()
+                    .filter(|r| product(r).as_ref() == Some(m))
+                    .map(|r| {
+                        let this = Some(&r.id) == current;
+                        (r.name.as_str(), None, this, hit(Some(r.id.clone())))
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        };
+        let mut rows = 0;
+        if !ways.is_empty() {
+            rows = self.pills(o, ways, at, width, draw);
+        }
+        let named = self.pills(o, products(true), [0.0, 0.0], width, false);
+        let list = products(named <= 3);
+        let pitch = 46.0 * self.unit;
+        rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
     }
 
     /// The inspect sheet for `e`, bottom-left at `at`.
@@ -1965,18 +2046,19 @@ impl Hud {
 
         // Measure the sheet from its rows, bottom up.
         let row = 22.0 * u;
-        let choices: Option<Vec<_>> = recipes.as_ref().map(|rs| {
-            std::iter::once(None)
-                .chain(rs.iter().map(|r| Some(*r)))
-                .map(|r| {
-                    let id = r.map(|r| r.id.clone());
-                    let chosen = id == e.recipe;
-                    recipe_pill(view, r, chosen, Hit::SetRecipe(e.id, id))
-                })
-                .collect()
-        });
-        let pill_rows = choices.clone().map_or(0.0, |c| {
-            self.pills(o, c, [0.0, 0.0], width - 2.0 * pad, false) as f32
+        let set = |id| Hit::SetRecipe(e.id, id);
+        let pill_rows = recipes.as_ref().map_or(0.0, |rs| {
+            let current = e.recipe.as_ref();
+            self.recipe_picker(
+                o,
+                view,
+                rs,
+                current,
+                set,
+                [0.0, 0.0],
+                width - 2.0 * pad,
+                false,
+            ) as f32
         });
         let height = pad
             + 30.0 * u // title
@@ -2130,12 +2212,15 @@ impl Hud {
         }
 
         // Recipe pills for crafters.
-        if let Some(choices) = choices {
+        if let Some(rs) = &recipes {
             // Pills fill upwards from a bottom edge; aim them at this band.
             let band = pill_rows * 46.0 * u;
-            self.pills(
+            self.recipe_picker(
                 o,
-                choices,
+                view,
+                rs,
+                e.recipe.as_ref(),
+                set,
                 [left, y + band - 6.0 * u],
                 r[2] - 2.0 * pad,
                 true,
@@ -2200,15 +2285,6 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
 
 /// A pill: its label, icon, whether it is the one chosen, and what a tap does.
 type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
-
-/// A pill for a recipe, showing its first output; `None` is Auto.
-fn recipe_pill<'a>(view: &View<'a>, r: Option<&'a RecipeDef>, chosen: bool, hit: Hit) -> Pill<'a> {
-    let name = r.map_or("Auto", |r| r.name.as_str());
-    let icon = r
-        .and_then(|r| r.outputs.first())
-        .and_then(|s| view.look.item(&s.item));
-    (name, icon, chosen, hit)
-}
 
 /// A machine state's label and colour.
 fn state(s: MachineState) -> (&'static str, Rgba) {
