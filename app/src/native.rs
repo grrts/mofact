@@ -501,7 +501,7 @@ fn screenshots(
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
-        scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
+        scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
         let path = dir.join(format!("zoom-{ppt}.png"));
         write_png(&path, size, &pixels)?;
@@ -541,7 +541,7 @@ fn screenshots(
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
-        scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
+        scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
         let path = dir.join(format!("{name}.png"));
         write_png(&path, size, &pixels)?;
@@ -566,6 +566,58 @@ fn screenshots(
         }
     }
     let mut overlay = Overlay::new(&look);
+    // The world map on a phone: the factory as a schematic, ore patches as
+    // icons, two pins, and the map button lit.
+    for (name, ppt) in [("map", 1.0), ("map-far", 0.5)] {
+        let (size, scale) = ((1179, 2556), 3.0);
+        let camera = Camera {
+            pixels_per_tile: ppt * scale,
+            ..camera
+        };
+        scene.build(
+            &look,
+            renderer.atlases(),
+            &camera,
+            size,
+            &prev,
+            &latest,
+            0.5,
+        );
+        ore.fill(&camera, size);
+        scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+        scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
+        scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
+        overlay.clear();
+        crate::worldmap::factory(&mut overlay, content, &camera, size, scale, &latest);
+        let patches = ore.patches(&camera, size);
+        crate::worldmap::patches(&mut overlay, &look, &camera, size, scale, &patches);
+        let pins = [
+            mofact_core::geom::TilePos::new(-409, 326),
+            mofact_core::geom::TilePos::new(180, -260),
+        ];
+        crate::worldmap::pins(&mut overlay, &camera, size, scale, &pins);
+        let mut hud = Hud::new();
+        hud.set_map(true);
+        let view = View {
+            size,
+            scale,
+            content,
+            look: &look,
+            snapshot: &latest,
+            tool: &Tool::Hand,
+            dir: mofact_core::geom::Dir::East,
+            recipe: None,
+            belt: &"belt".into(),
+            history: (false, false),
+            safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
+            nudge: None,
+        };
+        hud.draw(&view, &mut overlay);
+        let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
+        let path = dir.join(format!("{name}.png"));
+        write_png(&path, size, &pixels)?;
+        println!("{}", path.display());
+    }
     for (name, size, scale, safe) in screens {
         let camera = Camera {
             pixels_per_tile: 32.0 * scale,
@@ -583,7 +635,7 @@ fn screenshots(
         ore.fill(&camera, size);
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
-        scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
+        scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
             "toolbar", "build", "research", "radial", "recipes", "problems", "train",
         ];

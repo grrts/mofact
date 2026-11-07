@@ -31,6 +31,7 @@ mod replay;
 pub mod sound;
 #[cfg(not(target_arch = "wasm32"))]
 mod surface;
+mod worldmap;
 
 pub use bundled::content;
 pub use game::Game;

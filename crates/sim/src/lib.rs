@@ -149,6 +149,9 @@ struct Crafter {
 /// Ore a scenario places by hand: enough for hours of one drill.
 pub const PLACED_ORE: u32 = 10_000;
 
+/// The most pins the map holds.
+pub const MAX_PINS: usize = 64;
+
 /// The simulated world.
 #[derive(Default)]
 pub struct Sim {
@@ -166,6 +169,8 @@ pub struct Sim {
     world: Option<mofact_world::WorldGen>,
     /// Tiles whose tree or boulder has been cleared, sorted.
     cleared: std::sync::Arc<Vec<TilePos>>,
+    /// The player's pins on the world map, sorted.
+    pins: std::sync::Arc<Vec<TilePos>>,
     stock: Vec<u32>,
     delivered: Vec<u64>,
     research: Research,
@@ -625,6 +630,24 @@ impl Sim {
                 }
                 std::sync::Arc::make_mut(&mut self.cleared).remove(at);
                 Ok((vec![Command::Clear { tile: *tile }], None))
+            }
+            Command::Pin { tile } => {
+                let pins = std::sync::Arc::make_mut(&mut self.pins);
+                let Err(at) = pins.binary_search(tile) else {
+                    return Err(CommandError::Blocked);
+                };
+                if pins.len() >= MAX_PINS {
+                    return Err(CommandError::Blocked);
+                }
+                pins.insert(at, *tile);
+                Ok((vec![Command::Unpin { tile: *tile }], None))
+            }
+            Command::Unpin { tile } => {
+                let Ok(at) = self.pins.binary_search(tile) else {
+                    return Err(CommandError::NoSuchEntity);
+                };
+                std::sync::Arc::make_mut(&mut self.pins).remove(at);
+                Ok((vec![Command::Pin { tile: *tile }], None))
             }
             Command::SetRecipe { entity, recipe } => {
                 let kind = self
@@ -1468,6 +1491,7 @@ impl Sim {
             belt_items: Vec::with_capacity(self.states.len() * 2),
             cleared: self.cleared.clone(),
             depleted: self.depleted.clone(),
+            pins: self.pins.clone(),
             ..Snapshot::default()
         };
         for (id, e) in self.entities.iter() {

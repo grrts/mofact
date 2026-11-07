@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 11;
+pub const VERSION: u16 = 12;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -64,6 +64,24 @@ struct World {
     /// Tiles whose tree or boulder was cleared.
     cleared: Vec<TilePos>,
     /// How much ore each held tile has left, and the tiles mined out.
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+    /// The player's pins on the world map.
+    pins: Vec<TilePos>,
+}
+
+/// Version 11: the same, before pins.
+#[derive(Deserialize)]
+struct WorldV11 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
     ore_left: Vec<u32>,
     depleted: Vec<TilePos>,
 }
@@ -224,6 +242,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 cleared: Vec::new(),
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
+                pins: Vec::new(),
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -244,6 +263,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 cleared: Vec::new(),
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
+                pins: Vec::new(),
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -262,6 +282,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 cleared: Vec::new(),
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
+                pins: Vec::new(),
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -280,9 +301,28 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 cleared: v10.cleared,
                 ore_left: Vec::new(),
                 depleted: Vec::new(),
+                pins: Vec::new(),
             })
         }
-        11 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 12 adds pins on the world map.
+        11 => {
+            let v11: WorldV11 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v11.tick,
+                stock: v11.stock,
+                delivered: v11.delivered,
+                ore: v11.ore,
+                entities: v11.entities,
+                research: v11.research,
+                current: v11.current,
+                goal: v11.goal,
+                cleared: v11.cleared,
+                ore_left: v11.ore_left,
+                depleted: v11.depleted,
+                pins: Vec::new(),
+            })
+        }
+        12 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -470,6 +510,7 @@ impl Sim {
             cleared: self.cleared.to_vec(),
             ore_left,
             depleted: self.depleted.to_vec(),
+            pins: self.pins.to_vec(),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -535,6 +576,11 @@ impl Sim {
         // moves past what's already done.
         sim.cleared = std::sync::Arc::new(world.cleared.clone());
         sim.depleted = std::sync::Arc::new(world.depleted.clone());
+        let mut pins = world.pins.clone();
+        pins.sort();
+        pins.dedup();
+        pins.truncate(crate::MAX_PINS);
+        sim.pins = std::sync::Arc::new(pins);
         sim.goal = match &world.goal {
             None => content.goals.len() as u16,
             Some(id) => content

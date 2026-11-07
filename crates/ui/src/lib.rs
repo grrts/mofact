@@ -195,6 +195,8 @@ pub enum Action {
     Focus([f32; 2]),
     /// Turn the game's sound off (true) or back on.
     Mute(bool),
+    /// Open the world map (true): zoom far out. Or close it and zoom back in.
+    Map(bool),
 }
 
 /// A control on screen, and what tapping it does.
@@ -233,6 +235,8 @@ enum Hit {
     Schedule(EntityId, Vec<mofact_core::command::TrainStop>),
     /// Start or stop picking a stop on the map for a train's schedule.
     PickStop(EntityId),
+    /// The map button: opens and closes the world map.
+    Map,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -264,6 +268,8 @@ struct Tap {
 pub struct Hud {
     /// Whether the player turned the sound off.
     muted: bool,
+    /// Whether the camera is out on the world map.
+    map: bool,
     /// The entity the inspect sheet shows.
     selected: Option<EntityId>,
     /// The train waiting for a stop to be tapped on the map.
@@ -344,6 +350,11 @@ impl Hud {
     /// restore what the player chose last time).
     pub fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
+    }
+
+    /// Tell the HUD whether the camera is out on the world map.
+    pub fn set_map(&mut self, map: bool) {
+        self.map = map;
     }
 
     /// Open or close the problems list, as its button does.
@@ -568,6 +579,11 @@ impl Hud {
                 self.muted = !self.muted;
                 vec![Action::Mute(self.muted)]
             }
+            Hit::Map => {
+                self.map = !self.map;
+                self.selected = None;
+                vec![Action::Map(self.map)]
+            }
             Hit::Problems => {
                 self.problems = !self.problems;
                 self.research = false;
@@ -665,6 +681,9 @@ impl Hud {
         // The sound button keeps the top-right corner, clear of the thumb.
         let right = corner[0] - 36.0 * u;
         self.sound_button(o, [right, mt]);
+        // The map button sits beside it.
+        let right = right - gap - 36.0 * u;
+        self.map_button(o, [right, mt]);
         let right = right - gap;
         self.found = problems::find(view);
         if self.found.is_empty() {
@@ -693,7 +712,12 @@ impl Hud {
         };
         // Cards and tips read as a column, not a banner, on a wide screen.
         let column = (corner[0] - ml).min(560.0 * u);
-        let top = self.goal_card(view, o, [ml, top + gap], column);
+        // The map wants the whole screen: the goal waits until it closes.
+        let top = if self.map {
+            top
+        } else {
+            self.goal_card(view, o, [ml, top + gap], column)
+        };
         let mut tip_y = top + gap;
         if let Some((text, at, ink)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
@@ -713,6 +737,7 @@ impl Hud {
             && !self.problems
             && self.browse.is_none()
             && !hand_with_goal
+            && !self.map
         {
             self.tip(view, o, [ml, tip_y], column);
         }
@@ -1026,6 +1051,27 @@ impl Hud {
             x += w + 6.0 * u;
         }
         at[1] + h
+    }
+
+    /// A round button that opens the world map: a map folded in three. Lit
+    /// while the map is open.
+    fn map_button(&mut self, o: &mut Overlay, at: [f32; 2]) {
+        let u = self.unit;
+        let d = 36.0 * u;
+        o.panel(at, [d, d], d / 2.0, if self.map { PRESSED } else { RAISED });
+        let ink = if self.map { WORKING } else { TEXT };
+        let (cx, cy) = (at[0] + d / 2.0, at[1] + d / 2.0);
+        let (pw, ph) = (5.0 * u, 15.0 * u);
+        for k in 0..3 {
+            let x = cx - 8.5 * u + k as f32 * 6.0 * u;
+            let y = cy - ph / 2.0 + if k == 1 { 1.5 * u } else { -1.5 * u };
+            o.panel([x, y], [pw, ph], 1.5 * u, ink);
+        }
+        let pad = 4.0 * u;
+        self.hits.push((
+            [at[0] - pad, at[1] - pad, d + 2.0 * pad, d + 2.0 * pad],
+            Hit::Map,
+        ));
     }
 
     /// A round button that turns the sound off and on: a speaker's three

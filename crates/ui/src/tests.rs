@@ -36,6 +36,7 @@ fn snapshot() -> Snapshot {
         goal: None,
         cleared: Default::default(),
         depleted: Default::default(),
+        pins: Default::default(),
         trains: vec![train()],
     }
 }

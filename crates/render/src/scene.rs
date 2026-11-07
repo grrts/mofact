@@ -72,15 +72,18 @@ pub struct Scene {
 /// shader: the terrain number in red and its shade in green.
 #[derive(Default)]
 pub struct TerrainMap {
-    /// The tile at the texture's top-left texel.
+    /// The texture's top-left texel, counted in texels from tile (0, 0).
     pub origin: [i32; 2],
-    /// Width and height in tiles.
+    /// Width and height in texels.
     pub size: [u32; 2],
+    /// Tiles each texel covers, across and down: 1 up close, more on the
+    /// world map so a far view stays a small texture.
+    pub stride: i32,
     pub texels: Vec<u8>,
     /// Goes up whenever `texels` changes, so the GPU copy knows to refresh.
     pub version: u64,
     /// What the texels were made from: the rectangle and the map's version.
-    made_from: Option<([i32; 4], u64)>,
+    made_from: Option<([i32; 4], u64, i32)>,
 }
 
 /// What a tile with no terrain yet shows: plain grass.
@@ -450,6 +453,10 @@ impl Scene {
         ore: impl IntoIterator<Item = (TilePos, &'a ItemId)>,
     ) {
         self.ore.clear();
+        // On the world map the patches show as icons instead.
+        if map_stride(camera.pixels_per_tile) > 1 {
+            return;
+        }
         let uvs: Vec<Uv> = (0..sprites::ORE_VARIANTS)
             .map(|k| {
                 atlases[self.band]
@@ -541,39 +548,55 @@ impl Scene {
     }
 
     /// Fill [`Scene::terrain`] for what the camera sees, from `at` (terrain
-    /// number and shade, or `None` where nothing is generated yet). `version`
-    /// is the map's: it is only read again when that or the view changes.
+    /// number and shade, or `None` where nothing is generated yet). `at` is
+    /// asked for texels: a texel position and how many tiles it spans. Up
+    /// close that is one tile; zoomed far out it is a few, see
+    /// [`map_stride`]. `version` is the map's: it is only read again when
+    /// that or the view changes.
     pub fn terrain(
         &mut self,
         camera: &Camera,
         (width, height): (u32, u32),
         version: u64,
-        at: impl Fn(TilePos) -> Option<(u8, u8)>,
+        at: impl Fn(TilePos, i32) -> Option<(u8, u8)>,
     ) {
+        let stride = map_stride(camera.pixels_per_tile);
         let (lo, hi) = camera.visible(width, height);
-        // A tile's edges blend with its neighbours, so take one more all round.
+        let s = stride as f32;
+        // A texel's edges blend with its neighbours, so take one more all round.
         let rect = [
-            lo[0].floor() as i32 - 2,
-            lo[1].floor() as i32 - 2,
-            hi[0].ceil() as i32 + 2,
-            hi[1].ceil() as i32 + 2,
+            (lo[0] / s).floor() as i32 - 2,
+            (lo[1] / s).floor() as i32 - 2,
+            (hi[0] / s).ceil() as i32 + 2,
+            (hi[1] / s).ceil() as i32 + 2,
         ];
         let map = &mut self.terrain;
-        if map.made_from == Some((rect, version)) {
+        if map.made_from == Some((rect, version, stride)) {
             return;
         }
-        map.made_from = Some((rect, version));
+        map.made_from = Some((rect, version, stride));
         map.origin = [rect[0], rect[1]];
         map.size = [(rect[2] - rect[0]) as u32, (rect[3] - rect[1]) as u32];
+        map.stride = stride;
         map.texels.clear();
         for y in rect[1]..rect[3] {
             for x in rect[0]..rect[2] {
-                let (kind, shade) = at(TilePos::new(x, y)).unwrap_or(UNKNOWN_TERRAIN);
+                let (kind, shade) = at(TilePos::new(x, y), stride).unwrap_or(UNKNOWN_TERRAIN);
                 map.texels.extend_from_slice(&[kind, shade, 0, 255]);
             }
         }
         map.version += 1;
     }
+}
+
+/// Tiles per terrain texel at `pixels_per_tile`: one while a tile is at
+/// least 3 px, then doubling, so a texel never drops below 3 px.
+pub fn map_stride(pixels_per_tile: f32) -> i32 {
+    let mut stride = 1;
+    while (stride as f32) * pixels_per_tile < 3.0 && stride < 64 {
+        stride *= 2;
+    }
+    stride
 }
 
 /// The atlases for every band, painted with the placeholder sprites.
@@ -593,6 +616,22 @@ mod tests {
             buildings: ron::from_str(&read("buildings.ron")).unwrap(),
             research: Vec::new(),
             goals: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn ground_shader_uses_the_palette_terrain_colours() {
+        // The shader spells the land colours out; keep them in step with the
+        // palette, which the map and the tests read.
+        let shader = include_str!("shader.wgsl");
+        for kind in 2..=12 {
+            let [r, g, b, _] = palette::TERRAIN[kind];
+            let f = |v: u8| format!("{:.3}", f32::from(v) / 255.0);
+            let want = format!("vec3<f32>({}, {}, {})", f(r), f(g), f(b));
+            assert!(
+                shader.contains(&want),
+                "terrain {kind}: {want} not in the shader"
+            );
         }
     }
 
