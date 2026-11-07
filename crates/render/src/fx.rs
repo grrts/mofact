@@ -12,7 +12,7 @@
 //! each machine is offset by its id so a row of them doesn't move in step.
 
 use crate::atlas::Atlas;
-use crate::look::{Effect, Look, FX_BAR, FX_DOT, FX_RING};
+use crate::look::{Effect, Look, FX_BAR, FX_DOT, FX_RING, LIT};
 use crate::palette::{Rgba, Status};
 use crate::scene::{Camera, Instance, Scene};
 use mofact_core::snapshot::{MachineState, Snapshot};
@@ -21,6 +21,8 @@ use std::f32::consts::TAU;
 const SMOKE: Rgba = [0x9a, 0xa4, 0xae, 0xff];
 const STEAM: Rgba = [0xee, 0xf2, 0xf5, 0xff];
 const TRACK: Rgba = [0x0e, 0x12, 0x16, 0xff];
+/// Lamplight from a working machine at night (S9).
+const GLOW: Rgba = [0xff, 0xc8, 0x6e, 0xff];
 
 fn with_alpha(c: Rgba, a: f32) -> Rgba {
     [c[0], c[1], c[2], (255.0 * a.clamp(0.0, 1.0)) as u8]
@@ -66,6 +68,10 @@ impl Scene {
         let reach = f32::from(look.largest());
         let near =
             |x: f32, y: f32| x + reach >= lo[0] && y + reach >= lo[1] && x <= hi[0] && y <= hi[1];
+        // By night a working machine glows warm, so a busy factory shows from
+        // afar (S9). Drawn after, since the glows ignore the dark.
+        let night = self.night.clamp(0.0, 1.0);
+        let mut glows = Vec::new();
         for e in &latest.entities {
             if !near(e.pos.x as f32, e.pos.y as f32) {
                 continue;
@@ -81,6 +87,12 @@ impl Scene {
             let mid = [x + w / 2.0, y + h / 2.0];
             match e.state {
                 MachineState::Working => {
+                    if night > 0.0 && look.effect(&e.building) != Effect::None {
+                        let flicker = 0.85 + 0.15 * (t * 2.3 + stagger(id, 9) * TAU).sin();
+                        let d = w.max(h) * 1.5;
+                        glows.push((blob(mid, d), with_alpha(GLOW, night * 0.3 * flicker)));
+                        glows.push((blob(mid, 0.3), with_alpha(GLOW, night * 0.9)));
+                    }
                     match look.effect(&e.building) {
                         Effect::Smoke { big } => {
                             let scale = if big { 1.6 } else { 1.0 };
@@ -172,6 +184,15 @@ impl Scene {
                 }
                 _ => {}
             }
+        }
+        for ((pos, size), tint) in glows {
+            self.instances.push(Instance {
+                pos,
+                size,
+                uv: dot,
+                tint,
+                turns: LIT,
+            });
         }
     }
 }
@@ -270,5 +291,45 @@ mod tests {
         // Half a second on, the smoke has moved.
         assert_ne!(a[0].pos, b[0].pos);
         assert_eq!(a.len(), b.len());
+    }
+
+    #[test]
+    fn by_night_working_machines_glow_and_idle_ones_stay_dark() {
+        let look = Look::new(&content());
+        let atlases = look.atlases();
+        let camera = Camera {
+            center: [5.0, 5.0],
+            pixels_per_tile: 64.0,
+        };
+        let snap = Snapshot {
+            entities: vec![
+                machine(1, "furnace", 3, 3, MachineState::Working, 0.5),
+                machine(2, "assembler", 8, 3, MachineState::Idle, 0.0),
+            ],
+            ..Snapshot::default()
+        };
+        let lit = |night: f32| {
+            let mut scene = Scene::default();
+            scene.night = night;
+            scene.build(&look, &atlases, &camera, (800, 600), &snap, &snap, 1.0);
+            scene.animate(&look, &atlases, &camera, (800, 600), &snap, 0.0);
+            scene
+                .instances
+                .iter()
+                .filter(|i| i.turns & LIT != 0)
+                .count()
+        };
+        assert_eq!(lit(0.0), 0, "no lamps by day");
+        assert_eq!(lit(1.0), 2, "the furnace's glow and its core");
+        // The day turns: light at the start, dark some time later, light again.
+        assert_eq!(crate::night_at(0), 0.0);
+        let day = 10 * 60 * u64::from(mofact_core::TICKS_PER_SECOND);
+        let nights: Vec<f32> = (0..100).map(|k| crate::night_at(day * k / 100)).collect();
+        assert!(nights.contains(&1.0));
+        assert!(
+            nights.iter().filter(|&&n| n == 0.0).count() > 50,
+            "mostly day"
+        );
+        assert_eq!(crate::night_at(day), 0.0);
     }
 }

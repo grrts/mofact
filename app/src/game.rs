@@ -236,6 +236,7 @@ impl Game {
             pixels_per_tile: self.controls.camera.pixels_per_tile,
         };
         let atlases = self.renderer.atlases();
+        self.scene.night = mofact_render::night_at(latest.tick);
         self.scene.build(
             &self.look,
             atlases,

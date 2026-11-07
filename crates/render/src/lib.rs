@@ -24,7 +24,7 @@ pub use look::Look;
 pub use mofact_core as core;
 pub use overlay::Overlay;
 pub use pipeline::Renderer;
-pub use scene::{Camera, Instance, Scene};
+pub use scene::{night_at, Camera, Instance, Scene};
 pub use wgpu;
 
 use std::fmt;
