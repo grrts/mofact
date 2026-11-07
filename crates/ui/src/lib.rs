@@ -535,6 +535,13 @@ impl Hud {
     }
 
     /// Tell the HUD whether the camera is out on the world map.
+    /// Fold the card for goal `index` down to its title, as a tap on it
+    /// does, for a screenshot that shows the factory rather than the hint.
+    pub fn fold_goal(&mut self, index: u16) {
+        self.goal_seen = Some(index);
+        self.hint = false;
+    }
+
     pub fn set_map(&mut self, map: bool) {
         self.map = map;
     }
