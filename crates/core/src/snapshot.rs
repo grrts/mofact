@@ -4,6 +4,7 @@
 //! blocks the simulation (R43). The renderer interpolates between the two
 //! latest snapshots using `tick`.
 
+use crate::command::TrainStop;
 use crate::geom::{Dir, TilePos};
 use crate::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
 use crate::Tick;
@@ -86,6 +87,44 @@ pub struct Snapshot {
     /// snapshot costs nothing extra while it doesn't change.
     #[serde(default)]
     pub cleared: std::sync::Arc<Vec<TilePos>>,
+    /// Trains, which ride on rail tiles rather than standing on their own.
+    #[serde(default)]
+    pub trains: Vec<TrainView>,
+}
+
+/// What a train is doing.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TrainState {
+    /// No stops, or none it can reach.
+    #[default]
+    Idle,
+    Moving,
+    /// Stopped short: the track ahead is taken by another train.
+    Waiting,
+    /// At a stop, loading or unloading.
+    Loading,
+    Unloading,
+    /// Its next stop is not on track it can reach.
+    NoPath,
+}
+
+/// One train this tick.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct TrainView {
+    pub id: EntityId,
+    pub building: BuildingId,
+    /// The tile it is on, the way it faces, and how far it is toward the
+    /// next tile, 0.0 to 1.0.
+    pub pos: TilePos,
+    pub dir: Dir,
+    pub along: f32,
+    /// What it carries, and how much it can.
+    pub cargo: Vec<(ItemId, u32)>,
+    pub capacity: u32,
+    pub schedule: Vec<TrainStop>,
+    /// The stop it is bound for or at, by place in the schedule.
+    pub next: usize,
+    pub state: TrainState,
 }
 
 /// The current goal and how far along it is.

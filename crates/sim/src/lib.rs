@@ -20,6 +20,7 @@ mod history;
 mod jobs;
 mod local;
 mod power;
+mod rails;
 pub mod save;
 mod tables;
 #[cfg(not(target_arch = "wasm32"))]
@@ -42,6 +43,7 @@ use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
 use mofact_core::snapshot::{
     BeltItemView, EntityView, FluidView, GoalView, GridView, MachineState, ResearchView, Snapshot,
+    TrainState, TrainView,
 };
 use mofact_core::Tick;
 use power::Grids;
@@ -99,6 +101,13 @@ enum State {
     Engine {
         share: u32,
     },
+    /// A rail or signal: trains read the track from where it lies.
+    Rail,
+    /// A train stop, and the train loading or unloading there.
+    Stop {
+        docked: Option<EntityId>,
+    },
+    Train(rails::Train),
 }
 
 /// One end of an underground belt.
@@ -156,6 +165,7 @@ pub struct Sim {
     research: Research,
     grids: Grids,
     fluids: Fluids,
+    rails: rails::Rails,
     /// The goal the player is on: an index into the content's goals, which
     /// is their count once all are met.
     goal: u16,
@@ -389,13 +399,33 @@ impl Sim {
                     Some(r) => Some(self.crafter_recipe(kind, r)?),
                     None => None,
                 };
+                // A signal or stop put on a rail (or the other way about) takes its place.
+                if let Some(old) = self.entities.at(*pos).filter(|_| b.role.is_track()) {
+                    let o = *self.entities.get(old).expect("indexed");
+                    let ob = &self.tables.buildings[o.kind as usize];
+                    if o.kind != kind && ob.role.is_track() && !self.train_on(*pos) {
+                        let can = b.cost.iter().all(|&(i, n)| {
+                            let back = ob.cost.iter().find(|c| c.0 == i).map_or(0, |c| c.1);
+                            self.stock[i as usize] + back >= n
+                        });
+                        if !can {
+                            return Err(CommandError::CannotAfford);
+                        }
+                        let (mut undo, _) = self.try_apply(&Command::Remove { entity: old })?;
+                        let (placed, id) = self.try_apply(command)?;
+                        undo.splice(0..0, placed);
+                        return Ok((undo, id));
+                    }
+                }
+                let train = matches!(b.role, Role::Train { .. });
                 let entity = Entity {
                     kind,
                     pos: *pos,
-                    size: b.size,
+                    // Trains ride on track rather than taking tiles of their own.
+                    size: if train { (0, 0) } else { b.size },
                     dir: *dir,
                 };
-                if !self.entities.is_free(&entity) {
+                if !self.entities.is_free(&entity) || (train && !self.train_fits(&entity)) {
                     return Err(CommandError::Blocked);
                 }
                 self.ground_clear(*pos, b.size)?;
@@ -408,7 +438,12 @@ impl Sim {
                     return Err(CommandError::CannotAfford);
                 }
                 let cost = b.cost.clone();
-                let state = self.initial_state(kind, recipe);
+                let track = b.role.is_track();
+                let mut state = self.initial_state(kind, recipe);
+                if let State::Train(t) = &mut state {
+                    t.at = *pos;
+                    t.heading = *dir;
+                }
                 let id = self.entities.insert(entity).expect("footprint checked");
                 self.states.resize(id.0 as usize + 1, None);
                 self.states[id.0 as usize] = Some(state);
@@ -428,6 +463,12 @@ impl Sim {
                     self.ore.insert(*pos, ore);
                 }
                 self.regrid(kind);
+                if track {
+                    self.rebuild_blocks();
+                }
+                if train {
+                    self.rails.trains.push(id);
+                }
                 Ok((vec![Command::Remove { entity: id }], Some(id)))
             }
             Command::Remove { entity } => {
@@ -439,6 +480,10 @@ impl Sim {
                 if matches!(b.role, Role::Hub) {
                     return Err(CommandError::Locked);
                 }
+                // Track can't be lifted from under a train.
+                if b.role.is_track() && self.train_on(e.pos) {
+                    return Err(CommandError::Blocked);
+                }
                 let recipe = match &self.states[entity.0 as usize] {
                     Some(State::Crafter(c)) if c.fixed => c.recipe,
                     _ => None,
@@ -446,21 +491,51 @@ impl Sim {
                 for &(i, n) in &b.cost {
                     self.stock[i as usize] += n;
                 }
-                let undo = Command::Place {
+                let mut undo = vec![Command::Place {
                     building: b.id.clone(),
                     pos: e.pos,
                     dir: e.dir,
                     recipe: recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
-                };
+                }];
+                let track = b.role.is_track();
+                if let Some(State::Train(t)) = &self.states[entity.0 as usize] {
+                    // Its cargo comes back too; undo gives back the train and its schedule.
+                    for &(i, n) in &t.cargo {
+                        self.stock[i as usize] += n;
+                    }
+                    if !t.schedule.is_empty() {
+                        undo.push(Command::SetSchedule {
+                            entity: *entity,
+                            stops: t.schedule.clone(),
+                        });
+                    }
+                    let at = t.at;
+                    self.undock(at, *entity);
+                    self.rails.trains.retain(|x| x != entity);
+                }
                 self.unpair(*entity);
                 self.entities.remove(*entity);
                 self.states[entity.0 as usize] = None;
                 self.regrid(e.kind);
                 // Splitting a segment never mixes fluids.
                 let _ = self.refluid(e.kind);
-                Ok((vec![undo], None))
+                if track {
+                    self.rebuild_blocks();
+                }
+                Ok((undo, None))
             }
             Command::Rotate { entity, dir } => {
+                if let Some(State::Train(t)) = self
+                    .states
+                    .get_mut(entity.0 as usize)
+                    .and_then(Option::as_mut)
+                {
+                    if t.to.is_some() {
+                        return Err(CommandError::Blocked);
+                    }
+                    t.heading = *dir;
+                    t.path.clear();
+                }
                 let e = self
                     .entities
                     .get_mut(*entity)
@@ -568,6 +643,32 @@ impl Sim {
                 };
                 Ok((vec![undo], None))
             }
+            Command::SetSchedule { entity, stops } => {
+                if self.entities.get(*entity).is_none() {
+                    return Err(CommandError::NoSuchEntity);
+                }
+                let Some(Some(State::Train(t))) = self.states.get_mut(entity.0 as usize) else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let old = std::mem::replace(&mut t.schedule, stops.clone());
+                // A new schedule starts from its first stop; a train between
+                // tiles finishes its step first.
+                t.next = 0;
+                t.path.clear();
+                t.wait = 0;
+                if t.to.is_none() {
+                    t.phase = rails::Phase::Idle;
+                }
+                let at = t.at;
+                self.undock(at, *entity);
+                Ok((
+                    vec![Command::SetSchedule {
+                        entity: *entity,
+                        stops: old,
+                    }],
+                    None,
+                ))
+            }
         }
     }
 
@@ -638,6 +739,9 @@ impl Sim {
             Role::Pump { .. } => State::Pump,
             Role::Well { .. } => State::Well,
             Role::Engine { .. } => State::Engine { share: 0 },
+            Role::Rail { .. } => State::Rail,
+            Role::Stop => State::Stop { docked: None },
+            Role::Train { .. } => State::Train(rails::Train::default()),
         }
     }
 
@@ -829,6 +933,14 @@ impl Sim {
                 .entities
                 .get(EntityId(i as u32))
                 .expect("state implies entity");
+            if let (State::Train(t), Role::Train { per_tick, capacity }) =
+                (&mut state, &self.tables.buildings[e.kind as usize].role)
+            {
+                let (speed, capacity) = (*per_tick, *capacity);
+                self.step_train(EntityId(i as u32), t, capacity, speed);
+                self.states[i] = Some(state);
+                continue;
+            }
             let go = self.tables.buildings[e.kind as usize].power == 0
                 || power::runs(self.tick, self.grids.sat(i));
             self.step_one(&e, &mut state, go);
@@ -840,7 +952,14 @@ impl Sim {
     fn step_one(&mut self, e: &Entity, state: &mut State, go: bool) {
         let front = e.pos.step(e.dir);
         match state {
-            State::Hub | State::Pole | State::Generator | State::Pipe | State::PipeTunnel(_) => {}
+            State::Hub
+            | State::Pole
+            | State::Generator
+            | State::Pipe
+            | State::PipeTunnel(_)
+            | State::Rail
+            | State::Stop { .. }
+            | State::Train(_) => {}
             State::Pump => {
                 let Role::Pump { per_tick } = self.tables.buildings[e.kind as usize].role else {
                     return;
@@ -1167,6 +1286,7 @@ impl Sim {
                 }
                 mask
             }
+            Some(State::Rail | State::Stop { .. }) => self.track_links(e.pos),
             _ => 0,
         }
     }
@@ -1190,6 +1310,10 @@ impl Sim {
         let Some(state) = self.states[id.0 as usize].as_mut() else {
             return false;
         };
+        if let State::Stop { docked } = state {
+            let docked = *docked;
+            return self.load_train(docked, item);
+        }
         match state {
             State::Hub => {
                 self.stock[item as usize] += 1;
@@ -1217,7 +1341,10 @@ impl Sim {
             | State::PipeTunnel(_)
             | State::Pump
             | State::Well
-            | State::Engine { .. } => false,
+            | State::Engine { .. }
+            | State::Rail
+            | State::Stop { .. }
+            | State::Train(_) => false,
             State::Splitter { held, .. } => {
                 // Only from behind.
                 if dir != target.dir || held.is_some() {
@@ -1310,6 +1437,12 @@ impl Sim {
         for (id, e) in self.entities.iter() {
             let b = &self.tables.buildings[e.kind as usize];
             let slot = id.0 as usize;
+            if let (Some(State::Train(t)), Role::Train { capacity, .. }) =
+                (self.states[slot].as_ref(), &b.role)
+            {
+                snap.trains.push(self.train_view(id, b, t, *capacity));
+                continue;
+            }
             let (state, progress, recipe) = match self.states[id.0 as usize].as_ref() {
                 Some(State::Splitter {
                     held: Some(item), ..
@@ -1500,6 +1633,39 @@ impl Sim {
         snap
     }
 
+    fn train_view(
+        &self,
+        id: EntityId,
+        b: &tables::Building,
+        t: &rails::Train,
+        capacity: u32,
+    ) -> TrainView {
+        let item = |i: Item| self.tables.items[i as usize].clone();
+        TrainView {
+            id,
+            building: b.id.clone(),
+            pos: t.at,
+            dir: t.heading,
+            along: if t.to.is_some() {
+                t.along as f32 / UNIT as f32
+            } else {
+                0.0
+            },
+            cargo: t.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
+            capacity,
+            schedule: t.schedule.clone(),
+            next: t.next,
+            state: match t.phase {
+                rails::Phase::Idle => TrainState::Idle,
+                rails::Phase::Moving => TrainState::Moving,
+                rails::Phase::Waiting => TrainState::Waiting,
+                rails::Phase::Loading => TrainState::Loading,
+                rails::Phase::Unloading => TrainState::Unloading,
+                rails::Phase::NoPath => TrainState::NoPath,
+            },
+        }
+    }
+
     /// The goal the player is on, from 0; the number of goals once all are met.
     pub fn goal(&self) -> u16 {
         self.goal
@@ -1539,5 +1705,7 @@ impl Sim {
     }
 }
 
+#[cfg(test)]
+mod rail_tests;
 #[cfg(test)]
 mod tests;

@@ -1,0 +1,29 @@
+// An ore train (T47): four drills at 1.2 s an ore mine 200 iron ore a
+// minute onto a 40-tile belt into a stop at the west end of a 52-tile
+// line. A locomotive (200 ore, 8 tiles a second) loads there until full,
+// runs to the stop at the east end and unloads into the hub. The round
+// trip away from the mine is about 16 s, which the belt holds (about 120
+// ore), so the drills never stop: 200 a minute reach the hub.
+(
+    name: "Ore train",
+    stock: [("iron-plate", 500), ("steel", 500), ("circuit", 200), ("motor", 50), ("brick", 50)],
+    ore: [(47, 5, "iron-ore"), (48, 5, "iron-ore"), (49, 5, "iron-ore"), (50, 5, "iron-ore")],
+    research: ["steel-working", "motors", "logistics", "railways"],
+    build: [
+        At(building: "hub", x: 60, y: 0, dir: East),
+        At(building: "train-stop", x: 10, y: 3, dir: North),
+        Line(building: "rail", x: 11, y: 3, len: 50, dir: East),
+        // The east stop faces north, into the hub.
+        At(building: "train-stop", x: 61, y: 3, dir: North),
+        At(building: "belt", x: 10, y: 4, dir: North),
+        Belts(x: 50, y: 4, len: 40, dir: West),
+        At(building: "drill", x: 47, y: 5, dir: North),
+        At(building: "drill", x: 48, y: 5, dir: North),
+        At(building: "drill", x: 49, y: 5, dir: North),
+        At(building: "drill", x: 50, y: 5, dir: North),
+        Train(building: "locomotive", x: 12, y: 3, dir: West, stops: [(10, 3, true), (61, 3, false)]),
+    ],
+    warmup_seconds: 120,
+    measure_seconds: 1200,
+    expect: [(item: "iron-ore", per_minute: 200.0, tolerance: 10.0)],
+)

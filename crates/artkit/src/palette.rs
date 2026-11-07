@@ -93,6 +93,16 @@ pub const PETALS: [Rgba; 3] = [
     [0xe0, 0x8c, 0xa8, 0xff],
     [0xe6, 0xe8, 0xea, 0xff],
 ];
+/// Track: the gravel bed, the wooden sleepers, the steel rails and their lit top.
+pub const BALLAST: Rgba = [0x2b, 0x2f, 0x33, 0xff];
+pub const SLEEPER: Rgba = [0x50, 0x41, 0x34, 0xff];
+pub const RAIL: Rgba = [0x8f, 0x9a, 0xa5, 0xff];
+pub const RAIL_TOP: Rgba = [0xc9, 0xd1, 0xd8, 0xff];
+/// A signal's go lamp; its stop lamp is [`STARVE`].
+pub const GO: Rgba = [0x5c, 0xd6, 0x7c, 0xff];
+/// A locomotive's paint and its darker roof.
+pub const LOCO: Rgba = [0xd9, 0x7a, 0x2e, 0xff];
+pub const LOCO_ROOF: Rgba = [0x8c, 0x4a, 0x1d, 0xff];
 
 /// `c` with its alpha scaled by `a` (0 to 1).
 pub fn alpha(c: Rgba, a: f32) -> Rgba {

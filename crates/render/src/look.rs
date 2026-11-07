@@ -10,6 +10,7 @@ use crate::atlas::{Atlas, BANDS};
 use crate::palette::{self, Rgba};
 use mofact_artkit::belt::{self, Bend, Joins};
 use mofact_artkit::draw::{self, Pose, Shape};
+use mofact_artkit::rail;
 use mofact_artkit::Canvas;
 use mofact_core::content::{BuildingRole, Content, IconShape};
 use mofact_core::geom::Dir;
@@ -134,6 +135,20 @@ enum Art {
     Badge {
         starved: bool,
     },
+    /// Track joined on the sides in `links`, as pipes are.
+    Rail {
+        links: u8,
+    },
+    Signal {
+        links: u8,
+    },
+    Stop {
+        links: u8,
+    },
+    StopIcon,
+    /// A stop's platform, facing east and turned.
+    Platform,
+    Locomotive,
     /// 0 a dot, 1 a ring, 2 a bar.
     Fx(u8),
 }
@@ -165,6 +180,12 @@ enum Kind {
     /// Refineries and chemical plants are crafters too, lit while working.
     Refinery,
     ChemicalPlant,
+    /// Track is painted once per set of joined sides, as pipes are; a
+    /// stop's platform and trains face east and are turned.
+    Rail,
+    Signal,
+    Stop,
+    Train,
 }
 
 impl Kind {
@@ -367,6 +388,10 @@ impl Look {
                 BuildingRole::UndergroundPipe { .. } => (Kind::UndergroundPipe, Vec::new()),
                 BuildingRole::Well { .. } => (Kind::Well, Vec::new()),
                 BuildingRole::Engine { .. } => (Kind::Engine, Vec::new()),
+                BuildingRole::Rail => (Kind::Rail, Vec::new()),
+                BuildingRole::RailSignal => (Kind::Signal, Vec::new()),
+                BuildingRole::TrainStop => (Kind::Stop, Vec::new()),
+                BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -450,6 +475,21 @@ impl Look {
                     push(&mut look, format!("{id}:fluid"), b.size, Art::TankFluid);
                 }
                 Kind::Pump => push(&mut look, id.to_owned(), b.size, Art::Pump),
+                Kind::Rail | Kind::Signal | Kind::Stop => {
+                    for links in 0..16u8 {
+                        let art = match kind {
+                            Kind::Rail => Art::Rail { links },
+                            Kind::Signal => Art::Signal { links },
+                            _ => Art::Stop { links },
+                        };
+                        push(&mut look, format!("{id}:{links}"), b.size, art);
+                    }
+                    if kind == Kind::Stop {
+                        push(&mut look, format!("{id}:icon"), b.size, Art::StopIcon);
+                        push(&mut look, format!("{id}:platform"), b.size, Art::Platform);
+                    }
+                }
+                Kind::Train => push(&mut look, id.to_owned(), b.size, Art::Locomotive),
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -614,8 +654,27 @@ impl Look {
                     | Kind::Underground
                     | Kind::Pump
                     | Kind::UndergroundPipe
+                    | Kind::Train
             )
         })
+    }
+
+    /// Whether `building` is a train, which rides on track and is drawn
+    /// from the snapshot's trains.
+    pub fn is_train(&self, building: &BuildingId) -> bool {
+        self.buildings
+            .get(building)
+            .is_some_and(|b| b.kind == Kind::Train)
+    }
+
+    /// The platform drawn over a train stop, facing east and turned the
+    /// way the stop faces: the side it unloads out of.
+    pub fn platform(&self, building: &BuildingId) -> Option<&str> {
+        let b = self.buildings.get(building)?;
+        if b.kind != Kind::Stop {
+            return None;
+        }
+        self.sprites.get(b.base + 17).map(|s| s.name.as_str())
     }
 
     /// How `building` shows it is working.
@@ -645,6 +704,10 @@ impl Look {
                     | Kind::Pipe
                     | Kind::Tank
                     | Kind::UndergroundPipe
+                    | Kind::Rail
+                    | Kind::Signal
+                    | Kind::Stop
+                    | Kind::Train
             )
         })
     }
@@ -661,7 +724,7 @@ impl Look {
         links: u8,
     ) -> Option<&str> {
         let b = self.buildings.get(building)?;
-        if b.kind != Kind::Pipe {
+        if !matches!(b.kind, Kind::Pipe | Kind::Rail | Kind::Signal | Kind::Stop) {
             return self.sprite(building, dir, setting, working);
         }
         let at = b.base + usize::from(links & 15);
@@ -712,8 +775,10 @@ impl Look {
             Kind::Belt => return Some(BELT),
             Kind::Hub | Kind::Pole | Kind::Generator | Kind::Splitter => b.base,
             Kind::Tank | Kind::Pump | Kind::Well | Kind::Engine => b.base,
-            // A pipe on its own, as an icon or a ghost, runs east to west.
-            Kind::Pipe => b.base + 5,
+            // A pipe or rail on its own, as an icon or a ghost, runs east to west.
+            Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
+            Kind::Stop => b.base + 16,
+            Kind::Train => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
@@ -873,6 +938,12 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             draw::item(&mut c, shape, color, s / 2.0, s / 2.0, s * 0.64, !fine);
         }
         Art::Badge { starved } => draw::badge(&mut c, w as f32 / 2.0, starved),
+        Art::Rail { links } => rail::rail(&mut c, z, fine, links),
+        Art::Signal { links } => rail::signal(&mut c, z, fine, links),
+        Art::Stop { links } => rail::stop(&mut c, z, fine, links),
+        Art::StopIcon => rail::stop_icon(&mut c, z, fine),
+        Art::Platform => rail::platform(&mut c, z, fine),
+        Art::Locomotive => rail::locomotive(&mut c, z, fine),
         Art::Fx(0) => draw::fx_dot(&mut c, w as f32),
         Art::Fx(1) => draw::fx_ring(&mut c, w as f32),
         Art::Fx(_) => draw::fx_bar(&mut c, w as f32, h as f32),

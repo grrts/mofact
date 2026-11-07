@@ -64,4 +64,15 @@
     // Plastic's first use: an assembler twice as fast, light enough to need power.
     (id: "fast-assembler", name: "Fast assembler", size: (1, 1), role: Crafter(categories: ["assembling"], speed: 2.0), power: 90.0,
         cost: [(item: "plastic", count: 10), (item: "motor", count: 2), (item: "circuit", count: 10)]),
+    // Railways (T46-T47): track joins whatever track is beside it; signals
+    // split it into blocks one train at a time; trains load at stops from
+    // belts pointed in, and unload out of the side a stop faces.
+    (id: "rail",       name: "Rail",       size: (1, 1), role: Rail,
+        cost: [(item: "steel", count: 1), (item: "iron-plate", count: 1)]),
+    (id: "rail-signal", name: "Rail signal", size: (1, 1), role: RailSignal,
+        cost: [(item: "steel", count: 1), (item: "circuit", count: 2)]),
+    (id: "train-stop", name: "Train stop", size: (1, 1), role: TrainStop,
+        cost: [(item: "steel", count: 5), (item: "circuit", count: 5), (item: "brick", count: 5)]),
+    (id: "locomotive", name: "Locomotive", size: (1, 1), role: Locomotive(tiles_per_second: 8.0, capacity: 200),
+        cost: [(item: "steel", count: 20), (item: "motor", count: 10), (item: "circuit", count: 10)]),
 ]

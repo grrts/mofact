@@ -156,7 +156,8 @@ fn remap_entry(e: &mut Entry, old: EntityId, new: EntityId) {
     for step in &mut e.0 {
         if let Command::Remove { entity }
         | Command::Rotate { entity, .. }
-        | Command::SetRecipe { entity, .. } = &mut step.command
+        | Command::SetRecipe { entity, .. }
+        | Command::SetSchedule { entity, .. } = &mut step.command
         {
             if *entity == old {
                 *entity = new;

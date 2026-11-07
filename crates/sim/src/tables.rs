@@ -66,6 +66,24 @@ pub enum Role {
         fluid: Item,
         per_tick: u64,
     },
+    /// A rail tile; a signal bounds the blocks of track either side of it.
+    Rail {
+        signal: bool,
+    },
+    /// A train stop: a rail tile trains stop at to load and unload.
+    Stop,
+    /// A train, which moves `per_tick` position units a tick along rails.
+    Train {
+        per_tick: u32,
+        capacity: u32,
+    },
+}
+
+impl Role {
+    /// Whether trains run over it: rails, signals and stops.
+    pub fn is_track(&self) -> bool {
+        matches!(self, Role::Rail { .. } | Role::Stop)
+    }
 }
 
 /// What a goal wants, interned.
@@ -245,6 +263,16 @@ impl Tables {
                     watts: watts(*kw),
                     fluid: t.item(fluid).unwrap_or(0),
                     per_tick: (milli(*per_second) / TICKS_PER_SECOND as u64).max(1),
+                },
+                BuildingRole::Rail => Role::Rail { signal: false },
+                BuildingRole::RailSignal => Role::Rail { signal: true },
+                BuildingRole::TrainStop => Role::Stop,
+                BuildingRole::Locomotive {
+                    tiles_per_second,
+                    capacity,
+                } => Role::Train {
+                    per_tick: per_tick(*tiles_per_second).max(1),
+                    capacity: *capacity,
                 },
             };
             t.buildings.push(Building {

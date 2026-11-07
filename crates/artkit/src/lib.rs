@@ -10,6 +10,7 @@ pub mod belt;
 pub mod canvas;
 pub mod draw;
 pub mod palette;
+pub mod rail;
 
 pub use canvas::Canvas;
 pub use draw::{Pose, Shape};

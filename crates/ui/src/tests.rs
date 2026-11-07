@@ -35,6 +35,28 @@ fn snapshot() -> Snapshot {
         grids: Vec::new(),
         goal: None,
         cleared: Default::default(),
+        trains: vec![train()],
+    }
+}
+
+/// A train part loaded, bound for the second of three stops.
+fn train() -> mofact_core::snapshot::TrainView {
+    use mofact_core::command::TrainStop;
+    let stop = |x, load| TrainStop {
+        at: TilePos::new(x, 9),
+        load,
+    };
+    mofact_core::snapshot::TrainView {
+        id: EntityId(10),
+        building: "locomotive".into(),
+        pos: TilePos::new(3, 9),
+        dir: Dir::East,
+        along: 0.5,
+        cargo: vec![("iron-ore".into(), 120)],
+        capacity: 200,
+        schedule: vec![stop(0, true), stop(20, false), stop(40, false)],
+        next: 1,
+        state: mofact_core::snapshot::TrainState::Moving,
     }
 }
 
@@ -213,6 +235,69 @@ fn the_inspect_sheet_sets_recipes_turns_and_removes() {
         })]
     );
     assert_eq!(f.hud.selected(), None);
+}
+
+#[test]
+fn the_train_sheet_sets_up_a_schedule_by_touch() {
+    use mofact_core::command::TrainStop;
+    let mut f = Fixture::new();
+    f.hud.select(Some(EntityId(10)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let stops = train().schedule;
+    // Tapping a stop's pill switches it between loading and unloading.
+    let mut flipped = stops.clone();
+    flipped[1].load = true;
+    let pill = f.find(&Hit::Schedule(EntityId(10), flipped.clone()));
+    assert_eq!(
+        f.tap(centre(pill)).1,
+        vec![Action::Send(Command::SetSchedule {
+            entity: EntityId(10),
+            stops: flipped
+        })]
+    );
+    // × drops it.
+    let mut without = stops.clone();
+    without.remove(2);
+    let x = f.find(&Hit::Schedule(EntityId(10), without.clone()));
+    assert_eq!(
+        f.tap(centre(x)).1,
+        vec![Action::Send(Command::SetSchedule {
+            entity: EntityId(10),
+            stops: without
+        })]
+    );
+    // Add stop waits for a stop to be tapped on the map; a second tap gives up.
+    let add = f.find(&Hit::PickStop(EntityId(10)));
+    f.tap(centre(add));
+    assert_eq!(f.hud.picking_stop(), Some(EntityId(10)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let cancel = f.find(&Hit::PickStop(EntityId(10)));
+    f.tap(centre(cancel));
+    assert_eq!(f.hud.picking_stop(), None);
+    // A new stop loads after one that unloads.
+    let added = add_stop(&stops, TilePos::new(7, 7));
+    assert_eq!(
+        added.last(),
+        Some(&TrainStop {
+            at: TilePos::new(7, 7),
+            load: true
+        })
+    );
+    // Closing the sheet drops the pick too.
+    f.hud.picking = Some(EntityId(10));
+    f.hud.select(None);
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    assert_eq!(f.hud.picking_stop(), None);
+    // Remove takes the train away.
+    f.hud.select(Some(EntityId(10)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let remove = f.find(&Hit::Remove(EntityId(10)));
+    assert_eq!(
+        f.tap(centre(remove)).1,
+        vec![Action::Send(Command::Remove {
+            entity: EntityId(10)
+        })]
+    );
 }
 
 #[test]
@@ -745,7 +830,15 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
     for (size, scale) in SCREENS {
         for tool in &tools {
             for state in [
-                "plain", "inspect", "research", "build", "radial", "recipes", "problems",
+                "plain",
+                "inspect",
+                "research",
+                "build",
+                "radial",
+                "recipes",
+                "problems",
+                "train",
+                "train-pick",
             ] {
                 let mut f = Fixture::new();
                 f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
@@ -760,6 +853,11 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                     "radial" => f.hud.radial = Some([size.0 as f32 / 2.0, size.1 as f32 / 2.0]),
                     "recipes" => f.hud.browse = Some("iron-plate".into()),
                     "problems" => f.hud.problems = true,
+                    "train" => f.hud.select(Some(EntityId(10))),
+                    "train-pick" => {
+                        f.hud.select(Some(EntityId(10)));
+                        f.hud.picking = Some(EntityId(10));
+                    }
                     _ => {}
                 }
                 // Lay out once so the problems list knows what is stuck.
