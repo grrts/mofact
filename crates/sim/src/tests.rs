@@ -1408,3 +1408,30 @@ fn water_and_cliffs_block_and_trees_block_until_cleared() {
         CommandResult::Applied { .. }
     ));
 }
+
+#[test]
+fn drills_run_patches_dry_and_saves_keep_what_is_left() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.add_stock(&item("iron-plate"), 10_000);
+    let t = TilePos::new(0, 0);
+    sim.set_ore_amount(t, &item("iron-ore"), 3);
+    let drill = place(&mut sim, "drill", t.x, t.y, Dir::East, None);
+    for x in 1..=4 {
+        place(&mut sim, "belt", x, 0, Dir::East, None);
+    }
+    run(&mut sim, 3);
+    let left = sim.ore_left(t).expect("ore still under the drill");
+    assert!(left < 3, "the drill mined some");
+    // A save part way through keeps the amount left.
+    let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+    assert_eq!(loaded.ore_left(t), Some(left));
+    run(&mut sim, 40);
+    assert_eq!(sim.ore_left(t), None, "the tile ran dry");
+    assert_eq!(*sim.snapshot().depleted, vec![t]);
+    assert!(sim.inventory(drill).is_empty(), "nothing left to hand on");
+    assert_eq!(state_of(&sim, drill), MachineState::Starved);
+    assert_eq!(sim.ore_at(t), None);
+    let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+    assert_eq!(*loaded.snapshot().depleted, vec![t]);
+}

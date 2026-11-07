@@ -51,6 +51,16 @@ pub enum Terrain {
     Scrub = 5,
     Rock = 6,
     Cliff = 7,
+    /// Desert sand.
+    Dune = 8,
+    /// Tundra.
+    Snow = 9,
+    /// Frozen lakes and rivers in the tundra: firm enough to build on.
+    Ice = 10,
+    /// The volcanic lands: ash plains, black rock and lava.
+    Ash = 11,
+    Basalt = 12,
+    Lava = 13,
 }
 
 impl Terrain {
@@ -59,10 +69,63 @@ impl Terrain {
         matches!(self, Terrain::DeepWater | Terrain::Water)
     }
 
-    /// Nothing can be built here: water and cliffs.
+    /// Nothing can be built here: water, cliffs and lava.
     pub fn blocks(self) -> bool {
-        self.is_water() || self == Terrain::Cliff
+        self.is_water() || matches!(self, Terrain::Cliff | Terrain::Lava)
     }
+}
+
+/// The great regions of the map, in rings that get further out with each
+/// tier: grassland around the start, then desert, tundra and volcanic land
+/// (R12, R13). Each holds one ore found nowhere else.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Biome {
+    Grassland = 0,
+    Desert = 1,
+    Tundra = 2,
+    Volcanic = 3,
+}
+
+impl Biome {
+    /// The fewest tiles from the start each biome can begin.
+    pub const RINGS: [(Biome, f64); 3] = [
+        (Biome::Volcanic, 1_600.0),
+        (Biome::Tundra, 1_000.0),
+        (Biome::Desert, 450.0),
+    ];
+
+    /// The resource found only here: resources after the first four
+    /// (iron, copper, stone, coal) belong to desert, tundra and volcanic
+    /// land in that order (bauxite, titanium, rare earths).
+    pub fn exclusive(self) -> Option<u8> {
+        match self {
+            Biome::Grassland => None,
+            Biome::Desert => Some(4),
+            Biome::Tundra => Some(5),
+            Biome::Volcanic => Some(6),
+        }
+    }
+}
+
+/// Which biome a tile lies in. Each ring starts at its distance and pushes
+/// further out in places, so its edge wanders but is never nearer.
+pub fn biome_at(gen: &WorldGen, t: TilePos) -> Biome {
+    let s = gen.seed;
+    let reach = from_start(t) - 260.0 * value_noise(s ^ 0xb10e, t.x, t.y, 180);
+    let region = value_noise(s ^ 0x4e61, t.x, t.y, 240);
+    let other = value_noise(s ^ 0x0717, t.x, t.y, 320);
+    for (biome, ring) in Biome::RINGS {
+        let share = match biome {
+            Biome::Volcanic => region > 0.55,
+            Biome::Tundra => other > 0.45,
+            _ => region < 0.6,
+        };
+        if reach > ring && share {
+            return biome;
+        }
+    }
+    Biome::Grassland
 }
 
 /// Small things lying on the land, for looks only.
@@ -304,11 +367,14 @@ pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
         value_noise(s ^ 0x41fe, t.x, t.y, 150) + 0.25 * value_noise(s ^ 0x7e77, t.x, t.y, 40);
     let river = (bend - 0.625).abs();
     let lowland = (0.34..0.64).contains(&height) && keep < 0.2;
-    if lowland && river < 0.009 {
-        return (Terrain::Water, 200);
-    }
-    if lowland && river < 0.016 {
-        return (Terrain::Sand, 140);
+    if lowland && (river < 0.009 || river < 0.016) {
+        let biome = biome_at(gen, t);
+        let terrain = if river < 0.009 {
+            in_biome(biome, Terrain::Water, wet)
+        } else {
+            in_biome(biome, Terrain::Sand, wet)
+        };
+        return (terrain, if river < 0.009 { 200 } else { 140 });
     }
     // Cliffs: ragged lines along the highland contours, with gaps to pass through.
     if height > 0.56 && keep < 0.2 && value_noise(s ^ 0xc11f, t.x, t.y, 14) > 0.4 {
@@ -338,7 +404,29 @@ pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
         Terrain::DeepWater | Terrain::Water => height / 0.335,
         _ => 0.5 * value_noise(s ^ 0x5ade, t.x, t.y, 6) + 0.5 * wet,
     };
+    let terrain = in_biome(biome_at(gen, t), terrain, wet);
     (terrain, (shade.clamp(0.0, 1.0) * 255.0) as u8)
+}
+
+/// What a grassland terrain becomes in another biome.
+fn in_biome(biome: Biome, terrain: Terrain, wet: f64) -> Terrain {
+    use Terrain::*;
+    match (biome, terrain) {
+        (Biome::Grassland, t) | (_, t @ (Cliff | Rock)) => t,
+        // Desert: dunes, with an oasis of grass where it is wettest.
+        (Biome::Desert, Forest) if wet > 0.7 => Grass,
+        (Biome::Desert, Water | DeepWater) => terrain,
+        (Biome::Desert, Forest) => Scrub,
+        (Biome::Desert, _) => Dune,
+        // Tundra: snow, with frozen lakes; forest stays as dark taiga.
+        (Biome::Tundra, Water | DeepWater) => Ice,
+        (Biome::Tundra, Forest) => Forest,
+        (Biome::Tundra, _) => Snow,
+        // Volcanic: lava where the lakes would be, ash and black rock.
+        (Biome::Volcanic, Water | DeepWater) => Lava,
+        (Biome::Volcanic, Forest | Grass) if wet > 0.5 => Basalt,
+        (Biome::Volcanic, _) => Ash,
+    }
 }
 
 /// Trees, bushes and stones: how thick they lie on each terrain, in 1/1000ths.
@@ -350,7 +438,11 @@ fn decor_at(gen: &WorldGen, t: TilePos, terrain: Terrain) -> Option<Decor> {
         Terrain::Scrub => &[(Bush, 40), (Stone, 35), (Tuft, 80), (Pine, 10)],
         Terrain::Sand => &[(Stone, 20), (Tuft, 25)],
         Terrain::Rock => &[(Boulder, 90), (Stone, 110), (Pine, 15)],
-        Terrain::Water | Terrain::DeepWater | Terrain::Cliff => &[],
+        Terrain::Dune => &[(Stone, 15), (Tuft, 18), (Boulder, 8)],
+        Terrain::Snow => &[(Pine, 50), (Stone, 20), (Boulder, 15)],
+        Terrain::Ash => &[(Stone, 40), (Boulder, 25)],
+        Terrain::Basalt => &[(Boulder, 50), (Stone, 60)],
+        Terrain::Water | Terrain::DeepWater | Terrain::Cliff | Terrain::Ice | Terrain::Lava => &[],
     };
     // Groves: trees bunch together rather than lying evenly.
     let grove = value_noise(gen.seed ^ 0x6a0e, t.x, t.y, 7);
@@ -402,10 +494,18 @@ fn ore_on_land(gen: &WorldGen, t: TilePos) -> Option<Ore> {
     if d >= 1.0 {
         return None;
     }
-    let resource = pick_resource(gen.resources, (h >> 32) % 100);
+    let resource = match biome_at(gen, TilePos::new(px, py)).exclusive() {
+        // Two patches in five in a far biome hold its own ore.
+        Some(own) if own < gen.resources && (h >> 48) % 5 < 2 => own,
+        _ => pick_resource(gen.resources.min(4), (h >> 32) % 100),
+    };
+    // A far biome's own ore stops at the biome's edge.
+    if resource >= 4 && biome_at(gen, t).exclusive() != Some(resource) {
+        return None;
+    }
     // Richest in the middle, and richer the further you go.
     let rich = 1.0 + ((h >> 40) % 100) as f64 / 100.0 + far / 600.0;
-    let amount = (300.0 + 900.0 * rich * (1.0 - d * d)) as u32;
+    let amount = (1200.0 + 3600.0 * rich * (1.0 - d * d)) as u32;
     Some(Ore { resource, amount })
 }
 
@@ -427,6 +527,10 @@ fn pick_resource(resources: u8, roll: u64) -> u8 {
     resources - 1
 }
 
+/// Ore on each tile of a starter patch: a starter iron patch worked by a
+/// handful of drills runs out in about five hours (R14).
+pub const SPAWN_ORE: u32 = 2_500;
+
 /// The starter patches: centre, radius and resource.
 const SPAWN_PATCHES: [(i32, i32, i32, u8); 4] =
     [(-10, 1, 4, 0), (11, 8, 3, 1), (4, 44, 3, 2), (52, 6, 3, 3)];
@@ -443,7 +547,7 @@ fn spawn_patch(gen: &WorldGen, t: TilePos) -> Option<Ore> {
         if dx * dx + dy * dy <= (i64::from(r) + wobble).max(1).pow(2) {
             return Some(Ore {
                 resource,
-                amount: 600,
+                amount: SPAWN_ORE,
             });
         }
     }
@@ -620,7 +724,7 @@ mod tests {
         );
     }
 
-    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 8_404_887_726_163_785_125;
+    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 12_243_604_811_049_948_823;
 
     #[test]
     fn spawn_has_iron_and_copper_close_by() {
@@ -671,6 +775,60 @@ mod tests {
     }
 
     #[test]
+    fn biomes_ring_out_and_keep_their_own_ore() {
+        // Sample a coarse grid out to 2,600 tiles on a few seeds.
+        for seed in 0..6 {
+            let gen = WorldGen::new(seed, 7);
+            let mut nearest = [f64::MAX; 4];
+            let mut own_ore = [false; 3];
+            for y in (-2600..2600).step_by(13) {
+                for x in (-2600..2600).step_by(13) {
+                    let t = TilePos::new(x, y);
+                    let b = biome_at(&gen, t);
+                    let d = from_start(t);
+                    nearest[b as usize] = nearest[b as usize].min(d);
+                    if let Some(o) = ore_at(&gen, t) {
+                        if o.resource >= 4 {
+                            assert_eq!(b.exclusive(), Some(o.resource), "seed {seed} {t:?}");
+                            own_ore[usize::from(o.resource - 4)] = true;
+                        }
+                    }
+                }
+            }
+            assert_eq!(nearest[0], 0.0, "the start is grassland");
+            assert!(nearest[1] >= 450.0, "desert at {}", nearest[1]);
+            assert!(nearest[2] >= 1_000.0, "tundra at {} (R13)", nearest[2]);
+            assert!(nearest[3] >= 1_600.0, "volcanic at {}", nearest[3]);
+            assert!(
+                nearest[1] < 1_200.0 && nearest[2] < 2_000.0,
+                "seed {seed}: {nearest:?}"
+            );
+            assert_eq!(
+                own_ore, [true; 3],
+                "seed {seed}: every far biome has its ore"
+            );
+        }
+    }
+
+    #[test]
+    fn far_patches_are_bigger_and_richer() {
+        let gen = WorldGen::new(3, 4);
+        let patch = |cx: i32, cy: i32| {
+            let mut total = 0u64;
+            for y in cy - 300..cy + 300 {
+                for x in cx - 300..cx + 300 {
+                    total += ore_at(&gen, TilePos::new(x, y)).map_or(0, |o| u64::from(o.amount));
+                }
+            }
+            total
+        };
+        assert!(
+            patch(2_000, 0) > patch(300, 0),
+            "ore near 2,000 tiles out beats ore near the start"
+        );
+    }
+
+    #[test]
     fn worker_generates_requested_chunks_once() {
         let mut g = Generator::spawn(GEN);
         for x in 0..4 {
@@ -691,7 +849,7 @@ mod map_print {
     #[test]
     #[ignore]
     fn print_map() {
-        let g = WorldGen::new(42, 4);
+        let g = WorldGen::new(42, 7);
         let mut counts = std::collections::BTreeMap::new();
         for y in (-80..120).step_by(3) {
             let row: String = (-100..160)
@@ -703,7 +861,7 @@ mod map_print {
                         return '@';
                     }
                     if let Some(o) = t.ore {
-                        return ['I', 'C', 'S', 'K'][usize::from(o.resource)];
+                        return ['I', 'C', 'S', 'K', 'B', 'T', 'R'][usize::from(o.resource)];
                     }
                     match t.terrain {
                         Terrain::DeepWater => '#',
@@ -714,6 +872,12 @@ mod map_print {
                         Terrain::Scrub => ',',
                         Terrain::Rock => '^',
                         Terrain::Cliff => '%',
+                        Terrain::Dune => 'd',
+                        Terrain::Snow => '*',
+                        Terrain::Ice => '=',
+                        Terrain::Ash => 'a',
+                        Terrain::Basalt => 'b',
+                        Terrain::Lava => '!',
                     }
                 })
                 .collect();

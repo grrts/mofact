@@ -146,6 +146,9 @@ struct Crafter {
     blocked: u32,
 }
 
+/// Ore a scenario places by hand: enough for hours of one drill.
+pub const PLACED_ORE: u32 = 10_000;
+
 /// The simulated world.
 #[derive(Default)]
 pub struct Sim {
@@ -154,7 +157,10 @@ pub struct Sim {
     entities: Entities,
     /// Parallel to entity slots; `None` for removed entities.
     states: Vec<Option<State>>,
-    ore: HashMap<TilePos, Item>,
+    /// Ore under drills and placed by hand, and how much each tile has left.
+    ore: HashMap<TilePos, (Item, u32)>,
+    /// Tiles mined out, sorted: generated ore there is gone for good.
+    depleted: std::sync::Arc<Vec<TilePos>>,
     /// The generated map, when the game has one: ore a drill is placed on
     /// is copied into `ore` from here, so saves carry it.
     world: Option<mofact_world::WorldGen>,
@@ -236,17 +242,42 @@ impl Sim {
         self.tick
     }
 
-    /// Put ore of `item` under `pos`. Stands in for world generation until T14.
+    /// Put ore of `item` under `pos`, as a scenario places it by hand.
     pub fn set_ore(&mut self, pos: TilePos, item: &ItemId) {
+        self.set_ore_amount(pos, item, PLACED_ORE);
+    }
+
+    /// Put `amount` ore of `item` under `pos`.
+    pub fn set_ore_amount(&mut self, pos: TilePos, item: &ItemId, amount: u32) {
         if let Some(i) = self.tables.item(item) {
-            self.ore.insert(pos, i);
+            self.ore.insert(pos, (i, amount.max(1)));
         }
+    }
+
+    /// How much ore is left under `pos`, if a drill or a scenario holds it.
+    pub fn ore_left(&self, pos: TilePos) -> Option<u32> {
+        self.ore.get(&pos).map(|&(_, n)| n)
     }
 
     /// Mine the map generated from `seed`, the same one the player sees.
     pub fn set_world(&mut self, seed: u64) {
         let n = self.tables.ores.len() as u8;
         self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n));
+    }
+
+    /// Dig one ore from under `pos`; the tile is mined out when it runs dry.
+    fn mine(&mut self, pos: TilePos) -> Option<Item> {
+        let (item, left) = self.ore.get_mut(&pos)?;
+        let item = *item;
+        *left -= 1;
+        if *left == 0 {
+            self.ore.remove(&pos);
+            let depleted = std::sync::Arc::make_mut(&mut self.depleted);
+            if let Err(at) = depleted.binary_search(&pos) {
+                depleted.insert(at, pos);
+            }
+        }
+        Some(item)
     }
 
     /// Whether a `size` footprint at `pos` stands on open ground: no water
@@ -278,15 +309,19 @@ impl Sim {
     /// The ore under `pos`: placed by hand, or else generated.
     pub fn ore_at(&self, pos: TilePos) -> Option<ItemId> {
         self.ore_item(pos)
-            .map(|i| self.tables.items[i as usize].clone())
+            .map(|(i, _)| self.tables.items[i as usize].clone())
     }
 
-    fn ore_item(&self, pos: TilePos) -> Option<Item> {
-        if let Some(&i) = self.ore.get(&pos) {
-            return Some(i);
+    fn ore_item(&self, pos: TilePos) -> Option<(Item, u32)> {
+        if let Some(&o) = self.ore.get(&pos) {
+            return Some(o);
+        }
+        if self.depleted.binary_search(&pos).is_ok() {
+            return None;
         }
         let ore = mofact_world::ore_at(self.world.as_ref()?, pos)?;
-        self.tables.ores.get(usize::from(ore.resource)).copied()
+        let item = *self.tables.ores.get(usize::from(ore.resource))?;
+        Some((item, ore.amount))
     }
 
     pub fn add_stock(&mut self, item: &ItemId, n: u32) {
@@ -1060,7 +1095,7 @@ impl Sim {
                     *prog += u32::from(go);
                     if *prog >= ticks {
                         *prog = 0;
-                        *out = self.ore.get(&e.pos).copied();
+                        *out = self.mine(e.pos);
                     }
                 } else {
                     *waiting += 1;
@@ -1432,6 +1467,7 @@ impl Sim {
             // Belts hold up to four items; most hold one or two.
             belt_items: Vec::with_capacity(self.states.len() * 2),
             cleared: self.cleared.clone(),
+            depleted: self.depleted.clone(),
             ..Snapshot::default()
         };
         for (id, e) in self.entities.iter() {
@@ -1490,6 +1526,9 @@ impl Sim {
                     };
                     let st = if out.is_some() && *waiting > BLOCKED_AFTER {
                         MachineState::Blocked
+                    } else if out.is_none() && !self.ore.contains_key(&e.pos) {
+                        // Mined out: nothing left to dig.
+                        MachineState::Starved
                     } else {
                         MachineState::Working
                     };
@@ -1570,7 +1609,7 @@ impl Sim {
                 ore: matches!(b.role, Role::Miner { .. })
                     .then(|| self.ore.get(&e.pos))
                     .flatten()
-                    .map(|&i| self.tables.items[i as usize].clone()),
+                    .map(|&(i, _)| self.tables.items[i as usize].clone()),
                 grid: self.grids.grid(slot),
                 exit: matches!(
                     self.states[slot],

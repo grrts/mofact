@@ -107,6 +107,16 @@ fn land(kind: f32, shade: f32) -> vec3<f32> {
         c = vec3<f32>(0.247, 0.259, 0.271); // rock
     } else if kind == 7.0 {
         c = vec3<f32>(0.141, 0.129, 0.122); // cliff face
+    } else if kind == 8.0 {
+        c = vec3<f32>(0.431, 0.353, 0.227); // dune
+    } else if kind == 9.0 {
+        c = vec3<f32>(0.604, 0.647, 0.675); // snow
+    } else if kind == 10.0 {
+        c = vec3<f32>(0.435, 0.561, 0.627); // ice
+    } else if kind == 11.0 {
+        c = vec3<f32>(0.231, 0.212, 0.204); // ash
+    } else if kind == 12.0 || kind == 13.0 {
+        c = vec3<f32>(0.165, 0.165, 0.180); // basalt, also the crust round lava
     }
     return c * (0.9 + 0.2 * shade);
 }
@@ -167,6 +177,20 @@ fn fs_ground(@builtin(position) frag: vec4<f32>) -> @location(0) vec4<f32> {
     // A pale rim along the shore.
     water = mix(water, vec3<f32>(0.42, 0.55, 0.58), (1.0 - smoothstep(0.5, 0.62, w.x)) * 0.55);
     c = mix(c, water, wet);
+
+    // Lava: a glowing flow under a cracked dark crust, pulsing slowly.
+    let lv = mix(
+        mix(select(0.0, 1.0, t00.x == 13.0), select(0.0, 1.0, t10.x == 13.0), fl.x),
+        mix(select(0.0, 1.0, t01.x == 13.0), select(0.0, 1.0, t11.x == 13.0), fl.x),
+        fl.y,
+    );
+    let ledge = max(fwidth(lv), 0.02);
+    let molten = smoothstep(0.5 - ledge, 0.5 + ledge, lv);
+    let flow = patches(world * 0.8 + vec2<f32>(time * 0.15, time * 0.05));
+    let crust = smoothstep(0.35, 0.65, patches(world * 2.2 - vec2<f32>(time * 0.05, 0.0)));
+    var lava = mix(vec3<f32>(0.769, 0.278, 0.110), vec3<f32>(1.0, 0.62, 0.22), flow);
+    lava = mix(lava, vec3<f32>(0.25, 0.09, 0.05), crust * 0.6);
+    c = mix(c, lava, molten);
 
     // A faint grid on land, one pixel wide, fading out below 16 px a tile.
     let gedge = min(fract(world), 1.0 - fract(world)) * ppt;
