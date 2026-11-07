@@ -80,7 +80,26 @@ impl App {
         }
         let size = self.window.size_in_pixels();
         let scale = self.window.display_scale();
+        self.game.safe = self.safe_area(size);
         self.game.frame(size, scale)
+    }
+
+    /// The edges a notch, rounded corners or the home indicator cover, in
+    /// pixels: top, right, bottom, left. None on a plain window.
+    fn safe_area(&self, (pw, ph): (u32, u32)) -> [f32; 4] {
+        let (ww, _) = self.window.size();
+        let Ok(r) = self.window.safe_area() else {
+            return [0.0; 4];
+        };
+        let k = pw as f32 / ww.max(1) as f32;
+        let (x, y) = (r.x() as f32 * k, r.y() as f32 * k);
+        let (w, h) = (r.width() as f32 * k, r.height() as f32 * k);
+        [
+            y.max(0.0),
+            (pw as f32 - x - w).max(0.0),
+            (ph as f32 - y - h).max(0.0),
+            x.max(0.0),
+        ]
     }
 
     /// An SDL event as a pointer event in screen pixels, if it is one.
@@ -491,24 +510,17 @@ fn screenshots(
             scene.band
         );
     }
-    // The HUD on a phone held upright, with each sheet open.
-    let size = (1080, 2340);
-    let camera = Camera {
-        pixels_per_tile: 96.0,
-        ..camera
-    };
-    scene.build(
-        &look,
-        renderer.atlases(),
-        &camera,
-        size,
-        &prev,
-        &latest,
-        0.5,
-    );
-    ore.fill(&camera, size);
-    scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
-    let mut overlay = Overlay::new(&look);
+    // The HUD with each sheet open, on a small phone, a large phone and a
+    // tablet (T40), each held both ways, with their notches and home
+    // indicators: top, right, bottom, left insets in points.
+    let screens: [Screen; 6] = [
+        ("small-phone", (640, 1136), 2.0, [20.0, 0.0, 0.0, 0.0]),
+        ("small-phone-wide", (1136, 640), 2.0, [0.0; 4]),
+        ("phone", (1179, 2556), 3.0, [59.0, 0.0, 34.0, 0.0]),
+        ("phone-wide", (2556, 1179), 3.0, [0.0, 59.0, 21.0, 59.0]),
+        ("tablet", (2048, 2732), 2.0, [24.0, 0.0, 20.0, 0.0]),
+        ("tablet-wide", (2732, 2048), 2.0, [24.0, 0.0, 20.0, 0.0]),
+    ];
     // The problems list needs something stuck: say the machines are starved.
     let mut stuck = latest.clone();
     for e in &mut stuck.entities {
@@ -516,46 +528,69 @@ fn screenshots(
             e.state = mofact_core::snapshot::MachineState::Starved;
         }
     }
-    for sheet in [
-        "toolbar", "build", "research", "radial", "recipes", "problems",
-    ] {
-        let mut hud = Hud::new();
-        match sheet {
-            "build" => hud.toggle_build_sheet(),
-            "research" => hud.toggle_research(),
-            "problems" => hud.toggle_problems(),
-            "recipes" => hud.browse("iron-plate".into()),
-            "radial" => {
-                hud.pointer(Pointer::Down {
-                    id: 1,
-                    x: 540.0,
-                    y: 1100.0,
-                });
-                hud.poll(Instant::now() + mofact_ui::LONG_PRESS);
-            }
-            _ => {}
-        }
-        overlay.clear();
-        let view = View {
-            size,
-            scale: 3.0,
-            content,
-            look: &look,
-            snapshot: if sheet == "problems" { &stuck } else { &latest },
-            tool: &Tool::Hand,
-            dir: mofact_core::geom::Dir::East,
-            recipe: None,
-            belt: &"belt".into(),
-            history: (false, false),
+    let mut overlay = Overlay::new(&look);
+    for (name, size, scale, safe) in screens {
+        let camera = Camera {
+            pixels_per_tile: 32.0 * scale,
+            ..camera
         };
-        hud.draw(&view, &mut overlay);
-        let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
-        let path = dir.join(format!("hud-{sheet}.png"));
-        write_png(&path, size, &pixels)?;
-        println!("{}", path.display());
+        scene.build(
+            &look,
+            renderer.atlases(),
+            &camera,
+            size,
+            &prev,
+            &latest,
+            0.5,
+        );
+        ore.fill(&camera, size);
+        scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+        for sheet in [
+            "toolbar", "build", "research", "radial", "recipes", "problems",
+        ] {
+            let mut hud = Hud::new();
+            match sheet {
+                "build" => hud.toggle_build_sheet(),
+                "research" => hud.toggle_research(),
+                "problems" => hud.toggle_problems(),
+                "recipes" => hud.browse("iron-plate".into()),
+                "radial" => {
+                    hud.pointer(Pointer::Down {
+                        id: 1,
+                        x: size.0 as f32 / 2.0,
+                        y: size.1 as f32 / 2.0,
+                    });
+                    hud.poll(Instant::now() + mofact_ui::LONG_PRESS);
+                }
+                _ => {}
+            }
+            overlay.clear();
+            let view = View {
+                size,
+                scale,
+                content,
+                look: &look,
+                snapshot: if sheet == "problems" { &stuck } else { &latest },
+                tool: &Tool::Hand,
+                dir: mofact_core::geom::Dir::East,
+                recipe: None,
+                belt: &"belt".into(),
+                history: (false, false),
+                safe: safe.map(|v| v * scale),
+            };
+            hud.draw(&view, &mut overlay);
+            let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
+            let path = dir.join(format!("hud-{name}-{sheet}.png"));
+            write_png(&path, size, &pixels)?;
+            println!("{}", path.display());
+        }
     }
     Ok(())
 }
+
+/// A screen to show the HUD on: its name, size in pixels, pixels per point
+/// and the insets its display covers, in points.
+type Screen = (&'static str, (u32, u32), f32, [f32; 4]);
 
 fn write_png(path: &Path, (w, h): (u32, u32), rgba: &[u8]) -> Result<(), String> {
     let file = std::fs::File::create(path).map_err(|e| format!("{}: {e}", path.display()))?;

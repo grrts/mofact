@@ -36,6 +36,9 @@ pub struct Game {
     pub sound: Sound,
     /// When the game started showing, the clock machine animations run on.
     started: Instant,
+    /// The edges of the screen the display covers, in pixels (top, right,
+    /// bottom, left): the platform sets it, and the HUD keeps clear of it.
+    pub safe: [f32; 4],
 }
 
 impl Game {
@@ -67,6 +70,7 @@ impl Game {
             built: Built::new(&content),
             sound: Sound::new(&content),
             started: Instant::now(),
+            safe: [0.0; 4],
             content,
             ore,
             controls,
@@ -189,6 +193,7 @@ impl Game {
             recipe: builder.recipe.as_ref(),
             belt: &builder.belt,
             history: self.sim.history(),
+            safe: self.safe,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(

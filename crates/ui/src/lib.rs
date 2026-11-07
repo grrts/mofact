@@ -31,6 +31,10 @@ const PRESSED: Rgba = [0x3a, 0x44, 0x4f, 0xff];
 const TEXT: Rgba = [0xe9, 0xed, 0xf0, 0xff];
 const MUTED: Rgba = [0x8a, 0x95, 0xa1, 0xff];
 const WORKING: Rgba = [0x63, 0xd4, 0x8a, 0xff];
+/// The least a control's tap target spans, in points (R30): Apple's and
+/// Google's guidance for a fingertip. Smaller controls take taps from a
+/// finger-sized area round them.
+pub const FINGER: f32 = 44.0;
 /// The height of the status chips under the stock, in points.
 const CHIP_H: f32 = 36.0;
 /// A finger that moves further than this (in points) is dragging, not tapping.
@@ -94,6 +98,9 @@ pub struct View<'a> {
     pub belt: &'a BuildingId,
     /// Whether there is an action to undo, and one to redo.
     pub history: (bool, bool),
+    /// The edges the display covers or rounds off (a notch, the home
+    /// indicator), in pixels: top, right, bottom, left.
+    pub safe: [f32; 4],
 }
 
 impl View<'_> {
@@ -273,6 +280,9 @@ pub struct Hud {
     toast: Option<(String, Instant, Rgba)>,
     /// Pixels per point in the last frame.
     unit: f32,
+    /// The least a tap target spans, in pixels, and the screen it is on.
+    finger: f32,
+    screen: [f32; 2],
     /// The toolbar slot of the tool in hand in the last frame.
     current: Option<usize>,
     /// Whether a long press may open the radial menu: only with the hand
@@ -365,12 +375,39 @@ impl Hud {
         self.toast = Some((text.into(), Instant::now(), palette::STARVE));
     }
 
+    /// Where a tap on the control drawn at `r` counts: `r`, grown about
+    /// its centre to a finger across, kept on screen.
+    fn target(&self, r: &Rect) -> Rect {
+        let grow = |at: f32, len: f32, screen: f32| {
+            let want = len.max(self.finger).min(screen);
+            let at = (at - (want - len) / 2.0).clamp(0.0, (screen - want).max(0.0));
+            (at, want)
+        };
+        let (x, w) = grow(r[0], r[2], self.screen[0]);
+        let (y, h) = grow(r[1], r[3], self.screen[1]);
+        [x, y, w, h]
+    }
+
+    /// The control a tap at `p` is for: the topmost drawn under it, or
+    /// failing a button there, the nearest whose finger-sized target holds
+    /// it, among those drawn over whatever panel is under it.
     fn hit(&self, p: [f32; 2]) -> Option<&Hit> {
-        self.hits
+        let under = self.hits.iter().rposition(|(r, _)| inside(r, p));
+        if let Some(at) = under.filter(|&at| self.hits[at].1 != Hit::Block) {
+            return Some(&self.hits[at].1);
+        }
+        let above = under.map_or(0, |at| at + 1);
+        let dist = |r: &Rect| {
+            let dx = (r[0] - p[0]).max(p[0] - r[0] - r[2]).max(0.0);
+            let dy = (r[1] - p[1]).max(p[1] - r[1] - r[3]).max(0.0);
+            dx * dx + dy * dy
+        };
+        self.hits[above..]
             .iter()
-            .rev()
-            .find(|(r, _)| inside(r, p))
+            .filter(|(r, h)| *h != Hit::Block && inside(&self.target(r), p))
+            .min_by(|a, b| dist(&a.0).total_cmp(&dist(&b.0)))
             .map(|(_, h)| h)
+            .or(under.map(|at| &self.hits[at].1))
     }
 
     /// Whether `p` is over a control or panel.
@@ -548,12 +585,21 @@ impl Hud {
         self.hits.clear();
         let (w, h) = (view.size.0 as f32, view.size.1 as f32);
         let portrait = h > w;
-        // Points to pixels, shrunk if the toolbar would not fit across.
-        let across = if portrait { w } else { h };
+        // Points to pixels: the display's own, shrunk a little on the
+        // narrowest phones so the toolbar's labels still fit, and grown on
+        // a tablet, held further away. Tap targets stay a finger wide
+        // whatever this is (see `Hud::target`).
+        let scale = view.scale.max(0.5);
+        let across = if portrait { w } else { h } / scale;
         let n = TOOLS.len() as f32;
-        let u = view.scale.max(0.5).min(across / (n * 64.0 + 24.0));
+        let u = scale * (across / 380.0).clamp(0.85, 1.0) * (across / 700.0).clamp(1.0, 1.25);
         self.unit = u;
+        self.finger = FINGER * scale;
+        self.screen = [w, h];
         let m = 12.0 * u;
+        // Margins clear of notches, rounded corners and the home indicator.
+        let [st, sr, sb, sl] = view.safe;
+        let (mt, mr, mb, ml) = (m + st, m + sr, m + sb, m + sl);
         let gap = 10.0 * u;
         let selected = self
             .selected
@@ -564,29 +610,31 @@ impl Hud {
 
         // The toolbar, and the space left beside it for everything else.
         let bar = if portrait {
+            // On a tablet the bar stops growing and sits in the middle.
             let bh = 76.0 * u;
-            [m, h - m - bh, w - 2.0 * m, bh]
+            let bw = (w - ml - mr).min(n * 96.0 * u);
+            [ml + (w - ml - mr - bw) / 2.0, h - mb - bh, bw, bh]
         } else {
             let bw = 92.0 * u;
-            let bh = (h - 2.0 * m).min(n * 80.0 * u);
-            [w - m - bw, h - m - bh, bw, bh]
+            let bh = (h - mt - mb).min(n * 80.0 * u);
+            [w - mr - bw, h - mb - bh, bw, bh]
         };
         self.current = tool_index(view.tool);
         self.radial_ok = matches!(view.tool, Tool::Hand | Tool::Place(_));
         self.toolbar(view, o, bar, portrait);
         // The bottom-right corner of the free area, where the thumb is.
         let corner = if portrait {
-            [w - m, bar[1] - gap]
+            [w - mr, bar[1] - gap]
         } else {
-            [bar[0] - gap, h - m]
+            [bar[0] - gap, h - mb]
         };
 
         // The top of the screen stays small on a phone: the stock, one row
         // of status chips (research, problems), the goal card, then a tip.
-        let top = self.stock(view, o, [m, m]);
+        let top = self.stock(view, o, [ml, mt]);
         // The sound button keeps the top-right corner, clear of the thumb.
         let right = corner[0] - 36.0 * u;
-        self.sound_button(o, [right, m]);
+        self.sound_button(o, [right, mt]);
         let right = right - gap;
         self.found = problems::find(view);
         if self.found.is_empty() {
@@ -598,13 +646,13 @@ impl Hud {
             .iter()
             .filter(|(_, h)| matches!(h, Hit::Item(_)))
             .map(|(r, _)| r[0] + r[2])
-            .fold(m, f32::max);
+            .fold(ml, f32::max);
         let beside = stock_end + 8.0 * u;
         let room = right - beside;
         let (row, start, end) = if room >= 220.0 * u {
-            (m, beside, right)
+            (mt, beside, right)
         } else {
-            (top.max(m + 36.0 * u) + gap, m, corner[0])
+            (top.max(mt + 36.0 * u) + gap, ml, corner[0])
         };
         let x = self.research_button(view, o, [start, row], end - start);
         let x = self.problems_button(o, [x, row], end - x);
@@ -613,12 +661,14 @@ impl Hud {
         } else {
             top
         };
-        let top = self.goal_card(view, o, [m, top + gap], corner[0] - m);
+        // Cards and tips read as a column, not a banner, on a wide screen.
+        let column = (corner[0] - ml).min(560.0 * u);
+        let top = self.goal_card(view, o, [ml, top + gap], column);
         let mut tip_y = top + gap;
         if let Some((text, at, ink)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
                 let (text, ink) = (text.clone(), *ink);
-                tip_y = chip(o, &text, [m, tip_y], corner[0] - m, u, ink) + gap;
+                tip_y = chip(o, &text, [ml, tip_y], column, u, ink) + gap;
             } else {
                 self.toast = None;
             }
@@ -633,12 +683,12 @@ impl Hud {
             && self.browse.is_none()
             && !hand_with_goal
         {
-            self.tip(view, o, [m, tip_y], corner[0] - m);
+            self.tip(view, o, [ml, tip_y], column);
         }
         let width = if portrait {
-            w - 2.0 * m
+            (w - ml - mr).min(560.0 * u)
         } else {
-            (360.0 * u).min(corner[0] - m)
+            (360.0 * u).min(corner[0] - ml)
         };
 
         if let Some(at) = self.radial {
@@ -677,7 +727,7 @@ impl Hud {
             _ => None,
         };
         let mut right = corner[0];
-        let left = self.undo_buttons(view, o, [m, corner[1]]);
+        let left = self.undo_buttons(view, o, [ml, corner[1]]);
         if placing.is_some() || *view.tool == Tool::Belt {
             let d = 60.0 * u;
             let r = [right - d, corner[1] - d, d, d];

@@ -40,6 +40,9 @@ struct Shell {
     saved: f64,
     /// Where the sound plays, if the browser has Web Audio.
     sound: Option<web_sys::AudioContext>,
+    /// The page's `#safe` box, which CSS fits inside the screen's safe
+    /// area: what is left round it is the notch and the home indicator.
+    safe: Option<web_sys::Element>,
 }
 
 impl Shell {
@@ -61,10 +64,31 @@ impl Shell {
             self.canvas.set_width(size.0);
             self.canvas.set_height(size.1);
         }
+        self.game.safe = self.safe_area(scale);
         self.game.frame(size, scale);
         if self.now() - self.saved >= SAVE_EVERY {
             self.save();
         }
+    }
+
+    /// The edges a notch or the home indicator cover, in device pixels:
+    /// top, right, bottom, left.
+    fn safe_area(&self, dpr: f32) -> [f32; 4] {
+        let Some(el) = &self.safe else {
+            return [0.0; 4];
+        };
+        let r = el.get_bounding_client_rect();
+        let (cw, ch) = (
+            f64::from(self.canvas.client_width()),
+            f64::from(self.canvas.client_height()),
+        );
+        let px = |v: f64| (v.max(0.0) as f32) * dpr;
+        [
+            px(r.top()),
+            px(cw - r.right()),
+            px(ch - r.bottom()),
+            px(r.left()),
+        ]
     }
 
     /// Start or stop the sound. Starting only works from a tap or a key.
@@ -264,6 +288,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         mouse: MOUSE,
         saved: 0.0,
         sound: None,
+        safe: window.document().and_then(|d| d.get_element_by_id("safe")),
     }));
     {
         let mut s = shell.borrow_mut();
