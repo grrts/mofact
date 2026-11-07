@@ -116,7 +116,7 @@
     ),
     (
         id: "robot-frame", name: "Robot frame", category: "assembling", seconds: 10.0,
-        inputs: [(item: "motor", count: 2), (item: "battery", count: 2), (item: "processor", count: 1), (item: "steel", count: 2)],
+        inputs: [(item: "motor", count: 2), (item: "battery", count: 2), (item: "processor", count: 1)],
         outputs: [(item: "robot-frame", count: 1)],
     ),
     (

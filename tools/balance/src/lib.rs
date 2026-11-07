@@ -68,6 +68,28 @@ pub fn analyse(content: &Content) -> Report {
         .iter()
         .flat_map(|r| r.outputs.iter().map(|s| &s.item))
         .collect();
+    // A machine takes each input on a side of its own and puts each output
+    // out of another: a one-tile machine has four.
+    for r in &craftable {
+        let smallest = content
+            .buildings
+            .iter()
+            .filter_map(|b| match &b.role {
+                BuildingRole::Crafter { categories, .. } if categories.contains(&r.category) => {
+                    Some(u32::from(b.size.0) * u32::from(b.size.1))
+                }
+                _ => None,
+            })
+            .min();
+        if smallest == Some(1) && r.inputs.len() + r.outputs.len() > 4 {
+            report.problems.push(format!(
+                "{} has {} inputs and {} outputs: more than the four sides of a one-tile machine",
+                r.id,
+                r.inputs.len(),
+                r.outputs.len()
+            ));
+        }
+    }
     let has_miner = content
         .buildings
         .iter()
