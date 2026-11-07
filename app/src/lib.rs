@@ -40,4 +40,4 @@ mod worldmap;
 pub use bundled::content;
 pub use game::Game;
 #[cfg(not(target_arch = "wasm32"))]
-pub use native::{main, run};
+pub use native::{main, run, run_with, MakeShop};

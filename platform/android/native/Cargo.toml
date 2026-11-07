@@ -12,10 +12,15 @@ publish.workspace = true
 name = "main"
 crate-type = ["cdylib"]
 
-# Only Android builds the game into it, so desktop workspace builds stay quick.
-[target.'cfg(target_os = "android")'.dependencies]
+# The store bridge builds and is tested everywhere; only Android links
+# the game into libmain.so.
+[dependencies]
 mofact.workspace = true
+
+[target.'cfg(target_os = "android")'.dependencies]
 sdl3.workspace = true
+jni = "0.21"
+
 
 [lints]
 workspace = true

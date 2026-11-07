@@ -16,6 +16,13 @@ android {
         ndk {
             abiFilters 'arm64-v8a'
         }
+        // RevenueCat's public Android key (T61). Left empty, the game sells
+        // nothing and unlocks through its free sandbox instead.
+        def revenueCatKey = project.findProperty('mofactRevenueCatKey') ?: System.getenv('MOFACT_REVENUECAT_KEY') ?: ''
+        buildConfigField 'String', 'REVENUECAT_KEY', "\"${revenueCatKey}\""
+    }
+    buildFeatures {
+        buildConfig = true
     }
     sourceSets.main {
         java.srcDirs += ['../sdl-java']
@@ -30,4 +37,9 @@ android {
     lint {
         abortOnError = false
     }
+}
+
+dependencies {
+    // The full game's purchase (T61).
+    implementation 'com.revenuecat.purchases:purchases:8.10.0'
 }
