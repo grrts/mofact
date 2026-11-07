@@ -56,6 +56,8 @@ fn main() {
                 slots: &[],
                 store: &mofact_ui::StoreView::default(),
                 crash: false,
+                selection: 0,
+                blueprints: &[],
             };
             hud.draw(&view, &mut overlay);
             h += t.elapsed().as_secs_f64();

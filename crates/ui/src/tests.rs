@@ -74,6 +74,8 @@ struct Fixture {
     slots: Vec<SlotView>,
     store: StoreView,
     crash: bool,
+    selection: usize,
+    blueprints: Vec<mofact_input::Blueprint>,
 }
 
 impl Fixture {
@@ -104,6 +106,8 @@ impl Fixture {
             ],
             store: StoreView::default(),
             crash: false,
+            selection: 0,
+            blueprints: Vec::new(),
         }
     }
 
@@ -124,6 +128,8 @@ impl Fixture {
             slots: &self.slots,
             store: &self.store,
             crash: self.crash,
+            selection: self.selection,
+            blueprints: &self.blueprints,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -855,6 +861,7 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
         Tool::Belt,
         Tool::Place("assembler".into()),
         Tool::Remove,
+        Tool::Select,
     ];
     for (size, scale) in SCREENS {
         for tool in &tools {
@@ -872,6 +879,8 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                 "menu-delete",
                 "new-game",
                 "unlock",
+                "selection",
+                "library",
             ] {
                 let mut f = Fixture::new();
                 f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
@@ -901,6 +910,14 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                     "train-pick" => {
                         f.hud.select(Some(EntityId(10)));
                         f.hud.picking = Some(EntityId(10));
+                    }
+                    "selection" => f.selection = 12,
+                    "library" => {
+                        f.hud.library = true;
+                        f.blueprints = vec![mofact_input::Blueprint::capture(
+                            mofact_input::blueprint::next_name(&[], tr("blueprint.name")),
+                            [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
+                        )];
                     }
                     _ => {}
                 }
@@ -1548,4 +1565,67 @@ fn the_research_sheet_pages_too() {
         .collect();
     assert_ne!(first, second, "the next page shows other research");
     f.find(&Hit::Page(false));
+}
+
+#[test]
+fn the_select_tool_offers_what_to_do_with_a_selection_and_the_library() {
+    let mut f = Fixture::new();
+    let size = (1170, 2532);
+    let select = centre({
+        f.draw(size, 3.0, &Tool::Hand);
+        f.find(&Hit::Tool(SELECT))
+    });
+    assert_eq!(f.tap(select).1, vec![Action::Tool(Tool::Select)]);
+    f.draw(size, 3.0, &Tool::Select);
+    assert!(
+        f.hud.hits.iter().all(|(_, h)| *h != Hit::Copy),
+        "nothing selected yet"
+    );
+    f.selection = 3;
+    f.draw(size, 3.0, &Tool::Select);
+    for (hit, action) in [
+        (Hit::Copy, Action::Copy),
+        (Hit::Cut, Action::Cut),
+        (Hit::Erase, Action::DeleteSelection),
+        (Hit::Keep, Action::SaveBlueprint),
+    ] {
+        let at = centre(f.find(&hit));
+        assert_eq!(f.tap(at), (true, vec![action]));
+    }
+    // A blueprint in hand: turn it, or build it.
+    f.draw(size, 3.0, &Tool::Paste);
+    assert_eq!(f.tap(centre(f.find(&Hit::Rotate))).1, vec![Action::Rotate]);
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Place))).1,
+        vec![Action::PlacePaste]
+    );
+    assert_eq!(
+        f.hud.current,
+        Some(SELECT),
+        "pasting lights the Select slot"
+    );
+
+    // The library: empty, then with a blueprint to take or delete.
+    f.tap(centre(f.find(&Hit::Library)));
+    f.draw(size, 3.0, &Tool::Paste);
+    assert!(f.hud.hits.iter().all(|(_, h)| !matches!(h, Hit::Pick(_))));
+    f.blueprints = vec![mofact_input::Blueprint::capture(
+        "Blueprint 1",
+        [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
+    )];
+    f.draw(size, 3.0, &Tool::Paste);
+    let forget = centre(f.find(&Hit::Forget(0)));
+    assert_eq!(f.tap(forget).1, vec![], "the first tap asks");
+    f.draw(size, 3.0, &Tool::Paste);
+    assert_eq!(f.tap(forget).1, vec![Action::ForgetBlueprint(0)]);
+    f.draw(size, 3.0, &Tool::Paste);
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Pick(0)))).1,
+        vec![Action::Paste(0)]
+    );
+    f.draw(size, 3.0, &Tool::Paste);
+    assert!(
+        f.hud.hits.iter().all(|(_, h)| !matches!(h, Hit::Pick(_))),
+        "picking one closes the library"
+    );
 }
