@@ -142,4 +142,35 @@
         units: 100, seconds: 30.0,
         buildings: ["deep-drill"],
     ),
+    // Alternate recipes (T55).
+    (
+        id: "alternate-smelting", name: "Alternate smelting", tier: 1, requires: ["steel-working"],
+        cost: [(item: "survey-pack", count: 1)],
+        units: 20, seconds: 10.0,
+        recipes: ["coked-iron", "coked-copper", "fired-brick", "bessemer-steel"],
+    ),
+    (
+        id: "alternate-assembly", name: "Alternate assembly", tier: 2, requires: ["motors"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 30, seconds: 15.0,
+        recipes: ["cast-gear", "fine-wire", "wire-wrapped-circuit", "direct-drive-motor", "circuit-survey-pack", "steel-engineering-pack"],
+    ),
+    (
+        id: "alternate-chemistry", name: "Alternate chemistry", tier: 4, requires: ["chemistry"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
+        units: 50, seconds: 25.0,
+        recipes: ["tar-plastic", "pure-acid", "plastic-circuit"],
+    ),
+    (
+        id: "alternate-silicon", name: "Pure silicon", tier: 5, requires: ["precision-engineering"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 50, seconds: 30.0,
+        recipes: ["pure-silicon"],
+    ),
+    (
+        id: "alternate-alloys", name: "Alternate alloys", tier: 5, requires: ["electric-engines"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
+        units: 100, seconds: 30.0,
+        recipes: ["titanium-reduction", "carbonless-aluminium", "aluminium-lds", "ferrite-magnet", "light-robot-frame", "light-aerospace-pack"],
+    ),
 ]

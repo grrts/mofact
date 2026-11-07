@@ -642,7 +642,7 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
-            "toolbar", "build", "research", "radial", "recipes", "problems", "train",
+            "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
         ];
         for sheet in sheets {
             let mut hud = Hud::new();
@@ -652,6 +652,17 @@ fn screenshots(
                     Some(t) => hud.select(Some(t.id)),
                     None => continue,
                 },
+                // A world with an assembler shows its sheet and recipes.
+                "machine" => {
+                    let asm = latest
+                        .entities
+                        .iter()
+                        .find(|e| e.building.as_str() == "assembler");
+                    match asm {
+                        Some(e) => hud.select(Some(e.id)),
+                        None => continue,
+                    }
+                }
                 "build" => hud.toggle_build_sheet(),
                 "research" => hud.toggle_research(),
                 "problems" => hud.toggle_problems(),

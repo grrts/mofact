@@ -945,3 +945,54 @@ fn a_tap_anywhere_on_a_control_or_its_target_picks_it() {
 fn overlaps(a: &Rect, b: &Rect) -> bool {
     a[0] < b[0] + b[2] && b[0] < a[0] + a[2] && a[1] < b[1] + b[3] && b[1] < a[1] + a[3]
 }
+
+#[test]
+fn alternate_recipes_show_under_their_product() {
+    let mut f = Fixture::new();
+    f.hud.select(Some(EntityId(2)));
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    // Locked away, an alternate shows nowhere.
+    let cast = Hit::SetRecipe(EntityId(2), Some("cast-gear".into()));
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == cast));
+
+    // Open, it still waits until gears are chosen, then shows beside the
+    // standard way to make them.
+    f.snapshot.research.done = vec![
+        "steel-working".into(),
+        "motors".into(),
+        "alternate-assembly".into(),
+    ];
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == cast));
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let gears = Hit::SetRecipe(EntityId(2), Some("gear".into()));
+    let ways = f.hud.hits.iter().filter(|(_, h)| *h == gears).count();
+    assert_eq!(ways, 2, "the gear product and its standard way");
+    let alt = f.find(&cast);
+    assert_eq!(
+        f.tap(centre(alt)).1,
+        vec![Action::Send(Command::SetRecipe {
+            entity: EntityId(2),
+            recipe: Some("cast-gear".into())
+        })]
+    );
+}
+
+#[test]
+fn every_recipe_fits_a_small_phone() {
+    let mut f = Fixture::new();
+    f.snapshot.research.done = f.content.research.iter().map(|r| r.id.clone()).collect();
+    f.snapshot.entities[1].recipe = Some("cast-gear".into());
+    f.hud.select(Some(EntityId(2)));
+    // A small phone held sideways: 568 by 320 points.
+    f.draw((1136, 640), 2.0, &Tool::Hand);
+    for (r, h) in &f.hud.hits {
+        if matches!(h, Hit::SetRecipe(..)) {
+            assert!(
+                r[1] >= 0.0 && r[1] + r[3] <= 640.0,
+                "{h:?} off screen at {r:?}"
+            );
+        }
+    }
+}

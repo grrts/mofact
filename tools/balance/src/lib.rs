@@ -439,9 +439,60 @@ mod tests {
                 "aluminium-processing",
                 "rare-earth-processing",
                 "electric-engines",
-                "deep-mining"
+                "deep-mining",
+                "alternate-smelting",
+                "alternate-assembly",
+                "alternate-chemistry",
+                "alternate-silicon",
+                "alternate-alloys"
             ]
         );
+    }
+
+    #[test]
+    fn every_alternate_recipe_changes_a_ratio() {
+        let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
+        let content = mofact_content::load_dir(&dir).expect("loads");
+        // What a recipe takes and gives, per one of its first output.
+        let per = |r: &RecipeDef| {
+            let n = r.outputs[0].count as f32;
+            let mut v: Vec<(String, i64)> = r
+                .inputs
+                .iter()
+                .map(|s| {
+                    (
+                        s.item.as_str().to_owned(),
+                        -(s.count as f32 / n * 1000.0) as i64,
+                    )
+                })
+                .chain(r.outputs.iter().skip(1).map(|s| {
+                    (
+                        s.item.as_str().to_owned(),
+                        (s.count as f32 / n * 1000.0) as i64,
+                    )
+                }))
+                .collect();
+            v.sort();
+            v
+        };
+        let mut alternates = 0;
+        for (k, r) in content.recipes.iter().enumerate() {
+            let Some(first) = content.recipes[..k]
+                .iter()
+                .find(|o| o.outputs[0].item == r.outputs[0].item)
+            else {
+                continue;
+            };
+            alternates += 1;
+            assert_ne!(
+                per(first),
+                per(r),
+                "`{}` has the same ratio as `{}`",
+                r.id,
+                first.id
+            );
+        }
+        assert!(alternates >= 20, "{alternates} alternate recipes");
     }
 
     #[test]
