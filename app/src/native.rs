@@ -551,12 +551,20 @@ fn screenshots(
     std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
     let size = (960, 540);
     // The last at the dead of night (S9).
-    for (ppt, night) in [(14.0, 0.0), (32.0, 0.0), (64.0, 0.0), (32.0, 1.0)] {
+    // Then in low-power mode, which draws the cheap ground.
+    for (ppt, night, low) in [
+        (14.0, 0.0, false),
+        (32.0, 0.0, false),
+        (64.0, 0.0, false),
+        (32.0, 1.0, false),
+        (32.0, 0.0, true),
+    ] {
         let camera = Camera {
             pixels_per_tile: ppt,
             ..camera
         };
         scene.night = night;
+        scene.low_power = low;
         scene.build(
             &look,
             renderer.atlases(),
@@ -573,7 +581,9 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let pixels = renderer.capture(&gpu, size, &camera, &scene, None, FLOOR);
-        let path = if night > 0.0 {
+        let path = if low {
+            dir.join(format!("low-power-{ppt}.png"))
+        } else if night > 0.0 {
             dir.join(format!("night-{ppt}.png"))
         } else {
             dir.join(format!("zoom-{ppt}.png"))
@@ -587,6 +597,7 @@ fn screenshots(
         );
     }
     scene.night = 0.0;
+    scene.low_power = false;
     // The world around the start and further out, on a phone held upright.
     let size = (1080, 2340);
     for (name, center, ppt) in [

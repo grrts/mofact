@@ -51,3 +51,57 @@ fn frame_parts_on_the_budget_base() {
         snap.belt_items.len()
     );
 }
+
+/// GPU time for a whole frame of the budget base on a budget phone's screen
+/// (720 × 1600), with and without low-power mode. On a software adapter the
+/// numbers are slow but scale with the shader work, so they compare.
+#[test]
+#[ignore = "a benchmark: run in release with --ignored --nocapture"]
+fn gpu_frame_on_the_budget_base() {
+    use mofact_render::{Gpu, Renderer, Scene};
+    let content = crate::content().unwrap();
+    let mut sim = mofact_bench::build(&content, "budget", 200).unwrap();
+    for _ in 0..120 {
+        sim.step();
+    }
+    let snap = sim.snapshot();
+    let look = Look::new(&content);
+    let Ok(gpu) = Gpu::headless() else {
+        println!("no GPU adapter");
+        return;
+    };
+    println!("adapter: {:?}", gpu.adapter.get_info().name);
+    let mut renderer = Renderer::new(&gpu, look.atlases());
+    let mut ore = crate::ore::OreMap::new(&content, 42, Vec::new());
+    let size = (720, 1600);
+    let clear = mofact_render::FLOOR;
+    for ppt in [48.0, 24.0, 8.0] {
+        for low in [false, true] {
+            let camera = Camera {
+                center: [0.0, 0.0],
+                pixels_per_tile: ppt,
+            };
+            let mut scene = Scene::default();
+            scene.low_power = low;
+            let atlases = renderer.atlases();
+            scene.build(&look, atlases, &camera, size, &snap, &snap, 0.5);
+            scene.animate(&look, atlases, &camera, size, &snap, 1.0);
+            ore.fill(&camera, size);
+            scene.ore(&look, atlases, &camera, size, ore.tiles());
+            scene.decor(atlases, &camera, size, ore.decor(&camera, size));
+            scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
+            // Once to warm up, then timed.
+            renderer.capture(&gpu, size, &camera, &scene, None, clear);
+            let n = 5;
+            let t = Instant::now();
+            for _ in 0..n {
+                renderer.capture(&gpu, size, &camera, &scene, None, clear);
+            }
+            println!(
+                "ppt {ppt} low power {low}: {:.1} ms a frame, {} sprites",
+                ms(t, n),
+                scene.instances.len() + scene.ore.len()
+            );
+        }
+    }
+}
