@@ -22,7 +22,9 @@ pub struct Settings {
     pub low_power: bool,
     pub colour_blind: bool,
     pub large_text: bool,
-    pub reduce_motion: bool,
+    /// Reduce motion as the player set it; until they do, the device's
+    /// own accessibility setting decides.
+    pub reduce_motion: Option<bool>,
     /// The device's language, or the player's own pick (T65).
     pub language: Choice,
 }
@@ -41,7 +43,7 @@ impl Settings {
             low_power: on("low-power"),
             colour_blind: on("colour-blind"),
             large_text: on("large-text"),
-            reduce_motion: on("reduce-motion"),
+            reduce_motion: value("reduce-motion").map(|v| v == "on"),
             language: value("language").map_or(Choice::Device, Choice::from_code),
         }
     }
@@ -50,11 +52,14 @@ impl Settings {
     pub fn text(&self) -> String {
         let flag = |on: bool| if on { "on" } else { "off" };
         format!(
-            "low-power = {}\ncolour-blind = {}\nlarge-text = {}\nreduce-motion = {}\nlanguage = {}\n",
+            "low-power = {}\ncolour-blind = {}\nlarge-text = {}\n{}language = {}\n",
             flag(self.low_power),
             flag(self.colour_blind),
             flag(self.large_text),
-            flag(self.reduce_motion),
+            self.reduce_motion.map_or(String::new(), |on| format!(
+                "reduce-motion = {}\n",
+                flag(on)
+            )),
             self.language.code()
         )
     }
@@ -273,11 +278,14 @@ mod tests {
         assert_eq!(files.settings(), german);
         let calm = Settings {
             large_text: true,
-            reduce_motion: true,
+            reduce_motion: Some(false),
             ..Settings::default()
         };
         files.set_settings(calm).unwrap();
-        assert_eq!(files.settings(), calm);
+        assert_eq!(files.settings(), calm, "turned off on purpose stays off");
+        // Never set: the device decides, and the file says nothing.
+        assert_eq!(Settings::default().reduce_motion, None);
+        assert!(!Settings::default().text().contains("reduce-motion"));
         // Files from before the language, and with keys from later builds, still read.
         assert_eq!(
             Settings::parse("low-power = on\ncolour-blind = off\nhigh-contrast = on\n"),

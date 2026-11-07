@@ -14,6 +14,7 @@ import com.revenuecat.purchases.interfaces.ReceiveCustomerInfoCallback;
 import com.revenuecat.purchases.interfaces.ReceiveOfferingsCallback;
 import com.revenuecat.purchases.models.StoreTransaction;
 import android.os.Build;
+import android.provider.Settings;
 import android.view.HapticFeedbackConstants;
 import org.libsdl.app.SDLActivity;
 
@@ -42,6 +43,15 @@ public class MofactActivity extends SDLActivity {
     @Override
     protected String[] getLibraries() {
         return new String[] { "main" };
+    }
+
+    /**
+     * Whether the phone asks for less motion: Remove animations in the
+     * accessibility settings, which sets the animator duration scale to 0.
+     */
+    public boolean reducedMotion() {
+        return Settings.Global.getFloat(getContentResolver(),
+                Settings.Global.ANIMATOR_DURATION_SCALE, 1f) == 0f;
     }
 
     /**

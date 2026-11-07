@@ -16,6 +16,7 @@ fn main() -> bool {
         haptic: Some(haptic),
         // iCloud needs the Apple account (T62).
         cloud: None,
+        reduce_motion: Some(reduced_motion),
     };
     match mofact::run_with(platform) {
         Ok(()) => true,
@@ -24,6 +25,17 @@ fn main() -> bool {
             false
         }
     }
+}
+
+/// Whether Settings › Accessibility › Motion › Reduce Motion is on.
+#[cfg(target_os = "ios")]
+fn reduced_motion() -> bool {
+    #[link(name = "UIKit", kind = "framework")]
+    extern "C" {
+        fn UIAccessibilityIsReduceMotionEnabled() -> bool;
+    }
+    // SAFETY: a plain UIKit query with no arguments, on the main thread.
+    unsafe { UIAccessibilityIsReduceMotionEnabled() }
 }
 
 /// Play a feel: a light impact for a tick, a notification otherwise.

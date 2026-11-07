@@ -311,6 +311,9 @@ pub struct Platform {
     pub haptic: Option<fn(crate::haptics::Haptic)>,
     /// Its cloud for the save slots (T62); with none they stay on the device.
     pub cloud: Option<Box<dyn crate::cloud::Cloud>>,
+    /// Whether the device's accessibility settings ask for less motion;
+    /// the game follows until the player sets reduce motion themselves.
+    pub reduce_motion: Option<fn() -> bool>,
 }
 
 /// [`run`], with what the platform brings.
@@ -319,6 +322,7 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
         shop,
         haptic,
         mut cloud,
+        reduce_motion,
     } = platform;
     let args = args()?;
     let content = match &args.data {
@@ -403,7 +407,9 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
     app.game.set_low_power(settings.low_power);
     app.game.set_colour_blind(settings.colour_blind);
     app.game.set_large_text(settings.large_text);
-    app.game.set_reduce_motion(settings.reduce_motion);
+    let device_motion = reduce_motion.is_some_and(|asks| asks());
+    app.game
+        .set_reduce_motion(settings.reduce_motion.unwrap_or(device_motion));
     let (owned, keep) = (files.full_game(), Box::new(files.keep_full_game()));
     app.game.set_shop(match shop {
         Some(make) => make(owned, keep),
@@ -484,7 +490,11 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
             low_power: app.game.low_power(),
             colour_blind: app.game.colour_blind(),
             large_text: app.game.large_text(),
-            reduce_motion: app.game.reduce_motion(),
+            // Still the device's call until the player turns it the other way.
+            reduce_motion: match (settings.reduce_motion, app.game.reduce_motion()) {
+                (None, on) if on == device_motion => None,
+                (_, on) => Some(on),
+            },
             language: app.game.language(),
         };
         if now != settings {
