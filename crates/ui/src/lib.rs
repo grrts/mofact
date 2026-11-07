@@ -1170,7 +1170,10 @@ impl Hud {
         if let Some((text, at, ink)) = &self.toast {
             if at.elapsed() < TOAST_FOR {
                 let (text, ink) = (text.clone(), *ink);
-                tip_y = chip(o, &text, [ml, tip_y], column, u, ink) + gap;
+                let r = chip(o, &text, [ml, tip_y], column, u, ink);
+                // Cards take their taps, so nothing is built unseen under them.
+                self.hits.push((r, Hit::Block));
+                tip_y = r[1] + r[3] + gap;
             } else {
                 self.toast = None;
             }
@@ -1308,7 +1311,8 @@ impl Hud {
     fn tip(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) {
         let u = self.unit;
         let Some(slot) = self.current.filter(|_| *view.tool != Tool::Hand) else {
-            chip(o, tip(view.tool), at, width, u, TEXT);
+            let r = chip(o, tip(view.tool), at, width, u, TEXT);
+            self.hits.push((r, Hit::Block));
             return;
         };
         let name = match view.tool {
@@ -1327,7 +1331,9 @@ impl Hud {
         let done = tr("button.done");
         let bw = o.measure(done, px) + 28.0 * u;
         let gap = 8.0 * u;
-        let bottom = chip(o, &text, at, width - bw - gap, u, ink);
+        let card = chip(o, &text, at, width - bw - gap, u, ink);
+        self.hits.push((card, Hit::Block));
+        let bottom = card[1] + card[3];
         let h = (bottom - at[1]).max(40.0 * u).min(52.0 * u);
         let r = [at[0] + width - bw, at[1], bw, h];
         o.panel([r[0], r[1]], [r[2], r[3]], 8.0 * u, RAISED);
@@ -3499,7 +3505,8 @@ fn fit(o: &Overlay, text: &str, px: f32, width: f32) -> f32 {
 }
 
 /// A chip of text at `at`, wrapped to `width`. Returns its bottom edge.
-fn chip(o: &mut Overlay, text: &str, at: [f32; 2], width: f32, u: f32, ink: Rgba) -> f32 {
+/// A card of words: a tip or a toast. Returns the rect it covers.
+fn chip(o: &mut Overlay, text: &str, at: [f32; 2], width: f32, u: f32, ink: Rgba) -> Rect {
     let px = 14.0 * u;
     let pad = 10.0 * u;
     let line = 20.0 * u;
@@ -3511,7 +3518,7 @@ fn chip(o: &mut Overlay, text: &str, at: [f32; 2], width: f32, u: f32, ink: Rgba
         let base = at[1] + pad + o.cap_height(px) + i as f32 * line;
         o.text(l, [at[0] + pad, base], px, ink);
     }
-    at[1] + h
+    [at[0], at[1], w, h]
 }
 
 /// Break `text` into lines no wider than `width` at `px`: at spaces, and

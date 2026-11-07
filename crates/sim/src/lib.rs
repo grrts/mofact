@@ -58,7 +58,9 @@ const SPACING: u32 = UNIT * 34 / 100;
 const BLOCKED_AFTER: u32 = 48;
 /// Packs of each kind a lab holds.
 const LAB_CAP: u32 = 4;
-const STARVED_AFTER: u32 = 90;
+/// Three seconds: longer than a new game's furnace waits for its first ore
+/// (about two), so a fresh factory never opens on a red mark.
+const STARVED_AFTER: u32 = 3 * mofact_core::TICKS_PER_SECOND;
 
 #[derive(Clone, Debug)]
 enum State {
