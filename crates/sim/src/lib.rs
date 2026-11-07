@@ -108,6 +108,11 @@ enum State {
         docked: Option<EntityId>,
     },
     Train(rails::Train),
+    /// The megaproject: the stage it is on, and what that stage has taken.
+    Mega {
+        stage: u32,
+        have: Vec<u32>,
+    },
 }
 
 /// One end of an underground belt.
@@ -796,6 +801,10 @@ impl Sim {
                 })
             }
             Role::Lab { .. } => State::Lab(Lab::default()),
+            Role::Mega { stages, .. } => State::Mega {
+                stage: 0,
+                have: vec![0; stages.first().map_or(0, Vec::len)],
+            },
             Role::Pole { .. } => State::Pole,
             Role::Generator { .. } => State::Generator,
             Role::Splitter => State::Splitter {
@@ -1028,7 +1037,8 @@ impl Sim {
             | State::PipeTunnel(_)
             | State::Rail
             | State::Stop { .. }
-            | State::Train(_) => {}
+            | State::Train(_)
+            | State::Mega { .. } => {}
             State::Pump => {
                 let Role::Pump { per_tick } = self.tables.buildings[e.kind as usize].role else {
                     return;
@@ -1442,6 +1452,28 @@ impl Sim {
                 t.items.push((item, 0));
                 true
             }
+            State::Mega { stage, have } => {
+                let Role::Mega { stages, .. } = &self.tables.buildings[target.kind as usize].role
+                else {
+                    return false;
+                };
+                let Some(needs) = stages.get(*stage as usize) else {
+                    return false; // built: it takes nothing more
+                };
+                let Some(k) = needs.iter().position(|&(i, _)| i == item) else {
+                    return false;
+                };
+                if have[k] >= needs[k].1 {
+                    return false;
+                }
+                have[k] += 1;
+                // A stage is in when all it needs is: the next one starts.
+                if have.iter().zip(needs).all(|(h, n)| *h >= n.1) {
+                    *stage += 1;
+                    *have = vec![0; stages.get(*stage as usize).map_or(0, Vec::len)];
+                }
+                true
+            }
             State::Lab(lab) => {
                 if !self.tables.packs.contains(&item) {
                     return false;
@@ -1524,6 +1556,25 @@ impl Sim {
                 snap.trains.push(self.train_view(id, b, t, *capacity));
                 continue;
             }
+            if let (Some(State::Mega { stage, have }), Role::Mega { stages, names }, None) =
+                (self.states[slot].as_ref(), &b.role, &snap.mega)
+            {
+                let needs = stages.get(*stage as usize);
+                snap.mega = Some(mofact_core::snapshot::MegaView {
+                    id,
+                    stage: *stage,
+                    stages: stages.len() as u32,
+                    name: names.get(*stage as usize).cloned().unwrap_or_default(),
+                    needs: needs.map_or(Vec::new(), |n| {
+                        n.iter()
+                            .zip(have)
+                            .map(|(&(i, want), &h)| {
+                                (self.tables.items[i as usize].clone(), h, want)
+                            })
+                            .collect()
+                    }),
+                });
+            }
             let (state, progress, recipe) = match self.states[id.0 as usize].as_ref() {
                 Some(State::Splitter {
                     held: Some(item), ..
@@ -1602,6 +1653,20 @@ impl Sim {
                         if c.working { p } else { 0.0 },
                         c.recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
                     )
+                }
+                Some(State::Mega { stage, have }) => {
+                    let (n, frac) = match &b.role {
+                        Role::Mega { stages, .. } => {
+                            let part = stages.get(*stage as usize).map_or(0.0, |needs| {
+                                let want: u32 = needs.iter().map(|x| x.1).sum();
+                                have.iter().sum::<u32>() as f32 / want.max(1) as f32
+                            });
+                            (stages.len().max(1) as f32, part)
+                        }
+                        _ => (1.0, 0.0),
+                    };
+                    let p = ((*stage as f32 + frac) / n).min(1.0);
+                    (MachineState::Working, p, None)
                 }
                 Some(State::Lab(lab)) => {
                     let speed = match b.role {

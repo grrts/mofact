@@ -173,4 +173,36 @@
         units: 100, seconds: 30.0,
         recipes: ["titanium-reduction", "carbonless-aluminium", "aluminium-lds", "ferrite-magnet", "light-robot-frame", "light-aerospace-pack"],
     ),
+    // Tiers 7 and 8 (T54), ending in the skyhook.
+    (
+        id: "superconductors", name: "Superconductors", tier: 6, requires: ["electric-engines"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1)],
+        units: 100, seconds: 40.0,
+        recipes: ["superconductor", "ai-core"],
+    ),
+    (
+        id: "drones", name: "Drones", tier: 6, requires: ["superconductors"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1)],
+        units: 120, seconds: 40.0,
+        recipes: ["drone", "orbital-pack"],
+    ),
+    (
+        id: "fusion", name: "Fusion", tier: 7, requires: ["drones"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1)],
+        units: 150, seconds: 45.0,
+        recipes: ["fusion-cell", "ion-thruster"],
+    ),
+    (
+        id: "satellites", name: "Satellites", tier: 7, requires: ["fusion"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1)],
+        units: 150, seconds: 45.0,
+        recipes: ["satellite", "stellar-pack"],
+    ),
+    (
+        id: "skyhook", name: "The skyhook", tier: 8, requires: ["satellites"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1)],
+        units: 200, seconds: 60.0,
+        recipes: ["tether-segment", "climber", "orbital-beacon"],
+        buildings: ["skyhook"],
+    ),
 ]

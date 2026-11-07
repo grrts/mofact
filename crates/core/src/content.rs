@@ -35,6 +35,10 @@ pub enum IconShape {
     Frame,
     /// A horseshoe magnet.
     Magnet,
+    /// A satellite: a body between two wings of solar cells.
+    Satellite,
+    /// A rocket nozzle's bell.
+    Nozzle,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -156,6 +160,18 @@ pub enum BuildingRole {
         tiles_per_second: f32,
         capacity: u32,
     },
+    /// The game's last build (T54): takes the items of each stage in turn
+    /// from belts, and when the last stage is in, the factory has won.
+    Megaproject {
+        stages: Vec<Stage>,
+    },
+}
+
+/// One stage of a megaproject: its name and what it takes.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Stage {
+    pub name: String,
+    pub needs: Vec<Stack>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

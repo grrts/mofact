@@ -172,6 +172,17 @@ pub fn analyse(content: &Content) -> Report {
             BuildingRole::Engine { fluid, .. } => Some(fluid),
             _ => None,
         }))
+        // The megaproject takes the last parts.
+        .chain(content.buildings.iter().flat_map(|b| {
+            match &b.role {
+                BuildingRole::Megaproject { stages } => stages
+                    .iter()
+                    .flat_map(|s| &s.needs)
+                    .map(|s| &s.item)
+                    .collect(),
+                _ => Vec::new(),
+            }
+        }))
         .collect();
     for r in &content.recipes {
         for s in r.outputs.iter().skip(1) {
@@ -411,6 +422,10 @@ mod tests {
         assert_eq!(report.depth[&ItemId::from("engineering-pack")], 4);
         // Tier 5 (T53) runs deeper than anything before it.
         assert!(report.depth[&ItemId::from("precision-pack")] >= 7);
+        // The megaproject's last part is the deepest chain (R6).
+        let deepest = report.depth.values().max().copied().unwrap_or(0);
+        assert!(deepest >= 12, "deepest chain {deepest}");
+        assert_eq!(report.depth[&ItemId::from("orbital-beacon")], deepest);
         // Bricks go into labs; research takes the packs.
         assert!(report.end_products.is_empty(), "{:?}", report.end_products);
         let order: Vec<&str> = report.research_order.iter().map(|r| r.as_str()).collect();
@@ -444,7 +459,12 @@ mod tests {
                 "alternate-assembly",
                 "alternate-chemistry",
                 "alternate-silicon",
-                "alternate-alloys"
+                "alternate-alloys",
+                "superconductors",
+                "drones",
+                "fusion",
+                "satellites",
+                "skyhook"
             ]
         );
     }

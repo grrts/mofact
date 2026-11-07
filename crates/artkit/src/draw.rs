@@ -26,6 +26,8 @@ pub enum Shape {
     Chip,
     Frame,
     Magnet,
+    Satellite,
+    Nozzle,
 }
 
 /// The four directions, as `(dx, dy)` steps, in the core's `Dir` order.
@@ -423,6 +425,56 @@ pub fn item(c: &mut Canvas, shape: Shape, color: Rgba, x: f32, y: f32, s: f32, f
                     hi,
                     (s * 0.05).max(1.0),
                 );
+            }
+        }
+        Shape::Satellite => {
+            // A body between two wings of solar cells, struts between.
+            let w = (s * 0.06).max(1.0);
+            c.line(&[(x - s * 0.3, y), (x + s * 0.3, y)], pal::PIPE_HI, w);
+            for side in [-1.0, 1.0] {
+                let wx = x + side * s * 0.34 - s * 0.16;
+                fill(
+                    c,
+                    rr(wx, y - s * 0.3, s * 0.32, s * 0.6, s * 0.03),
+                    pal::SOLAR,
+                );
+                if detail {
+                    let lw = (s * 0.03).max(1.0);
+                    c.line(
+                        &[(wx + s * 0.16, y - s * 0.3), (wx + s * 0.16, y + s * 0.3)],
+                        shade(pal::SOLAR, 0.3),
+                        lw,
+                    );
+                    c.line(&[(wx, y), (wx + s * 0.32, y)], shade(pal::SOLAR, 0.3), lw);
+                }
+            }
+            fill(
+                c,
+                rr(x - s * 0.14, y - s * 0.2, s * 0.28, s * 0.4, s * 0.06),
+                color,
+            );
+            c.fill_circle(x, y - s * 0.04, s * 0.07, hi);
+            if detail {
+                c.fill_rect(x - s * 0.1, y + s * 0.1, s * 0.2, s * 0.04, lo);
+            }
+        }
+        Shape::Nozzle => {
+            // A bell opening downwards under its chamber, glowing inside.
+            fill(
+                c,
+                rr(x - s * 0.16, y - s * 0.5, s * 0.32, s * 0.26, s * 0.08),
+                lo,
+            );
+            let bell = [(-0.14, -0.26), (0.14, -0.26), (0.42, 0.46), (-0.42, 0.46)];
+            fill(c, poly(&bell, x, y, s), color);
+            fill(
+                c,
+                ellipse(x, y + s * 0.44, s * 0.36, s * 0.07),
+                pal::FLAME[0],
+            );
+            if detail {
+                let light = [(-0.14, -0.26), (-0.04, -0.26), (-0.22, 0.42), (-0.36, 0.42)];
+                fill(c, poly(&light, x, y, s), hi);
             }
         }
         Shape::Frame => {
@@ -1505,7 +1557,34 @@ pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: 
             );
         }
     }
-    // The paddle across the vat, on its hub.
+    paddle(c, s, pose);
+    if fine {
+        for &(bx, by) in &corners {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+    notch(c, z, pose);
+}
+
+/// A chemical plant's vat in white, to be tinted with what it makes.
+pub fn chemical_vat(c: &mut Canvas, z: f32) {
+    let (vx, vy) = (z * 0.5, z * 0.5);
+    c.fill_circle(vx, vy, z * 0.22, shade(pal::WHITE, -0.3));
+    c.fill_circle(vx - z * 0.03, vy - z * 0.03, z * 0.17, pal::WHITE);
+}
+
+/// A chemical plant's paddle and hub alone, facing east, to draw over its vat.
+pub fn chemical_paddle(c: &mut Canvas, z: f32) {
+    let pose = Pose {
+        t: 1.0 / 11.0,
+        ..Pose::default()
+    };
+    paddle(c, z, &pose);
+}
+
+/// The paddle across a chemical plant's vat, on its hub.
+fn paddle(c: &mut Canvas, s: f32, pose: &Pose) {
+    let (vx, vy) = (s * 0.5, s * 0.5);
     let a = pose.t * 3.0 + f32::from(pose.dir) * FRAC_PI_2;
     let (dx, dy) = (a.cos() * s * 0.2, a.sin() * s * 0.2);
     c.line(
@@ -1520,12 +1599,6 @@ pub fn chemical_plant(c: &mut Canvas, z: f32, fine: bool, pose: &Pose, product: 
     );
     c.fill_circle(vx, vy, s * 0.06, pal::MACHINE_EDGE);
     c.fill_circle(vx, vy, s * 0.035, pal::ACCENT);
-    if fine {
-        for &(bx, by) in &corners {
-            bolt(c, bx * s, by * s, s * 0.025);
-        }
-    }
-    notch(c, z, pose);
 }
 
 /// A soft white dot filling a `s`-pixel square, for smoke, dust and
@@ -2164,4 +2237,97 @@ pub fn furnace_ring(c: &mut Canvas, z: f32, fine: bool, electric: bool) {
 /// A machine's output arrow alone, facing east, to draw over its ring.
 pub fn notch_east(c: &mut Canvas, z: f32) {
     notch(c, z, &Pose::default());
+}
+
+/// The megaproject's anchor, `tiles` across: a round platform on a pad in
+/// hazard stripes, ringed with lamps, three pylons holding the tether's
+/// hub at its middle, where the cable climbs out of sight.
+pub fn skyhook(c: &mut Canvas, z: f32, fine: bool, tiles: f32) {
+    let s = z * tiles;
+    let (cx, cy) = (s / 2.0, s / 2.0);
+    let sh = z * 0.1;
+    shadow(
+        c,
+        rr(
+            s * 0.03 + sh,
+            s * 0.03 + sh * 1.3,
+            s * 0.94,
+            s * 0.94,
+            s * 0.06,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.03, s * 0.03, s * 0.94, s * 0.94, s * 0.06),
+        pal::PAD,
+    );
+    // Hazard stripes round the pad's edge.
+    let band = s * 0.05;
+    c.save();
+    if let Some(p) = rr(s * 0.05, s * 0.05, s * 0.9, s * 0.9, s * 0.04) {
+        c.clip(&p);
+    }
+    let n = if fine { 28 } else { 14 };
+    for k in 0..n {
+        let t = k as f32 / n as f32 * 4.0;
+        let (x, y) = match t as u32 {
+            0 => (s * 0.05 + t.fract() * s * 0.9, s * 0.05),
+            1 => (s * 0.95 - band, s * 0.05 + t.fract() * s * 0.9),
+            2 => (s * 0.95 - t.fract() * s * 0.9, s * 0.95 - band),
+            _ => (s * 0.05, s * 0.95 - t.fract() * s * 0.9),
+        };
+        let col = if k % 2 == 0 {
+            pal::ACCENT
+        } else {
+            pal::HAZARD_DARK
+        };
+        c.fill_rect(x - band * 0.5, y, band * 1.6, band, col);
+        c.fill_rect(x, y - band * 0.5, band, band * 1.6, col);
+    }
+    c.restore();
+    fill(
+        c,
+        rr(s * 0.1, s * 0.1, s * 0.8, s * 0.8, s * 0.04),
+        pal::PAD,
+    );
+    // The platform.
+    c.fill_circle(cx, cy, s * 0.42, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.39, pal::MACHINE);
+    c.stroke_circle(
+        cx,
+        cy,
+        s * 0.3,
+        shade(pal::MACHINE, 0.12),
+        (s * 0.012).max(1.0),
+    );
+    // Lamps round the rim.
+    let lamps = if fine { 16 } else { 8 };
+    for k in 0..lamps {
+        let a = k as f32 / lamps as f32 * TAU;
+        let (x, y) = (cx + a.cos() * s * 0.355, cy + a.sin() * s * 0.355);
+        c.fill_circle(x, y, s * 0.018, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, s * 0.012, pal::ACCENT);
+    }
+    // Three pylons from the rim to the hub.
+    let w = (s * 0.035).max(1.5);
+    for k in 0..3 {
+        let a = k as f32 / 3.0 * TAU - FRAC_PI_2;
+        let (x, y) = (cx + a.cos() * s * 0.33, cy + a.sin() * s * 0.33);
+        let (hx, hy) = (cx + a.cos() * s * 0.1, cy + a.sin() * s * 0.1);
+        c.line(&[(x, y), (hx, hy)], pal::MACHINE_EDGE, w * 1.5);
+        c.line(&[(x, y), (hx, hy)], pal::PIPE, w);
+        c.fill_circle(x, y, s * 0.04, pal::MACHINE_EDGE);
+        c.fill_circle(x, y, s * 0.028, pal::PIPE_HI);
+    }
+    // The tether's hub, and the cable rising from it.
+    let glow = pal::TIER[1];
+    c.fill_circle(cx, cy, s * 0.14, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.11, shade(glow, -0.3));
+    c.fill_circle(cx, cy, s * 0.075, glow);
+    c.fill_circle(cx, cy, s * 0.035, pal::WHITE);
+    if fine {
+        for (bx, by) in [(0.15, 0.15), (0.85, 0.15), (0.15, 0.85), (0.85, 0.85)] {
+            bolt(c, bx * s, by * s, s * 0.012);
+        }
+    }
 }

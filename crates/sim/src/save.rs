@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 13;
+pub const VERSION: u16 = 14;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -214,6 +214,11 @@ enum SavedState {
     Rail,
     Stop,
     Train(SavedTrain),
+    /// The megaproject's stage and what that stage has taken, by item.
+    Mega {
+        stage: u32,
+        have: Vec<(ItemId, u32)>,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -366,7 +371,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
             })
         }
-        13 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 14 adds the megaproject: a new variant only.
+        13 | 14 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -494,6 +500,21 @@ impl Sim {
                     State::Engine { share } => SavedState::Engine { share: *share },
                     State::Rail => SavedState::Rail,
                     State::Stop { .. } => SavedState::Stop,
+                    State::Mega { stage, have } => {
+                        let needs = match &t.buildings[e.kind as usize].role {
+                            Role::Mega { stages, .. } => stages.get(*stage as usize).cloned(),
+                            _ => None,
+                        };
+                        SavedState::Mega {
+                            stage: *stage,
+                            have: needs
+                                .unwrap_or_default()
+                                .iter()
+                                .zip(have)
+                                .map(|(&(i, _), &n)| (item(i), n))
+                                .collect(),
+                        }
+                    }
                     State::Train(tr) => SavedState::Train(SavedTrain {
                         cargo: tr.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
                         schedule: tr.schedule.clone(),
@@ -736,6 +757,20 @@ impl Sim {
                 },
                 (SavedState::Rail, Role::Rail { .. }) => State::Rail,
                 (SavedState::Stop, Role::Stop) => State::Stop { docked: None },
+                (SavedState::Mega { stage, have }, Role::Mega { stages, .. }) => {
+                    let stage = stage.min(stages.len() as u32);
+                    let needs = stages.get(stage as usize).cloned().unwrap_or_default();
+                    let mut held = vec![0; needs.len()];
+                    for (i, n) in &have {
+                        let Some(i) = item(i, &mut warnings) else {
+                            continue;
+                        };
+                        if let Some(k) = needs.iter().position(|&(x, _)| x == i) {
+                            held[k] = (*n).min(needs[k].1);
+                        }
+                    }
+                    State::Mega { stage, have: held }
+                }
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
                     cargo: tr
                         .cargo

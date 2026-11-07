@@ -1674,3 +1674,67 @@ fn a_damaged_save_is_refused_never_a_crash() {
         }
     }
 }
+
+#[test]
+fn the_skyhook_takes_its_stages_in_order_and_keeps_them_through_a_save() {
+    let mut sim = Sim::with_content(&content());
+    sim.complete_research(&"skyhook".into());
+    for (i, n) in [("steel", 200), ("titanium-plate", 100), ("ai-core", 10)] {
+        sim.add_stock(&item(i), n);
+    }
+    let sky = place(&mut sim, "skyhook", 0, 0, Dir::East, None);
+    fn sim_mega(sim: &Sim) -> mofact_core::snapshot::MegaView {
+        sim.snapshot().mega.expect("the skyhook shows its stage")
+    }
+    let view = sim_mega(&sim);
+    assert_eq!(
+        (view.stage, view.stages, view.name.as_str()),
+        (0, 4, "Anchor")
+    );
+    // A later stage's item is refused while the anchor is going in.
+    assert!(!sim.feed(sky, &item("climber")));
+    for _ in 0..400 {
+        assert!(sim.feed(sky, &item("steel")));
+    }
+    assert!(!sim.feed(sky, &item("steel")), "the anchor has its steel");
+    for _ in 0..99 {
+        assert!(sim.feed(sky, &item("tether-segment")));
+    }
+    assert_eq!(sim_mega(&sim).stage, 0);
+    assert!(sim.feed(sky, &item("tether-segment")));
+    let view = sim_mega(&sim);
+    assert_eq!((view.stage, view.name.as_str()), (1, "Tether"));
+    for _ in 0..7 {
+        assert!(sim.feed(sky, &item("superconductor")));
+    }
+
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let view = sim_mega(&loaded);
+    assert_eq!(view.stage, 1);
+    assert!(view
+        .needs
+        .iter()
+        .any(|(i, have, need)| i.as_str() == "superconductor" && *have == 7 && *need == 200));
+
+    let mut sim = loaded;
+    for _ in 0..300 {
+        sim.feed(sky, &item("tether-segment"));
+    }
+    for _ in 0..193 {
+        sim.feed(sky, &item("superconductor"));
+    }
+    for _ in 0..20 {
+        sim.feed(sky, &item("climber"));
+    }
+    assert!(!sim_mega(&sim).done());
+    for _ in 0..5 {
+        assert!(sim.feed(sky, &item("orbital-beacon")));
+    }
+    let view = sim_mega(&sim);
+    assert!(view.done(), "{view:?}");
+    assert!(
+        !sim.feed(sky, &item("orbital-beacon")),
+        "a built skyhook takes nothing"
+    );
+}
