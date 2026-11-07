@@ -230,6 +230,51 @@ pub struct WorldGen {
     pub seed: u64,
     /// How many kinds of ore to place; resource `0` is the first.
     pub resources: u8,
+    pub preset: Preset,
+}
+
+/// A world preset (S4): the same seed under another preset is another map,
+/// and the same seed and preset is always the same map.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+#[repr(u8)]
+pub enum Preset {
+    /// The map as designed.
+    #[default]
+    Standard = 0,
+    /// Ore in every patch cell, twice as rich: for building, not hunting.
+    Rich = 1,
+    /// Lakes spread wide: more water to build around.
+    Lakes = 2,
+    /// Hardly any standing water.
+    Dry = 3,
+}
+
+/// Every preset, in the order they are offered.
+pub const PRESETS: [Preset; 4] = [Preset::Standard, Preset::Rich, Preset::Lakes, Preset::Dry];
+
+impl Preset {
+    /// The preset numbered `n`, as saves store it; unknown numbers are Standard.
+    pub fn from_u8(n: u8) -> Self {
+        PRESETS.get(usize::from(n)).copied().unwrap_or_default()
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            Preset::Standard => "Standard",
+            Preset::Rich => "Rich ore",
+            Preset::Lakes => "Lakes",
+            Preset::Dry => "Dry",
+        }
+    }
+
+    /// How far the water line moves up (more lakes) or down.
+    fn water(self) -> f64 {
+        match self {
+            Preset::Lakes => 0.06,
+            Preset::Dry => -0.09,
+            _ => 0.0,
+        }
+    }
 }
 
 impl WorldGen {
@@ -237,7 +282,13 @@ impl WorldGen {
         Self {
             seed,
             resources: resources.max(1),
+            preset: Preset::Standard,
         }
+    }
+
+    /// The same, under `preset`.
+    pub fn with_preset(self, preset: Preset) -> Self {
+        Self { preset, ..self }
     }
 }
 
@@ -385,11 +436,12 @@ pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
             return (Terrain::Cliff, (height.clamp(0.0, 1.0) * 255.0) as u8);
         }
     }
-    let terrain = if height < 0.29 {
+    let water = gen.preset.water();
+    let terrain = if height < 0.29 + water {
         Terrain::DeepWater
-    } else if height < 0.335 {
+    } else if height < 0.335 + water {
         Terrain::Water
-    } else if height < 0.355 || (wet < 0.34 && height < 0.62) {
+    } else if height < 0.355 + water || (wet < 0.34 && height < 0.62) {
         Terrain::Sand
     } else if height > 0.7 {
         Terrain::Rock
@@ -401,7 +453,7 @@ pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
         Terrain::Grass
     };
     let shade = match terrain {
-        Terrain::DeepWater | Terrain::Water => height / 0.335,
+        Terrain::DeepWater | Terrain::Water => height / (0.335 + water),
         _ => 0.5 * value_noise(s ^ 0x5ade, t.x, t.y, 6) + 0.5 * wet,
     };
     let terrain = in_biome(biome_at(gen, t), terrain, wet);
@@ -493,6 +545,11 @@ fn ore_on_land(gen: &WorldGen, t: TilePos) -> Option<Ore> {
     // Richest in the middle, and richer the further you go.
     let rich = 1.0 + ((h >> 40) % 100) as f64 / 100.0 + far / 600.0;
     let amount = (1200.0 + 3600.0 * rich * (1.0 - d * d)) as u32;
+    let amount = if gen.preset == Preset::Rich {
+        amount * 2
+    } else {
+        amount
+    };
     Some(Ore { resource, amount })
 }
 
@@ -508,7 +565,7 @@ struct PatchCell {
 fn patch_cell(gen: &WorldGen, cx: i32, cy: i32) -> Option<PatchCell> {
     let h = hash(gen.seed ^ 0x0e0e, cx, cy);
     // About two cells in three hold a patch.
-    if h % 3 == 0 {
+    if h % 3 == 0 && gen.preset != Preset::Rich {
         return None;
     }
     // Its middle, well inside the cell so it never runs into the next one.
@@ -861,6 +918,7 @@ mod tests {
     const GEN: WorldGen = WorldGen {
         seed: 42,
         resources: 2,
+        preset: Preset::Standard,
     };
 
     #[test]
@@ -1005,6 +1063,45 @@ mod tests {
             panic!("a far-out block")
         };
         assert_eq!(c, coarse(&GEN, 4, ChunkPos { x: 0, y: 0 }));
+    }
+
+    #[test]
+    fn presets_change_the_map_but_never_flood_the_start() {
+        let base = WorldGen::new(42, 4);
+        let count = |gen: WorldGen| {
+            let (mut water, mut ore) = (0u32, 0u64);
+            for y in (-400..400).step_by(4) {
+                for x in (-400..400).step_by(4) {
+                    let t = tile_at(&gen, TilePos::new(x, y));
+                    water += u32::from(t.terrain.is_water());
+                    ore += t.ore.map_or(0, |o| u64::from(o.amount));
+                }
+            }
+            (water, ore)
+        };
+        let (water, ore) = count(base);
+        let (lakes, _) = count(base.with_preset(Preset::Lakes));
+        let (dry, _) = count(base.with_preset(Preset::Dry));
+        let (_, rich) = count(base.with_preset(Preset::Rich));
+        assert!(lakes > water * 3 / 2, "lakes {lakes} vs {water}");
+        assert!(dry < water / 2, "dry {dry} vs {water}");
+        assert!(rich > ore * 2, "rich {rich} vs {ore}");
+        for preset in PRESETS {
+            let gen = base.with_preset(preset);
+            // Same seed and preset, same map.
+            let pos = ChunkPos { x: 3, y: -2 };
+            assert_eq!(generate(&gen, pos), generate(&gen, pos));
+            for y in START.y - 6..START.y + 6 {
+                for x in START.x - 6..START.x + 6 {
+                    let t = TilePos::new(x, y);
+                    assert!(
+                        obstacle(&gen, t) != Some(Obstacle::Terrain),
+                        "{preset:?} {t:?}"
+                    );
+                }
+            }
+            assert_eq!(Preset::from_u8(preset as u8), preset);
+        }
     }
 
     #[test]

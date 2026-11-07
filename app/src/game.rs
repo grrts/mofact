@@ -7,13 +7,14 @@
 use crate::built::Built;
 use crate::guide::{Coach, Guide};
 use crate::ore::OreMap;
+use crate::slots::{Request, Store};
 use crate::sound::Sound;
 use mofact_core::content::Content;
 use mofact_core::geom::TilePos;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
-use mofact_ui::{Action, Hud, View};
+use mofact_ui::{Action, Hud, SlotView, View};
 use web_time::{Duration, Instant};
 
 /// Frame pacing (T66): 60 fps while playing, 30 in low-power mode or once
@@ -62,6 +63,10 @@ pub struct Game {
     /// pressed anything: frames are paced from these (T66).
     drawn: Option<Instant>,
     touched: Instant,
+    /// What the game menu asked of the save slots, for [`Game::serve`],
+    /// and the slots as it lists them.
+    requests: Vec<Request>,
+    slots: Vec<SlotView>,
 }
 
 impl Game {
@@ -73,8 +78,15 @@ impl Game {
         ore: OreMap,
         camera: Camera,
     ) -> Self {
-        // Drills mine the same generated map the player sees.
-        sim.set_world(ore.seed());
+        // Drills mine the same generated map the player sees: a save's own
+        // map if it brought one, otherwise the one given.
+        let ore = match sim.world_seed() {
+            Some((seed, preset)) if (seed, preset) != (ore.seed(), ore.gen().preset) => {
+                ore.regen(&content, seed, preset)
+            }
+            _ => ore,
+        };
+        sim.set_world_gen(ore.seed(), ore.gen().preset);
         let look = Look::new(&content);
         let (w, h) = target.size();
         let mut controls = Controls::new(CameraControl::new(
@@ -120,6 +132,8 @@ impl Game {
             before_map: None,
             drawn: None,
             touched: Instant::now(),
+            requests: Vec::new(),
+            slots: Vec::new(),
             content,
             ore,
             controls,
@@ -370,6 +384,7 @@ impl Game {
             history: self.sim.history(),
             safe: self.safe,
             nudge,
+            slots: &self.slots,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -434,6 +449,12 @@ impl Game {
             Action::Belt(belt) => self.controls.builder.belt = belt,
             Action::Send(command) => self.sim.send(command),
             Action::Undo => self.sim.undo(),
+            Action::MenuOpened => self.requests.push(Request::Refresh),
+            Action::LoadSlot(n) => self.requests.push(Request::Load(n)),
+            Action::DeleteSlot(n) => self.requests.push(Request::Delete(n)),
+            Action::NewGame { slot, seed, preset } => {
+                self.requests.push(Request::New { slot, seed, preset })
+            }
             Action::Redo => self.sim.redo(),
             // With the hand, a tap inspects what's there or closes the sheet.
             // With a building in hand, a tap on something already built
@@ -560,6 +581,95 @@ impl Game {
             // Everything one gesture builds is one undo step.
             self.sim.send_all(self.controls.handle(p, &self.built));
         }
+    }
+}
+
+impl Game {
+    /// Whether the game menu has asked anything of the save slots.
+    pub fn wants_slots(&self) -> bool {
+        !self.requests.is_empty()
+    }
+
+    /// The bytes of the game being played, waiting at most two seconds.
+    pub fn save_bytes(&self) -> Result<Vec<u8>, String> {
+        let rx = self.sim.save();
+        // The browser's simulation answers at once; a thread may take a tick.
+        rx.try_recv()
+            .or_else(|_| rx.recv_timeout(std::time::Duration::from_secs(2)))
+            .map_err(|_| "the simulation did not answer the save".to_string())
+    }
+
+    /// Do what the game menu asked of the slots in `store`: each switch
+    /// saves the game being played first, so nothing is lost.
+    pub fn serve(&mut self, store: &mut dyn Store) -> Result<(), String> {
+        for request in std::mem::take(&mut self.requests) {
+            let current = store.current();
+            match request {
+                Request::Refresh => store.write(current, &self.save_bytes()?)?,
+                Request::Delete(n) => {
+                    if n != current && crate::slots::valid(n) {
+                        store.remove(n);
+                    }
+                }
+                Request::Load(n) => {
+                    if n == current || !crate::slots::valid(n) {
+                        continue;
+                    }
+                    let Some(bytes) = store.read(n) else {
+                        continue;
+                    };
+                    let (sim, _) = Sim::load(&self.content, &bytes).map_err(|e| e.to_string())?;
+                    store.write(current, &self.save_bytes()?)?;
+                    self.switch(sim);
+                    store.set_current(n);
+                    self.hud.toast(format!("Slot {} loaded", n + 1));
+                }
+                Request::New { slot, seed, preset } => {
+                    if !crate::slots::valid(slot) {
+                        continue;
+                    }
+                    let (mut sim, _) = new_game(&self.content, seed)?;
+                    sim.set_world_gen(seed, mofact_world::Preset::from_u8(preset));
+                    if slot != current {
+                        store.write(current, &self.save_bytes()?)?;
+                    }
+                    store.write(slot, &sim.save())?;
+                    self.switch(sim);
+                    store.set_current(slot);
+                    self.hud.toast(format!("New game in slot {}", slot + 1));
+                }
+            }
+        }
+        self.list_slots(store);
+        Ok(())
+    }
+
+    /// List the slots in `store` for the game menu.
+    pub fn list_slots(&mut self, store: &dyn Store) {
+        let current = store.current();
+        self.slots = (0..mofact_ui::SLOTS)
+            .map(|n| crate::slots::summary(&self.content, store.read(n).as_deref(), n == current))
+            .collect();
+    }
+
+    /// Play `sim` instead: its own map, a fresh look at it, and the hand.
+    fn switch(&mut self, mut sim: Sim) {
+        let (seed, preset) = sim
+            .world_seed()
+            .unwrap_or((42, mofact_world::Preset::Standard));
+        self.ore = self.ore.regen(&self.content, seed, preset);
+        sim.set_world_gen(seed, preset);
+        let camera = framing(&self.content, &sim);
+        self.sim = SimHandle::spawn(sim);
+        self.built = Built::new(&self.content);
+        self.built.world = Some(self.ore.gen());
+        self.scene.forget_terrain();
+        self.controls.camera.center = camera.center;
+        self.controls.builder.set_tool(Tool::Hand);
+        self.hud.select(None);
+        self.guide = Guide::default();
+        self.before_map = None;
+        self.latest = (0, Instant::now());
     }
 }
 

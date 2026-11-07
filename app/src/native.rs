@@ -299,6 +299,8 @@ pub fn run() -> Result<(), String> {
             .map(|d| d.join("autosave.mofact"))
             .unwrap_or_else(|_| PathBuf::from("autosave.mofact")),
     };
+    let mut files = autosave::Files::new(save_path);
+    let save_path = files.path(crate::slots::Store::current(&files));
     let saved = match (&args.scenario, &args.screenshot) {
         (None, None) => autosave::load(&save_path, &content),
         _ => None,
@@ -404,6 +406,10 @@ pub fn run() -> Result<(), String> {
             }
         }
 
+        if app.game.wants_slots() {
+            report(app.game.serve(&mut files));
+            saves.set_path(files.path(crate::slots::Store::current(&files)));
+        }
         report(saves.update(&app.game.sim));
         if app.background {
             // Nothing to draw: sleep instead of spinning, to save the battery.
@@ -571,6 +577,17 @@ fn screenshots(
         }
     }
     let mut overlay = Overlay::new(&look);
+    // The game menu lists this game, another, and an empty slot.
+    let slots = [
+        crate::slots::describe(&sim, true),
+        mofact_ui::SlotView {
+            used: true,
+            current: false,
+            title: "Lakes · seed 90210".into(),
+            detail: "2 h 5 min played · 412 built".into(),
+        },
+        mofact_ui::SlotView::default(),
+    ];
     // The world map on a phone: the factory as a schematic, ore patches as
     // icons, two pins, and the map button lit.
     for (name, ppt) in [("map", 1.0), ("map-far", 0.5)] {
@@ -616,6 +633,7 @@ fn screenshots(
             history: (false, false),
             safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
             nudge: None,
+            slots: &[],
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -643,6 +661,7 @@ fn screenshots(
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         let sheets = [
             "toolbar", "build", "research", "radial", "recipes", "problems", "train", "machine",
+            "menu", "new-game",
         ];
         for sheet in sheets {
             let mut hud = Hud::new();
@@ -667,6 +686,8 @@ fn screenshots(
                 "research" => hud.toggle_research(),
                 "problems" => hud.toggle_problems(),
                 "recipes" => hud.browse("iron-plate".into()),
+                "menu" => hud.open_menu(None),
+                "new-game" => hud.open_menu(Some((2, 271_828))),
                 "radial" => {
                     hud.pointer(Pointer::Down {
                         id: 1,
@@ -691,6 +712,7 @@ fn screenshots(
                 history: (false, false),
                 safe: safe.map(|v| v * scale),
                 nudge: None,
+                slots: &slots,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);

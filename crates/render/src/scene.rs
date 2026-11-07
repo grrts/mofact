@@ -598,6 +598,12 @@ impl Scene {
     /// close that is one tile; zoomed far out it is a few, see
     /// [`map_stride`]. `version` is the map's: it is only read again when
     /// that or the view changes.
+    /// Forget the terrain drawn so far, as when another map is loaded:
+    /// the next [`terrain`](Self::terrain) call makes it afresh.
+    pub fn forget_terrain(&mut self) {
+        self.terrain.made_from = None;
+    }
+
     pub fn terrain(
         &mut self,
         camera: &Camera,

@@ -33,6 +33,14 @@ impl Autosave {
         &self.path
     }
 
+    /// Save to `path` from now on, as when another slot is played. A save
+    /// still on its way belonged to the old game, so it is dropped.
+    pub fn set_path(&mut self, path: PathBuf) {
+        self.path = path;
+        self.pending = None;
+        self.last = Instant::now();
+    }
+
     /// Call once a frame: asks for a save when one is due and writes it when
     /// it arrives. Never blocks.
     pub fn update(&mut self, sim: &SimHandle) -> Result<(), String> {
@@ -77,6 +85,54 @@ pub fn load(path: &Path, content: &Content) -> Option<Sim> {
     }
 }
 
+/// The save slots as files (T63): the first is the autosave file, the
+/// others sit beside it, and a small file remembers which is played.
+pub struct Files {
+    first: PathBuf,
+}
+
+impl Files {
+    pub fn new(first: PathBuf) -> Self {
+        Self { first }
+    }
+
+    /// The file for `slot`.
+    pub fn path(&self, slot: u8) -> PathBuf {
+        if slot == 0 {
+            self.first.clone()
+        } else {
+            self.first
+                .with_file_name(format!("slot-{}.mofact", u32::from(slot) + 1))
+        }
+    }
+
+    fn marker(&self) -> PathBuf {
+        self.first.with_extension("slot")
+    }
+}
+
+impl crate::slots::Store for Files {
+    fn read(&self, slot: u8) -> Option<Vec<u8>> {
+        std::fs::read(self.path(slot)).ok()
+    }
+    fn write(&mut self, slot: u8, bytes: &[u8]) -> Result<(), String> {
+        write(&self.path(slot), bytes)
+    }
+    fn remove(&mut self, slot: u8) {
+        let _ = std::fs::remove_file(self.path(slot));
+    }
+    fn current(&self) -> u8 {
+        std::fs::read_to_string(self.marker())
+            .ok()
+            .and_then(|s| s.trim().parse().ok())
+            .filter(|n| crate::slots::valid(*n))
+            .unwrap_or(0)
+    }
+    fn set_current(&mut self, slot: u8) {
+        let _ = write(&self.marker(), slot.to_string().as_bytes());
+    }
+}
+
 fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
     let fail = |e: std::io::Error| format!("saving to {}: {e}", path.display());
     if let Some(dir) = path.parent() {
@@ -104,6 +160,24 @@ mod tests {
         write(&path, b"second").unwrap();
         assert_eq!(std::fs::read(&path).unwrap(), b"second");
         assert!(!path.with_extension("tmp").exists());
+        std::fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn slots_are_files_beside_the_autosave_and_the_played_one_is_remembered() {
+        use crate::slots::Store;
+        let dir = std::env::temp_dir().join(format!("mofact-slots-{}", std::process::id()));
+        let mut files = Files::new(dir.join("autosave.mofact"));
+        assert_eq!(files.current(), 0);
+        files.write(0, b"one").unwrap();
+        files.write(2, b"three").unwrap();
+        assert_eq!(files.path(2), dir.join("slot-3.mofact"));
+        assert_eq!(files.read(0).as_deref(), Some(&b"one"[..]));
+        assert_eq!(files.read(1), None);
+        files.set_current(2);
+        assert_eq!(Files::new(dir.join("autosave.mofact")).current(), 2);
+        files.remove(2);
+        assert_eq!(files.read(2), None);
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

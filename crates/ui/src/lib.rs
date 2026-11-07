@@ -109,7 +109,24 @@ pub struct View<'a> {
     pub safe: [f32; 4],
     /// A toolbar tool to point the player at: the coach's next step.
     pub nudge: Option<Tool>,
+    /// The save slots, for the game menu (T63).
+    pub slots: &'a [SlotView],
 }
+
+/// One save slot as the game menu shows it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SlotView {
+    /// Whether a game is saved there.
+    pub used: bool,
+    /// Whether it is the game being played.
+    pub current: bool,
+    /// What it holds: the goal it is on, and how long it has run.
+    pub title: String,
+    pub detail: String,
+}
+
+/// How many save slots there are.
+pub const SLOTS: u8 = 3;
 
 impl View<'_> {
     fn building(&self, id: &BuildingId) -> Option<&BuildingDef> {
@@ -199,6 +216,19 @@ pub enum Action {
     Map(bool),
     /// Turn low-power mode on (true) or off: 30 fps and calmer ground.
     LowPower(bool),
+    /// The game menu opened: the slots it lists want refreshing.
+    MenuOpened,
+    /// Save the game being played and switch to the one in this slot.
+    LoadSlot(u8),
+    /// Wipe the game in this slot.
+    DeleteSlot(u8),
+    /// Save the game being played and start a new one in this slot, on
+    /// the map from this seed and preset (by number, see `mofact_world::PRESETS`).
+    NewGame {
+        slot: u8,
+        seed: u64,
+        preset: u8,
+    },
 }
 
 /// A control on screen, and what tapping it does.
@@ -239,8 +269,22 @@ enum Hit {
     PickStop(EntityId),
     /// The map button: opens and closes the world map.
     Map,
-    /// The battery button: turns low-power mode on and off.
+    /// The low-power toggle: turns low-power mode on and off.
     Power,
+    /// The menu button: opens and closes the game menu.
+    Menu,
+    /// A slot's buttons in the game menu.
+    SlotLoad(u8),
+    SlotDelete(u8),
+    SlotNew(u8),
+    /// The new-game form: a keypad digit, backspace, a random seed, a
+    /// preset, cancel and start.
+    Digit(u8),
+    Backspace,
+    Dice,
+    Preset(u8),
+    CancelNew,
+    StartNew,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -257,6 +301,34 @@ struct Press {
     hit: Hit,
     at: [f32; 2],
 }
+
+/// A new game being set up in the game menu.
+#[derive(Clone, Debug, Default)]
+struct NewGame {
+    slot: u8,
+    seed: String,
+    preset: u8,
+}
+
+thread_local! {
+    static START: Instant = Instant::now();
+}
+
+/// A random-looking seed for dice roll `n`: the clock and the count mixed.
+fn roll(n: u64) -> u64 {
+    let since = START.with(|t| t.elapsed().as_nanos() as u64);
+    let mut x = n.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ since;
+    x ^= x >> 31;
+    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    x ^= x >> 29;
+    x % 1_000_000_000
+}
+
+/// Seeds are typed up to this many digits.
+const SEED_DIGITS: usize = 9;
+
+/// The names of the world presets, in `mofact_world::PRESETS` order.
+pub const PRESET_NAMES: [&str; 4] = ["Standard", "Rich ore", "Lakes", "Dry"];
 
 /// A touch on the world that may turn out to be a tap.
 #[derive(Debug)]
@@ -276,6 +348,13 @@ pub struct Hud {
     map: bool,
     /// Whether low-power mode is on.
     low_power: bool,
+    /// Whether the game menu is open, the slot asked to be deleted (a
+    /// second tap deletes it), and the new game being set up.
+    menu: bool,
+    confirm_delete: Option<u8>,
+    new_game: Option<NewGame>,
+    /// Dice rolls so far, so each roll gives another seed.
+    rolls: u64,
     /// The entity the inspect sheet shows.
     selected: Option<EntityId>,
     /// The train waiting for a stop to be tapped on the map.
@@ -365,6 +444,22 @@ impl Hud {
     /// Turn low-power mode on or off, as a saved setting does at start.
     pub fn set_low_power(&mut self, on: bool) {
         self.low_power = on;
+    }
+
+    /// Whether the game menu is open.
+    pub fn menu_open(&self) -> bool {
+        self.menu
+    }
+
+    /// Open the game menu, or with `new_game` its new-game form for that
+    /// slot and seed, as a screenshot or a test does.
+    pub fn open_menu(&mut self, new_game: Option<(u8, u64)>) {
+        self.menu = true;
+        self.new_game = new_game.map(|(slot, seed)| NewGame {
+            slot,
+            seed: seed.to_string(),
+            preset: 0,
+        });
     }
 
     /// Tell the HUD whether the camera is out on the world map.
@@ -594,6 +689,89 @@ impl Hud {
                 self.muted = !self.muted;
                 vec![Action::Mute(self.muted)]
             }
+            Hit::Menu => {
+                self.menu = !self.menu;
+                self.confirm_delete = None;
+                self.new_game = None;
+                if self.menu {
+                    self.selected = None;
+                    self.research = false;
+                    self.problems = false;
+                    self.more = false;
+                    self.browse = None;
+                    return vec![Action::MenuOpened];
+                }
+                Vec::new()
+            }
+            Hit::SlotLoad(n) => {
+                self.menu = false;
+                vec![Action::LoadSlot(n)]
+            }
+            Hit::SlotDelete(n) => {
+                if self.confirm_delete == Some(n) {
+                    self.confirm_delete = None;
+                    vec![Action::DeleteSlot(n)]
+                } else {
+                    self.confirm_delete = Some(n);
+                    Vec::new()
+                }
+            }
+            Hit::SlotNew(n) => {
+                self.confirm_delete = None;
+                self.rolls += 1;
+                self.new_game = Some(NewGame {
+                    slot: n,
+                    seed: roll(self.rolls).to_string(),
+                    preset: 0,
+                });
+                Vec::new()
+            }
+            Hit::Digit(d) => {
+                if let Some(g) = &mut self.new_game {
+                    if g.seed == "0" {
+                        g.seed.clear();
+                    }
+                    if g.seed.len() < SEED_DIGITS {
+                        g.seed.push(char::from(b'0' + d.min(9)));
+                    }
+                }
+                Vec::new()
+            }
+            Hit::Backspace => {
+                if let Some(g) = &mut self.new_game {
+                    g.seed.pop();
+                }
+                Vec::new()
+            }
+            Hit::Dice => {
+                self.rolls += 1;
+                let seed = roll(self.rolls).to_string();
+                if let Some(g) = &mut self.new_game {
+                    g.seed = seed;
+                }
+                Vec::new()
+            }
+            Hit::Preset(p) => {
+                if let Some(g) = &mut self.new_game {
+                    g.preset = p;
+                }
+                Vec::new()
+            }
+            Hit::CancelNew => {
+                self.new_game = None;
+                Vec::new()
+            }
+            Hit::StartNew => {
+                let Some(g) = self.new_game.take() else {
+                    return Vec::new();
+                };
+                self.menu = false;
+                vec![Action::NewGame {
+                    slot: g.slot,
+                    seed: g.seed.parse().unwrap_or(0),
+                    preset: g.preset,
+                }]
+            }
             Hit::Power => {
                 self.low_power = !self.low_power;
                 self.toast(if self.low_power {
@@ -705,9 +883,9 @@ impl Hud {
         // The sound button keeps the top-right corner, clear of the thumb.
         let right = corner[0] - 36.0 * u;
         self.sound_button(o, [right, mt]);
-        // The map and battery buttons sit beside it.
+        // The map and menu buttons sit beside it.
         let right = right - gap - 36.0 * u;
-        self.power_button(o, [right, mt]);
+        self.menu_button(o, [right, mt]);
         let right = right - gap - 36.0 * u;
         self.map_button(o, [right, mt]);
         let right = right - gap;
@@ -738,8 +916,9 @@ impl Hud {
         };
         // Cards and tips read as a column, not a banner, on a wide screen.
         let column = (corner[0] - ml).min(560.0 * u);
-        // The map wants the whole screen: the goal waits until it closes.
-        let top = if self.map {
+        // The map and the game menu want the whole screen: the goal waits
+        // until they close.
+        let top = if self.map || self.menu {
             top
         } else {
             self.goal_card(view, o, [ml, top + gap], column)
@@ -790,6 +969,11 @@ impl Hud {
         if self.research {
             let room = corner[1] - tip_y;
             self.research_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
+        }
+        if self.menu {
+            let room = corner[1] - tip_y;
+            self.menu_sheet(view, o, corner, width, corner[0] - ml, room);
             return;
         }
         if self.problems {
@@ -1081,46 +1265,382 @@ impl Hud {
         at[1] + h
     }
 
-    /// A round button that turns low-power mode on and off: a battery,
-    /// full and green while saving power.
-    fn power_button(&mut self, o: &mut Overlay, at: [f32; 2]) {
+    /// A round button that opens the game menu: three bars.
+    fn menu_button(&mut self, o: &mut Overlay, at: [f32; 2]) {
         let u = self.unit;
         let d = 36.0 * u;
-        let on = self.low_power;
-        o.panel(at, [d, d], d / 2.0, if on { PRESSED } else { RAISED });
-        let ink = if on { WORKING } else { TEXT };
+        o.panel(
+            at,
+            [d, d],
+            d / 2.0,
+            if self.menu { PRESSED } else { RAISED },
+        );
         let (cx, cy) = (at[0] + d / 2.0, at[1] + d / 2.0);
-        let (bw, bh) = (18.0 * u, 11.0 * u);
-        let body = [cx - bw / 2.0 - 1.5 * u, cy - bh / 2.0];
-        // The case, hollowed out, and its nub.
-        o.panel(body, [bw, bh], 2.5 * u, ink);
-        let wall = 2.0 * u;
-        o.panel(
-            [body[0] + wall, body[1] + wall],
-            [bw - 2.0 * wall, bh - 2.0 * wall],
-            1.5 * u,
-            if on { PRESSED } else { RAISED },
-        );
-        o.panel(
-            [body[0] + bw + 0.5 * u, cy - 2.5 * u],
-            [2.5 * u, 5.0 * u],
-            u,
-            ink,
-        );
-        // Charge: full when on, a third when off.
-        let inner = bw - 2.0 * wall - 2.0 * u;
-        let fill = if on { inner } else { inner / 3.0 };
-        o.panel(
-            [body[0] + wall + u, body[1] + wall + u],
-            [fill, bh - 2.0 * wall - 2.0 * u],
-            u,
-            ink,
-        );
+        for k in [-1.0, 0.0, 1.0] {
+            o.panel(
+                [cx - 8.0 * u, cy + k * 5.5 * u - 1.5 * u],
+                [16.0 * u, 3.0 * u],
+                1.5 * u,
+                TEXT,
+            );
+        }
         let pad = 4.0 * u;
         self.hits.push((
             [at[0] - pad, at[1] - pad, d + 2.0 * pad, d + 2.0 * pad],
-            Hit::Power,
+            Hit::Menu,
         ));
+    }
+
+    /// A rounded button with a centred label.
+    #[allow(clippy::too_many_arguments)]
+    fn button(
+        &mut self,
+        o: &mut Overlay,
+        r: Rect,
+        label: &str,
+        px: f32,
+        fill: Rgba,
+        ink: Rgba,
+        hit: Hit,
+    ) {
+        o.panel([r[0], r[1]], [r[2], r[3]], r[3].min(r[2]) * 0.3, fill);
+        let px = fit(o, label, px, r[2] - 8.0 * self.unit);
+        let w = o.measure(label, px);
+        o.text(
+            label,
+            [
+                r[0] + (r[2] - w) / 2.0,
+                r[1] + (r[3] + o.cap_height(px)) / 2.0,
+            ],
+            px,
+            ink,
+        );
+        self.hits.push((r, hit));
+    }
+
+    /// The game menu (T63, S4): the save slots, a new game with its seed
+    /// and preset, and low-power mode (T66). Bottom-right at `corner`, `width`
+    /// wide, or up to `wide` when the new-game form needs two columns to
+    /// fit a short screen.
+    #[allow(clippy::too_many_arguments)]
+    fn menu_sheet(
+        &mut self,
+        view: &View,
+        o: &mut Overlay,
+        corner: [f32; 2],
+        width: f32,
+        wide: f32,
+        room: f32,
+    ) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let bh = 44.0 * u;
+        let gap = 8.0 * u;
+        let new_game = self.new_game.clone();
+        // The form in one column: a note, the seed, three rows of keys,
+        // the presets, then cancel and start.
+        let note = 24.0 * u;
+        let tall = 50.0 * u + note + 3.0 * (bh + gap) + 3.0 * (bh + gap) - gap;
+        // On a short screen it takes two columns and drops its heading:
+        // the keypad on the left, the rest on the right.
+        let two = new_game.is_some() && 2.0 * pad + tall > room && wide > width;
+        let title = if two { 0.0 } else { 50.0 * u };
+        let width = if two { wide.min(620.0 * u) } else { width };
+        // Slot rows shrink on a short screen, down to a button and a gap.
+        let row = ((room - 2.0 * pad - title - bh) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
+        // The keys grow into spare room on a tall screen.
+        let key = ((room - 2.0 * pad - tall) / 3.0 + bh).clamp(bh, 52.0 * u);
+        let body = match &new_game {
+            Some(_) if two => 4.0 * bh + 3.0 * gap,
+            Some(_) => note + 3.0 * (bh + gap) + 3.0 * (key + gap) - gap,
+            None => f32::from(SLOTS) * row + bh,
+        };
+        let height = pad + title + body + pad;
+        let r = [corner[0] - width, corner[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let inner = r[2] - 2.0 * pad;
+        let mut y = r[1] + pad;
+        if !two {
+            let px = 20.0 * u;
+            let heading = match &new_game {
+                Some(g) => format!("New game in slot {}", g.slot + 1),
+                None => "Game".to_string(),
+            };
+            let close = 44.0 * u;
+            o.text(
+                &heading,
+                [left, y + (close + o.cap_height(px)) / 2.0],
+                px,
+                TEXT,
+            );
+            let c = [r[0] + r[2] - pad - close, y, close, close];
+            o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+            let xw = o.measure("×", 22.0 * u);
+            o.text(
+                "×",
+                [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+                22.0 * u,
+                TEXT,
+            );
+            // Closing the form goes back to the slots; closing those shuts the menu.
+            let back = if new_game.is_some() {
+                Hit::CancelNew
+            } else {
+                Hit::Menu
+            };
+            self.hits.push((c, back));
+            y += title;
+        }
+
+        if let Some(g) = new_game {
+            // Where each part goes: the seed row, the keypad (columns and
+            // rows of keys) and the presets (columns) and the last row.
+            let (seed_at, pad_at, cols, presets_at, pcols, last_at);
+            if two {
+                let half = (inner - gap) / 2.0;
+                let right = left + half + gap;
+                pad_at = [left, y, half];
+                cols = 3u8;
+                seed_at = [right, y, half];
+                presets_at = [right, y + bh + gap, half];
+                pcols = 2u8;
+                last_at = [right, y + 3.0 * (bh + gap), half];
+            } else {
+                let text = "The same seed and preset always make the same map.";
+                let mpx = fit(o, text, 14.0 * u, inner);
+                o.text(text, [left, y + o.cap_height(mpx)], mpx, MUTED);
+                y += note;
+                seed_at = [left, y, inner];
+                pad_at = [left, y + bh + gap, inner];
+                cols = 4;
+                presets_at = [left, y + bh + gap + 3.0 * (key + gap), inner];
+                pcols = 4;
+                last_at = [presets_at[0], presets_at[1] + bh + gap, inner];
+            }
+            let key = if two { bh } else { key };
+            // The seed, and a die for a random one.
+            let die = bh;
+            let field = [seed_at[0], seed_at[1], seed_at[2] - die - gap, bh];
+            o.panel([field[0], field[1]], [field[2], field[3]], 10.0 * u, RAISED);
+            let lpx = 14.0 * u;
+            o.text(
+                "Seed",
+                [
+                    field[0] + 12.0 * u,
+                    field[1] + (bh + o.cap_height(lpx)) / 2.0,
+                ],
+                lpx,
+                MUTED,
+            );
+            let spx = 18.0 * u;
+            let shown = if g.seed.is_empty() {
+                "0"
+            } else {
+                g.seed.as_str()
+            };
+            let spx = fit(o, shown, spx, field[2] - 60.0 * u);
+            let sw = o.measure(shown, spx);
+            o.text(
+                shown,
+                [
+                    field[0] + field[2] - 12.0 * u - sw,
+                    field[1] + (bh + o.cap_height(spx)) / 2.0,
+                ],
+                spx,
+                TEXT,
+            );
+            self.hits.push((field, Hit::Block));
+            self.dice(o, [seed_at[0] + seed_at[2] - die, seed_at[1], die, bh]);
+            // The keypad: 1 to 9, then 0 and delete; in three columns the
+            // last row reads like a phone's, with 0 in the middle.
+            let fc = f32::from(cols);
+            let kw = (pad_at[2] - (fc - 1.0) * gap) / fc;
+            for k in 0..11u8 {
+                let slot = if cols == 3 && k >= 9 { k + 1 } else { k };
+                let (cx, cy) = (f32::from(slot % cols), f32::from(slot / cols));
+                let kr = [
+                    pad_at[0] + cx * (kw + gap),
+                    pad_at[1] + cy * (key + gap),
+                    kw,
+                    key,
+                ];
+                let (label, hit) = match k {
+                    0..=8 => ((k + 1).to_string(), Hit::Digit(k + 1)),
+                    9 => ("0".to_string(), Hit::Digit(0)),
+                    _ => ("Delete".to_string(), Hit::Backspace),
+                };
+                let lpx = if k == 10 { 14.0 } else { 20.0 } * u;
+                self.button(o, kr, &label, lpx, RAISED, TEXT, hit);
+            }
+            // The presets.
+            let fp = f32::from(pcols);
+            let pw = (presets_at[2] - (fp - 1.0) * gap) / fp;
+            for (i, name) in PRESET_NAMES.iter().enumerate() {
+                let chosen = usize::from(g.preset) == i;
+                let (fill, ink) = if chosen {
+                    (palette::ACCENT, palette::GROUND)
+                } else {
+                    (RAISED, TEXT)
+                };
+                let (cx, cy) = (
+                    (i % usize::from(pcols)) as f32,
+                    (i / usize::from(pcols)) as f32,
+                );
+                let pr = [
+                    presets_at[0] + cx * (pw + gap),
+                    presets_at[1] + cy * (bh + gap),
+                    pw,
+                    bh,
+                ];
+                self.button(o, pr, name, 14.0 * u, fill, ink, Hit::Preset(i as u8));
+            }
+            let half = (last_at[2] - gap) / 2.0;
+            let [lx, ly, _] = last_at;
+            self.button(
+                o,
+                [lx, ly, half, bh],
+                "Cancel",
+                15.0 * u,
+                RAISED,
+                TEXT,
+                Hit::CancelNew,
+            );
+            self.button(
+                o,
+                [lx + half + gap, ly, half, bh],
+                "Start",
+                15.0 * u,
+                palette::ACCENT,
+                palette::GROUND,
+                Hit::StartNew,
+            );
+            return;
+        }
+
+        for n in 0..SLOTS {
+            let slot = view.slots.get(usize::from(n)).cloned().unwrap_or_default();
+            let b = [left, y, inner, row - gap];
+            let fill = if slot.current { PRESSED } else { RAISED };
+            o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, fill);
+            self.hits.push((b, Hit::Block));
+            // The buttons on the right, then the words in what is left.
+            let mut bx = b[0] + b[2] - 6.0 * u;
+            let by = b[1] + (b[3] - bh) / 2.0;
+            if slot.current {
+                let tag = "Playing";
+                let tpx = 13.0 * u;
+                bx -= o.measure(tag, tpx) + 8.0 * u;
+                o.text(
+                    tag,
+                    [bx, b[1] + (b[3] + o.cap_height(tpx)) / 2.0],
+                    tpx,
+                    WORKING,
+                );
+            } else if slot.used {
+                let asking = self.confirm_delete == Some(n);
+                let (label, fill, w) = if asking {
+                    ("Delete?", palette::STARVE, 84.0 * u)
+                } else {
+                    ("×", PANEL, 44.0 * u)
+                };
+                bx -= w;
+                self.button(
+                    o,
+                    [bx, by, w, bh],
+                    label,
+                    15.0 * u,
+                    fill,
+                    TEXT,
+                    Hit::SlotDelete(n),
+                );
+                bx -= 72.0 * u + 6.0 * u;
+                self.button(
+                    o,
+                    [bx, by, 72.0 * u, bh],
+                    "Load",
+                    15.0 * u,
+                    palette::ACCENT,
+                    palette::GROUND,
+                    Hit::SlotLoad(n),
+                );
+            } else {
+                bx -= 96.0 * u;
+                self.button(
+                    o,
+                    [bx, by, 96.0 * u, bh],
+                    "New game",
+                    15.0 * u,
+                    palette::ACCENT,
+                    palette::GROUND,
+                    Hit::SlotNew(n),
+                );
+            }
+            let tx = b[0] + 12.0 * u;
+            let words = (bx - 8.0 * u - tx).max(20.0 * u);
+            let name = if slot.used {
+                format!("Slot {} · {}", n + 1, slot.title)
+            } else {
+                format!("Slot {} · empty", n + 1)
+            };
+            let npx = fit(o, &name, 15.0 * u, words);
+            if slot.used {
+                o.text(&name, [tx, b[1] + b[3] * 0.42], npx, TEXT);
+                let dpx = fit(o, &slot.detail, 13.0 * u, words);
+                o.text(&slot.detail, [tx, b[1] + b[3] * 0.78], dpx, MUTED);
+            } else {
+                let y = b[1] + (b[3] + o.cap_height(npx)) / 2.0;
+                o.text(&name, [tx, y], npx, TEXT);
+            }
+            y += row;
+        }
+        // Low-power mode.
+        let on = self.low_power;
+        let label = if on {
+            "Low-power mode: on"
+        } else {
+            "Low-power mode: off"
+        };
+        let (fill, ink) = if on {
+            (PRESSED, WORKING)
+        } else {
+            (RAISED, TEXT)
+        };
+        self.button(
+            o,
+            [left, y, inner, bh],
+            label,
+            15.0 * u,
+            fill,
+            ink,
+            Hit::Power,
+        );
+    }
+
+    /// The die for a random seed: a rounded square with five pips.
+    fn dice(&mut self, o: &mut Overlay, r: Rect) {
+        let u = self.unit;
+        o.panel([r[0], r[1]], [r[2], r[3]], 10.0 * u, RAISED);
+        let s = 22.0 * u;
+        let (x, y) = (r[0] + (r[2] - s) / 2.0, r[1] + (r[3] - s) / 2.0);
+        o.panel([x, y], [s, s], 5.0 * u, TEXT);
+        let p = 4.0 * u;
+        for (dx, dy) in [
+            (0.25, 0.25),
+            (0.75, 0.25),
+            (0.5, 0.5),
+            (0.25, 0.75),
+            (0.75, 0.75),
+        ] {
+            o.panel(
+                [x + s * dx - p / 2.0, y + s * dy - p / 2.0],
+                [p, p],
+                p / 2.0,
+                PANEL,
+            );
+        }
+        self.hits.push((r, Hit::Dice));
     }
 
     /// A round button that opens the world map: a map folded in three. Lit
