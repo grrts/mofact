@@ -12,6 +12,9 @@ mofact-core.workspace = true
 mofact-sim.workspace = true
 mofact-content.workspace = true
 mofact-headless.workspace = true
+mofact-render.workspace = true
+mofact-ui.workspace = true
+mofact-input.workspace = true
 
 [lints]
 workspace = true

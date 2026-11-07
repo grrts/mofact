@@ -27,6 +27,8 @@ mod guide;
 mod native;
 mod ore;
 #[cfg(test)]
+mod perf;
+#[cfg(test)]
 mod replay;
 pub mod slots;
 pub mod sound;

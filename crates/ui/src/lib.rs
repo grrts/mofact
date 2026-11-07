@@ -376,6 +376,9 @@ pub struct Hud {
     goal_seen: Option<u16>,
     /// What's stuck, as of the last frame drawn.
     found: Vec<Problem>,
+    /// What [`Hud::found`] was worked out from: the time in quarter seconds,
+    /// how much is built, and a digest of every machine's state.
+    found_for: Option<(u64, usize, u64, usize)>,
     /// The line last jumped to and which of its places, so another tap
     /// on it goes to the next one.
     jumped: Option<(problems::Trouble, Option<BuildingId>, usize)>,
@@ -914,7 +917,23 @@ impl Hud {
         let right = right - gap - 36.0 * u;
         self.map_button(o, [right, mt]);
         let right = right - gap;
-        self.found = problems::find(view);
+        // Looking for problems walks the whole factory: on a big one, do
+        // it four times a second, or at once when a machine's state or the
+        // number of things built changes (T65).
+        let snap = view.snapshot;
+        let key = (
+            snap.tick / 15,
+            snap.entities.len(),
+            snap.entities
+                .iter()
+                .map(|e| e.state as u64 + 1)
+                .fold(0u64, |h, s| h.wrapping_mul(31).wrapping_add(s)),
+            snap.grids.len(),
+        );
+        if self.found_for != Some(key) {
+            self.found_for = Some(key);
+            self.found = problems::find(view);
+        }
         if self.found.is_empty() {
             self.problems = false;
         }

@@ -62,7 +62,14 @@ impl Scene {
         // A dot `d` tiles across centred on `c`.
         let blob = |c: [f32; 2], d: f32| ([c[0] - d / 2.0, c[1] - d / 2.0], [d, d]);
 
+        // The tile alone rules out most of a big factory before any lookup.
+        let reach = f32::from(look.largest());
+        let near =
+            |x: f32, y: f32| x + reach >= lo[0] && y + reach >= lo[1] && x <= hi[0] && y <= hi[1];
         for e in &latest.entities {
+            if !near(e.pos.x as f32, e.pos.y as f32) {
+                continue;
+            }
             let Some((w, h)) = look.size(&e.building) else {
                 continue;
             };
