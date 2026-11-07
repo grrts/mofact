@@ -21,6 +21,7 @@
 mod autosave;
 mod built;
 mod bundled;
+pub mod cloud;
 pub mod game;
 mod guide;
 pub mod haptics;

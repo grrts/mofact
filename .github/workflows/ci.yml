@@ -55,6 +55,13 @@ jobs:
       - name: App shell smoke test
         if: runner.os == 'Linux'
         run: xvfb-run -a cargo run -p mofact -- --frames 120
+      # Airplane mode (T64): the same run with no network at all, as a
+      # fresh network namespace has none. Nothing may wait on it.
+      - name: App shell offline
+        if: runner.os == 'Linux'
+        run: |
+          cargo build -p mofact
+          sudo unshare -n -- sudo -u "$USER" --preserve-env=HOME,PATH xvfb-run -a ./target/debug/mofact --frames 120
       - name: App shell smoke test
         if: runner.os == 'macOS'
         run: cargo run -p mofact -- --frames 120

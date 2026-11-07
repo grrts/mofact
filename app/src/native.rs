@@ -290,6 +290,13 @@ pub fn run() -> Result<(), String> {
 /// game is remembered as bought, and a way to remember it.
 pub type MakeShop = Box<dyn FnOnce(bool, Box<dyn FnMut(bool)>) -> Box<dyn crate::shop::Shop>>;
 
+/// Send the slot being played, as just saved at `path`, to the cloud.
+fn upload(cloud: &mut Option<Box<dyn crate::cloud::Cloud>>, files: &autosave::Files, path: &Path) {
+    if let (Some(c), Ok(bytes)) = (cloud, std::fs::read(path)) {
+        c.upload(crate::slots::Store::current(files), &bytes);
+    }
+}
+
 /// What a phone brings to [`run_with`] that SDL doesn't give.
 #[derive(Default)]
 pub struct Platform {
@@ -298,11 +305,17 @@ pub struct Platform {
     pub shop: Option<MakeShop>,
     /// Plays a feel on the device.
     pub haptic: Option<fn(crate::haptics::Haptic)>,
+    /// Its cloud for the save slots (T62); with none they stay on the device.
+    pub cloud: Option<Box<dyn crate::cloud::Cloud>>,
 }
 
 /// [`run`], with what the platform brings.
 pub fn run_with(platform: Platform) -> Result<(), String> {
-    let Platform { shop, haptic } = platform;
+    let Platform {
+        shop,
+        haptic,
+        mut cloud,
+    } = platform;
     let args = args()?;
     let content = match &args.data {
         Some(dir) => mofact_content::load_dir(Path::new(dir)).map_err(|e| e.to_string())?,
@@ -320,6 +333,11 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
             .unwrap_or_else(|_| PathBuf::from("autosave.mofact")),
     };
     let mut files = autosave::Files::new(save_path);
+    if let (Some(c), None, None) = (&mut cloud, &args.scenario, &args.screenshot) {
+        for slot in crate::cloud::pull(&content, c.as_mut(), &mut files) {
+            println!("mofact: slot {} came down from the cloud", slot + 1);
+        }
+    }
     let save_path = files.path(crate::slots::Store::current(&files));
     let saved = match (&args.scenario, &args.screenshot) {
         (None, None) => autosave::load(&save_path, &content),
@@ -410,6 +428,7 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
                     app.suspend();
                     hush(true);
                     report(saves.now(&app.game.sim));
+                    upload(&mut cloud, &files, saves.path());
                 }
                 Event::AppDidEnterForeground { .. } => {
                     app.resume()?;
@@ -420,6 +439,7 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
                         app.suspend();
                         hush(true);
                         report(saves.now(&app.game.sim));
+                        upload(&mut cloud, &files, saves.path());
                     }
                     WindowEvent::Restored | WindowEvent::Shown | WindowEvent::Maximized => {
                         app.resume()?;
