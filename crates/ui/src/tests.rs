@@ -1687,7 +1687,7 @@ fn a_long_blueprint_library_pages_on_a_sideways_phone() {
     f.blueprints = (0..12)
         .map(|k| {
             mofact_input::Blueprint::capture(
-                &format!("Blueprint {}", k + 1),
+                format!("Blueprint {}", k + 1),
                 [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
             )
         })
