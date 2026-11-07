@@ -1311,8 +1311,13 @@ fn nearly_every_content_name_is_translated() {
 /// app shows it, and say where words run off the screen or out of their
 /// button.
 fn overflows(lang: i18n::Lang) -> Vec<String> {
+    overflows_with(lang, false)
+}
+
+fn overflows_with(lang: i18n::Lang, large: bool) -> Vec<String> {
     let mut wrong = Vec::new();
     every_state(|f, size, scale, tool, state| {
+        f.hud.set_large_text(large);
         i18n::set_lang(lang);
         f.content = i18n::localize(&f.content);
         f.draw(size, scale, tool);
@@ -1377,6 +1382,30 @@ fn overflows(lang: i18n::Lang) -> Vec<String> {
 fn english_fits_every_screen() {
     let wrong = overflows(i18n::Lang::En);
     assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn large_text_fits_every_screen_in_english_and_german() {
+    let mut wrong = overflows_with(i18n::Lang::En, true);
+    wrong.extend(overflows_with(i18n::Lang::De, true));
+    assert!(wrong.is_empty(), "{}:\n{}", wrong.len(), wrong.join("\n"));
+}
+
+#[test]
+fn large_text_draws_bigger_and_the_menu_toggles_both_settings() {
+    let mut f = Fixture::new();
+    let size = (1170, 2532);
+    f.hud.open_menu(None);
+    f.draw(size, 3.0, &Tool::Hand);
+    let small = f.hud.unit;
+    let large = centre(f.find(&Hit::LargeText));
+    assert_eq!(f.tap(large).1, vec![Action::LargeText(true)]);
+    assert!(f.hud.large_text());
+    f.draw(size, 3.0, &Tool::Hand);
+    assert!(f.hud.unit > small * 1.1, "{} after {small}", f.hud.unit);
+    let motion = centre(f.find(&Hit::Motion));
+    assert_eq!(f.tap(motion).1, vec![Action::ReduceMotion(true)]);
+    assert!(f.hud.reduce_motion());
 }
 
 #[test]

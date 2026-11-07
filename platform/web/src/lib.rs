@@ -31,6 +31,8 @@ const SLOT_KEY: &str = "mofact-slot";
 /// not of the save.
 const LOW_POWER_KEY: &str = "mofact-low-power";
 const COLOUR_BLIND_KEY: &str = "mofact-colour-blind";
+const LARGE_TEXT_KEY: &str = "mofact-large-text";
+const REDUCE_MOTION_KEY: &str = "mofact-reduce-motion";
 const CRASH_KEY: &str = "mofact-crash";
 
 /// Crash reports kept in local storage, never sent (see `mofact::crash`).
@@ -66,6 +68,8 @@ struct Shell {
     /// Low-power and colour-blind mode as last stored.
     low_power: bool,
     colour_blind: bool,
+    large_text: bool,
+    reduce_motion: bool,
     language: mofact_ui::i18n::Choice,
 }
 
@@ -103,14 +107,33 @@ impl Shell {
             };
             let _ = self.window.navigator().vibrate_with_duration(ms);
         }
-        // Remember low-power mode for next time.
-        let (low, safe) = (self.game.low_power(), self.game.colour_blind());
-        if (low, safe) != (self.low_power, self.colour_blind) {
-            (self.low_power, self.colour_blind) = (low, safe);
+        // Remember the toggles in the menu for next time.
+        let g = &self.game;
+        let now = (
+            g.low_power(),
+            g.colour_blind(),
+            g.large_text(),
+            g.reduce_motion(),
+        );
+        let was = (
+            self.low_power,
+            self.colour_blind,
+            self.large_text,
+            self.reduce_motion,
+        );
+        if now != was {
+            (
+                self.low_power,
+                self.colour_blind,
+                self.large_text,
+                self.reduce_motion,
+            ) = now;
             if let Ok(Some(st)) = self.window.local_storage() {
                 let flag = |on: bool| if on { "1" } else { "0" };
-                let _ = st.set_item(LOW_POWER_KEY, flag(low));
-                let _ = st.set_item(COLOUR_BLIND_KEY, flag(safe));
+                let _ = st.set_item(LOW_POWER_KEY, flag(now.0));
+                let _ = st.set_item(COLOUR_BLIND_KEY, flag(now.1));
+                let _ = st.set_item(LARGE_TEXT_KEY, flag(now.2));
+                let _ = st.set_item(REDUCE_MOTION_KEY, flag(now.3));
             }
         }
         // And the language, when the player picks one.
@@ -396,6 +419,8 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         safe: window.document().and_then(|d| d.get_element_by_id("safe")),
         low_power: false,
         colour_blind: false,
+        large_text: false,
+        reduce_motion: false,
         language: mofact_ui::i18n::Choice::Device,
     }));
     {
@@ -416,6 +441,26 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         if stored(COLOUR_BLIND_KEY) {
             s.game.set_colour_blind(true);
             s.colour_blind = true;
+        }
+        if stored(LARGE_TEXT_KEY) {
+            s.game.set_large_text(true);
+            s.large_text = true;
+        }
+        // The browser's own "reduce motion" asks for it too, until the
+        // player says otherwise.
+        let asked = window
+            .match_media("(prefers-reduced-motion: reduce)")
+            .ok()
+            .flatten()
+            .is_some_and(|m| m.matches());
+        let motion = window
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|st| st.get_item(REDUCE_MOTION_KEY).ok().flatten());
+        if motion.map_or(asked, |v| v == "1") {
+            s.game.set_reduce_motion(true);
+            s.reduce_motion = true;
         }
         // The browser's languages, most preferred first; `?lang=ja` in the
         // address stands in for them.
