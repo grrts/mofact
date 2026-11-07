@@ -16,6 +16,7 @@ mofact-core.workspace = true
 mofact-sim.workspace = true
 mofact-input.workspace = true
 mofact-render.workspace = true
+mofact-ui.workspace = true
 mofact-audio.workspace = true
 wgpu = { workspace = true, features = ["webgl"] }
 wasm-bindgen = "0.2.100"

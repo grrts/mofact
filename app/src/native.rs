@@ -375,6 +375,10 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
     let video = sdl.video().map_err(|e| e.to_string())?;
     let mut events = sdl.event_pump().map_err(|e| e.to_string())?;
     let mut app = App::new(&video, content.clone(), sim, ore, camera)?;
+    // The language first, so the first words shown are in it.
+    let mut settings = files.settings();
+    app.game.set_device_lang(crate::locale::device());
+    app.game.set_language(settings.language);
     if let Some(report) = crashed {
         eprintln!("mofact: the last run crashed; its report is in the game menu");
         app.game.set_crash_report(report);
@@ -396,9 +400,8 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
     );
 
     let mut saves = autosave::Autosave::new(save_path);
-    let mut settings = files.settings();
-    app.game.set_low_power(settings.0);
-    app.game.set_colour_blind(settings.1);
+    app.game.set_low_power(settings.low_power);
+    app.game.set_colour_blind(settings.colour_blind);
     let (owned, keep) = (files.full_game(), Box::new(files.keep_full_game()));
     app.game.set_shop(match shop {
         Some(make) => make(owned, keep),
@@ -475,7 +478,11 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
             report(app.game.serve(&mut files));
             saves.set_path(files.path(crate::slots::Store::current(&files)));
         }
-        let now = (app.game.low_power(), app.game.colour_blind());
+        let now = autosave::Settings {
+            low_power: app.game.low_power(),
+            colour_blind: app.game.colour_blind(),
+            language: app.game.language(),
+        };
         if now != settings {
             settings = now;
             report(files.set_settings(now));
@@ -563,6 +570,9 @@ fn screenshots(
     camera: Camera,
     dir: &Path,
 ) -> Result<(), String> {
+    // In the device's language: `MOFACT_LANG=ja` shoots the Japanese HUD.
+    mofact_ui::i18n::set_lang(crate::locale::device());
+    let shown = mofact_ui::i18n::localize(content);
     for _ in 0..10 * mofact_core::TICKS_PER_SECOND {
         sim.step();
     }
@@ -723,7 +733,7 @@ fn screenshots(
         let view = View {
             size,
             scale,
-            content,
+            content: &shown,
             look: &look,
             snapshot: &latest,
             tool: &Tool::Hand,
@@ -793,7 +803,7 @@ fn screenshots(
             let view = View {
                 size,
                 scale,
-                content,
+                content: &shown,
                 look: &look,
                 snapshot: &stuck,
                 tool: &Tool::Hand,
@@ -889,7 +899,7 @@ fn screenshots(
             let view = View {
                 size,
                 scale,
-                content,
+                content: &shown,
                 look: &look,
                 snapshot: if sheet == "problems" { &stuck } else { &latest },
                 tool: &Tool::Hand,

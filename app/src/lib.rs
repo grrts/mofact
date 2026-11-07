@@ -27,6 +27,8 @@ pub mod game;
 mod guide;
 pub mod haptics;
 #[cfg(not(target_arch = "wasm32"))]
+mod locale;
+#[cfg(not(target_arch = "wasm32"))]
 mod native;
 mod ore;
 #[cfg(test)]

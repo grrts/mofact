@@ -25,7 +25,8 @@ pub enum Event {
     Cancelled,
     /// A restore found nothing bought on this account.
     NothingToRestore,
-    /// The store couldn't be reached or refused; the words say why.
+    /// The store couldn't be reached or refused; the words say why, or
+    /// are empty for the game to say it couldn't reach the store.
     Failed(String),
 }
 
@@ -102,15 +103,19 @@ impl Purchase {
                 }
                 Event::Cancelled => {
                     self.busy = false;
-                    self.note = Some("Purchase cancelled: nothing was charged.".into());
+                    self.note = Some(mofact_ui::tr("store.cancelled").into());
                 }
                 Event::NothingToRestore => {
                     self.busy = false;
-                    self.note = Some("No purchase found on this account.".into());
+                    self.note = Some(mofact_ui::tr("store.not_found").into());
                 }
                 Event::Failed(why) => {
                     self.busy = false;
-                    self.note = Some(why);
+                    self.note = Some(if why.is_empty() {
+                        mofact_ui::tr("store.unreachable").into()
+                    } else {
+                        why
+                    });
                 }
             }
         }

@@ -15,7 +15,7 @@ use mofact_core::geom::TilePos;
 use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
-use mofact_ui::{Action, Hud, SlotView, StoreView, View};
+use mofact_ui::{tr, trf, Action, Hud, SlotView, StoreView, View};
 use web_time::{Duration, Instant};
 
 /// Frame pacing (T66): 60 fps while playing, 30 in low-power mode or once
@@ -44,6 +44,10 @@ pub struct Game {
     /// A letter key for each building the toolbar has no number for.
     hotkeys: Vec<(char, mofact_core::ids::BuildingId)>,
     content: Content,
+    /// The content with its names in the player's language, for the HUD,
+    /// and the language it is in.
+    shown: Content,
+    shown_lang: mofact_ui::i18n::Lang,
     ore: OreMap,
     pub controls: Controls,
     built: Built,
@@ -152,11 +156,28 @@ impl Game {
             haptic: None,
             crash: None,
             clipboard: None,
+            shown: content.clone(),
+            shown_lang: mofact_ui::i18n::Lang::En,
             content,
             ore,
             controls,
             latest: (0, Instant::now()),
         }
+    }
+
+    /// The language the player chose (T65): the device's, or one of their own.
+    pub fn language(&self) -> mofact_ui::i18n::Choice {
+        self.hud.language()
+    }
+
+    /// Choose the language, as a saved setting does at start.
+    pub fn set_language(&mut self, choice: mofact_ui::i18n::Choice) {
+        self.hud.set_language(choice);
+    }
+
+    /// Tell the game the device's language, from its preferred locales.
+    pub fn set_device_lang(&mut self, lang: mofact_ui::i18n::Lang) {
+        self.hud.set_device_lang(lang);
     }
 
     /// Whether low-power mode is on (T66).
@@ -185,9 +206,7 @@ impl Game {
     /// The game crashed last time: say so, and offer the report in the menu.
     pub fn set_crash_report(&mut self, report: String) {
         self.crash = Some(report);
-        self.hud.toast(
-            "Mofact stopped unexpectedly last time. Nothing was sent; the menu can copy the report.",
-        );
+        self.hud.toast(tr("toast.crashed"));
     }
 
     /// Sell the full game through `shop`: the demo's gate holds until it
@@ -229,7 +248,7 @@ impl Game {
         if let Some(p) = &mut self.purchase {
             if p.poll() {
                 self.sim.set_demo(None);
-                self.hud.toast("The full game is open. Thank you!");
+                self.hud.toast(tr("toast.full_game_open"));
             }
             self.store = p.view();
         }
@@ -240,18 +259,18 @@ impl Game {
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
-                self.hud.toast(match why {
-                    E::Blocked => "Something is in the way.",
-                    E::CannotAfford => "Not enough plates in stock.",
-                    E::Locked => "That isn't unlocked yet.",
-                    E::NoSuchEntity => "That's already gone.",
-                    E::UnknownContent => "That isn't in this game's data.",
-                    E::FluidsMix => "That would mix two fluids.",
-                    E::NoOre => "Drills only go on ore: tap a coloured ore tile.",
-                    E::Terrain => "Nothing can be built on water or cliffs.",
-                    E::Overgrown => "Trees in the way: drag over them with Remove to clear them.",
-                    E::FullGame => "That research needs the full game.",
-                });
+                self.hud.toast(tr(match why {
+                    E::Blocked => "error.blocked",
+                    E::CannotAfford => "error.cannot_afford",
+                    E::Locked => "error.locked",
+                    E::NoSuchEntity => "error.no_such_entity",
+                    E::UnknownContent => "error.unknown_content",
+                    E::FluidsMix => "error.fluids_mix",
+                    E::NoOre => "error.no_ore",
+                    E::Terrain => "error.terrain",
+                    E::Overgrown => "error.overgrown",
+                    E::FullGame => "error.full_game",
+                }));
             }
         }
         for action in self.hud.poll(Instant::now()) {
@@ -437,11 +456,15 @@ impl Game {
             scale,
             t,
         );
+        if self.shown_lang != mofact_ui::i18n::lang() {
+            self.shown_lang = mofact_ui::i18n::lang();
+            self.shown = mofact_ui::i18n::localize(&self.content);
+        }
         let builder = &self.controls.builder;
         let view = View {
             size: target.size(),
             scale,
-            content: &self.content,
+            content: &self.shown,
             look: &self.look,
             snapshot: &latest,
             tool: &builder.tool,
@@ -519,6 +542,8 @@ impl Game {
             Action::Send(command) => self.sim.send(command),
             Action::Undo => self.sim.undo(),
             Action::MenuOpened => self.requests.push(Request::Refresh),
+            // The slots' words are in the language they were listed in.
+            Action::Language(_) => self.requests.push(Request::Refresh),
             Action::LoadSlot(n) => self.requests.push(Request::Load(n)),
             Action::DeleteSlot(n) => self.requests.push(Request::Delete(n)),
             Action::NewGame { slot, seed, preset } => {
@@ -528,8 +553,7 @@ impl Game {
             Action::CopyCrash => {
                 if let Some(r) = self.crash.take() {
                     self.clipboard = Some(r);
-                    self.hud
-                        .toast("Crash report copied: paste it into a bug report or an email.");
+                    self.hud.toast(tr("toast.crash_copied"));
                 }
             }
             Action::Buy => {
@@ -576,7 +600,7 @@ impl Game {
                             });
                             self.hud.stop_picked();
                         }
-                        _ => self.hud.toast("Tap a train stop to add it"),
+                        _ => self.hud.toast(tr("toast.tap_stop")),
                     }
                     return;
                 }
@@ -709,7 +733,7 @@ impl Game {
                     store.write(current, &self.save_bytes()?)?;
                     self.switch(sim);
                     store.set_current(n);
-                    self.hud.toast(format!("Slot {} loaded", n + 1));
+                    self.hud.toast(trf("toast.slot_loaded", &[&(n + 1)]));
                 }
                 Request::New { slot, seed, preset } => {
                     if !crate::slots::valid(slot) {
@@ -723,7 +747,7 @@ impl Game {
                     store.write(slot, &sim.save())?;
                     self.switch(sim);
                     store.set_current(slot);
-                    self.hud.toast(format!("New game in slot {}", slot + 1));
+                    self.hud.toast(trf("menu.new_game_in_slot", &[&(slot + 1)]));
                 }
             }
         }

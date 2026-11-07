@@ -2,8 +2,11 @@
 //! the UI lane (T21). Everything is in physical pixels, y down.
 //!
 //! Text uses the prototype's UI face, Saira Semi Condensed (SIL OFL, in
-//! `assets/fonts`). Glyphs are rasterised the first time each size is used
-//! and packed into the overlay atlas alongside the panel and icon sprites.
+//! `assets/fonts`). Japanese and Chinese fall back to Noto Sans JP and SC,
+//! cut down to the characters the game's strings use (T65,
+//! `tools/fonts/subset.py`). Glyphs are rasterised the first time each size
+//! is used and packed into the overlay atlas alongside the panel and icon
+//! sprites.
 
 use crate::atlas::{Atlas, Uv};
 use crate::look::Look;
@@ -11,6 +14,9 @@ use crate::palette::Rgba;
 use crate::scene::Instance;
 
 const FONT: &[u8] = include_bytes!("../../../assets/fonts/SairaSemiCondensed-SemiBold.ttf");
+/// The Han script and kana faces: Japanese first, then Simplified Chinese.
+const JAPANESE: &[u8] = include_bytes!("../../../assets/fonts/NotoSansJP-SemiBold-subset.ttf");
+const CHINESE: &[u8] = include_bytes!("../../../assets/fonts/NotoSansSC-SemiBold-subset.ttf");
 /// Icons in the overlay are painted at this many pixels a tile.
 const ICON_PX: u32 = 64;
 /// The rounded panel sprite: corner radius and size, in pixels.
@@ -20,8 +26,27 @@ const PANEL_R: u32 = 12;
 pub struct Overlay {
     pub atlas: Atlas,
     pub instances: Vec<Instance>,
-    font: fontdue::Font,
+    /// Where each run of text went this frame (left, top, width, height),
+    /// and how many glyphs found no room in the atlas, all told: for tests
+    /// that check words fit their controls in every language.
+    pub runs: Vec<([f32; 4], usize)>,
+    /// Each panel this frame and the instance it starts at, so a test can
+    /// tell which words lie under a later panel.
+    pub panels: Vec<([f32; 4], usize)>,
+    pub dropped: usize,
+    /// Where glyphs start in the atlas, after the panel and icons: when
+    /// glyphs fill it, they are cleared from here and rasterised again as
+    /// text needs them. Japanese and Chinese have hundreds of characters.
+    glyphs_from: (u32, u32, u32),
+    /// Saira, then the Japanese and the Chinese face.
+    fonts: [fontdue::Font; 3],
+    /// Whether a character both Han faces have takes the Chinese shape:
+    /// the same character is drawn differently in Japan and in China.
+    chinese: bool,
 }
+
+/// Which of the overlay's faces draws a character.
+const LATIN: usize = 0;
 
 impl Overlay {
     /// An overlay that can show `look`'s buildings and items as icons.
@@ -40,18 +65,53 @@ impl Overlay {
         // what's left out when the icons run out of room.
         let painted = look.paint(&mut atlas, ICON_PX);
         debug_assert!(painted, "the overlay atlas has room for every icon");
-        let font = fontdue::Font::from_bytes(FONT, fontdue::FontSettings::default())
-            .expect("the bundled font parses");
+        let face = |bytes| {
+            fontdue::Font::from_bytes(bytes, fontdue::FontSettings::default())
+                .expect("the bundled font parses")
+        };
         Self {
+            glyphs_from: atlas.mark(),
             atlas,
             instances: Vec::new(),
-            font,
+            runs: Vec::new(),
+            panels: Vec::new(),
+            dropped: 0,
+            fonts: [face(FONT), face(JAPANESE), face(CHINESE)],
+            chinese: false,
         }
+    }
+
+    /// Draw Han characters the Chinese way (true) or the Japanese way.
+    pub fn prefer_chinese(&mut self, chinese: bool) {
+        self.chinese = chinese;
+    }
+
+    /// The face that draws `c`: Saira when it has it, then the Han face of
+    /// the language shown, then the other one.
+    fn face(&self, c: char) -> usize {
+        let order = if self.chinese { [0, 2, 1] } else { [0, 1, 2] };
+        order
+            .into_iter()
+            .find(|&f| self.fonts[f].lookup_glyph_index(c) != 0)
+            .unwrap_or(LATIN)
+    }
+
+    /// Whether any face has a glyph for `c`.
+    pub fn has_glyph(&self, c: char) -> bool {
+        c.is_whitespace() || self.fonts.iter().any(|f| f.lookup_glyph_index(c) != 0)
     }
 
     /// Start a new frame.
     pub fn clear(&mut self) {
         self.instances.clear();
+        self.runs.clear();
+        self.panels.clear();
+        // Between frames no quad points at a glyph, so they can go: room
+        // for the next frame's, which come back as they are drawn.
+        let icons = (self.glyphs_from.1 + self.glyphs_from.2) as f32 / self.atlas.size as f32;
+        if self.atlas.filled() > icons + (1.0 - icons) / 2.0 {
+            self.atlas.rewind(self.glyphs_from, "glyph:");
+        }
     }
 
     fn quad(&mut self, pos: [f32; 2], size: [f32; 2], uv: Uv, tint: Rgba, turns: u32) {
@@ -69,6 +129,8 @@ impl Overlay {
         let Some(uv) = self.atlas.get("panel") else {
             return;
         };
+        self.panels
+            .push(([pos[0], pos[1], size[0], size[1]], self.instances.len()));
         let r = radius.min(size[0] / 2.0).min(size[1] / 2.0).max(0.0);
         // The source is 25 texels: 12 corner, 1 middle, 12 corner.
         let t = uv[2] / (PANEL_R * 2 + 1) as f32;
@@ -103,31 +165,40 @@ impl Overlay {
     }
 
     fn glyph(&mut self, c: char, px: u32) -> Option<(fontdue::Metrics, Option<Uv>)> {
-        let name = format!("glyph:{px}:{c}");
-        let metrics = self.font.metrics(c, px as f32);
+        let f = self.face(c);
+        let name = format!("glyph:{f}:{px}:{c}");
+        let metrics = self.fonts[f].metrics(c, px as f32);
         if metrics.width == 0 || metrics.height == 0 {
             return Some((metrics, None));
         }
         if let Some(uv) = self.atlas.get(&name) {
             return Some((metrics, Some(uv)));
         }
-        let (m, coverage) = self.font.rasterize(c, px as f32);
+        let (m, coverage) = self.fonts[f].rasterize(c, px as f32);
         let w = m.width as u32;
-        let uv = self.atlas.add(&name, w, m.height as u32, |x, y| {
+        let Some(uv) = self.atlas.add(&name, w, m.height as u32, |x, y| {
             [255, 255, 255, coverage[(y * w + x) as usize]]
-        })?;
+        }) else {
+            self.dropped += 1;
+            return None;
+        };
         Some((m, Some(uv)))
     }
 
     /// How wide `text` is at `px` pixels.
     pub fn measure(&self, text: &str, px: f32) -> f32 {
         text.chars()
-            .map(|c| self.font.metrics(c, px.round()).advance_width)
+            .map(|c| {
+                self.fonts[self.face(c)]
+                    .metrics(c, px.round())
+                    .advance_width
+            })
             .sum()
     }
 
     /// Draw `text` with its baseline at `pos[1]`, starting at `pos[0]`. Returns its width.
     pub fn text(&mut self, text: &str, pos: [f32; 2], px: f32, color: Rgba) -> f32 {
+        let first = self.instances.len();
         let px = px.round().max(1.0) as u32;
         let mut x = pos[0].round();
         let y = pos[1].round();
@@ -147,12 +218,17 @@ impl Overlay {
             }
             x += m.advance_width;
         }
-        x - pos[0].round()
+        let w = x - pos[0].round();
+        if w > 0.0 {
+            let top = y - self.cap_height(px as f32);
+            self.runs.push(([pos[0].round(), top, w, px as f32], first));
+        }
+        w
     }
 
     /// The distance from the baseline up to the top of capitals, at `px` pixels.
     pub fn cap_height(&self, px: f32) -> f32 {
-        let m = self.font.metrics('H', px.round());
+        let m = self.fonts[LATIN].metrics('H', px.round());
         m.height as f32 + m.ymin as f32
     }
 }
@@ -176,6 +252,32 @@ mod tests {
         assert!(xs.windows(2).all(|p| p[0] < p[1]), "{xs:?}");
         let bottom_of_b = o.instances[0].pos[1] + o.instances[0].size[1];
         assert!((bottom_of_b - 40.0).abs() <= 1.0, "B sits on the baseline");
+    }
+
+    #[test]
+    fn han_text_draws_and_a_full_atlas_makes_room_between_frames() {
+        let mut o = Overlay::new(&Look::default());
+        assert!(o.has_glyph('鉄') && o.has_glyph('铁') && o.has_glyph('é'));
+        o.text("鉄板", [0.0, 40.0], 16.0, [255; 4]);
+        assert_eq!(o.instances.len(), 2, "both drawn by the Japanese face");
+        let mut frames = 0;
+        let start = o.atlas.filled();
+        let half = start + (1.0 - start) / 2.0;
+        while o.atlas.filled() <= half {
+            o.clear();
+            o.text(
+                &format!("鉄板{frames}"),
+                [0.0, 40.0],
+                20.0 + frames as f32,
+                [255; 4],
+            );
+            frames += 1;
+        }
+        o.clear();
+        assert!(o.atlas.filled() < half, "glyphs cleared");
+        assert!(o.atlas.get("panel").is_some(), "but not the panel");
+        o.text("鉄", [0.0, 40.0], 16.0, [255; 4]);
+        assert_eq!((o.instances.len(), o.dropped), (1, 0));
     }
 
     #[test]
