@@ -8,7 +8,7 @@ use crate::palette::{self, Rgba};
 use mofact_artkit::belt::{self as belts, Bend, Joins};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId};
-use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot};
+use mofact_core::snapshot::{BeltItemView, EntityView, MachineState, Snapshot, TrainView};
 use std::collections::{HashMap, HashSet};
 
 /// What the screen shows: the world point at its centre and how many screen
@@ -283,6 +283,13 @@ impl Scene {
                 continue;
             }
             machines.push(instance);
+            if let Some(platform) = look.platform(&e.building) {
+                machines.push(Instance {
+                    uv: uv(platform),
+                    turns: turns(e.dir),
+                    ..instance
+                });
+            }
             // What a pipe or tank holds shows in its channel or window: the
             // fluid's colour, fading in a pipe and shrinking in a tank as it
             // runs low. An empty one shows dark, so a starved line stands out.
@@ -369,6 +376,38 @@ impl Scene {
             });
         }
         self.instances.append(&mut machines);
+        // Trains ride over the track, smoothed between ticks as items are.
+        let at = |t: &TrainView| {
+            let (dx, dy) = t.dir.offset();
+            let k = t.along.clamp(0.0, 1.0);
+            [
+                t.pos.x as f32 + dx as f32 * k,
+                t.pos.y as f32 + dy as f32 * k,
+            ]
+        };
+        for t in &latest.trains {
+            let Some(sprite) = look.sprite(&t.building, t.dir, None, false) else {
+                continue;
+            };
+            let mut p = at(t);
+            if let Some(old) = prev.trains.iter().find(|o| o.id == t.id) {
+                let q = at(old);
+                // A train only moves a tile or so a tick; anything further is a jump.
+                if (p[0] - q[0]).abs() + (p[1] - q[1]).abs() < 2.0 {
+                    p = [q[0] + (p[0] - q[0]) * alpha, q[1] + (p[1] - q[1]) * alpha];
+                }
+            }
+            if !seen(p[0], p[1], 1.0, 1.0) {
+                continue;
+            }
+            self.instances.push(Instance {
+                pos: p,
+                size: [1.0, 1.0],
+                uv: uv(sprite),
+                tint: palette::WHITE,
+                turns: turns(t.dir),
+            });
+        }
         self.instances.append(&mut badges);
     }
 }

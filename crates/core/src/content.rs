@@ -129,6 +129,21 @@ pub enum BuildingRole {
         fluid: ItemId,
         per_second: f32,
     },
+    /// A rail tile (T46). Rails join every rail, signal and stop beside
+    /// them; trains run along them tile to tile.
+    Rail,
+    /// A rail tile that splits the track into blocks: a train only goes
+    /// past it into a block no other train is in or bound for.
+    RailSignal,
+    /// A rail tile where trains stop (T47). Belts pointed into it load the
+    /// train standing there; it unloads out of the side it faces.
+    TrainStop,
+    /// A train: runs at `tiles_per_second` along rails and carries up to
+    /// `capacity` items between the stops on its schedule.
+    Locomotive {
+        tiles_per_second: f32,
+        capacity: u32,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

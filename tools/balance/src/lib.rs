@@ -421,7 +421,8 @@ mod tests {
                 "fluid-handling",
                 "steam-power",
                 "oil-processing",
-                "fast-assembly"
+                "fast-assembly",
+                "railways"
             ]
         );
     }

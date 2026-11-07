@@ -14,6 +14,9 @@ pub struct Occupant {
     pub dir: Dir,
     /// The hub can't be removed.
     pub removable: bool,
+    /// Rails, signals and stops: trains go on them, and signals and stops
+    /// can be put on a rail in its place.
+    pub track: bool,
 }
 
 /// The built world, as the tools see it.
@@ -54,6 +57,8 @@ enum Gesture {
         start: Option<Occupant>,
     },
     Place(TilePos),
+    /// A building drawn along the drag, as track is.
+    Line(Vec<(TilePos, Dir)>),
     /// What the finger has passed over so far, in the order it got there,
     /// and the trees it passed over.
     Remove(Vec<EntityId>, Vec<TilePos>),
@@ -67,6 +72,10 @@ pub struct Builder {
     pub recipe: Option<RecipeId>,
     /// The belt tier the belt tool lays.
     pub belt: BuildingId,
+    /// Buildings drawn along a drag rather than placed by a tap: track.
+    pub lines: Vec<BuildingId>,
+    /// Buildings placed on track: signals, stops and trains.
+    pub on_track: Vec<BuildingId>,
     gesture: Option<Gesture>,
 }
 
@@ -77,6 +86,8 @@ impl Default for Builder {
             dir: Dir::East,
             recipe: None,
             belt: "belt".into(),
+            lines: Vec::new(),
+            on_track: Vec::new(),
             gesture: None,
         }
     }
@@ -86,6 +97,21 @@ impl Builder {
     pub fn set_tool(&mut self, tool: Tool) {
         self.tool = tool;
         self.gesture = None;
+    }
+
+    /// Whether the building in hand is drawn along a drag.
+    pub fn draws_line(&self) -> bool {
+        matches!(&self.tool, Tool::Place(b) if self.lines.contains(b))
+    }
+
+    /// Whether the building in hand goes on what stands at a tile: only
+    /// on nothing, or on track if it is a signal, stop or train.
+    pub fn places_on(&self, here: Option<Occupant>) -> bool {
+        match (&self.tool, here) {
+            (_, None) => true,
+            (Tool::Place(b), Some(o)) => o.track && self.on_track.contains(b),
+            _ => false,
+        }
     }
 
     pub fn rotate(&mut self) {
@@ -104,6 +130,7 @@ impl Builder {
                     start,
                 })
             }
+            Tool::Place(_) if self.draws_line() => Some(Gesture::Line(vec![(tile, self.dir)])),
             Tool::Place(_) => Some(Gesture::Place(tile)),
             Tool::Remove => {
                 let (mut marks, mut trees) = (Vec::new(), Vec::new());
@@ -118,6 +145,7 @@ impl Builder {
     pub fn drag(&mut self, tile: TilePos, ground: &dyn Ground) -> Vec<Command> {
         match &mut self.gesture {
             Some(Gesture::Belt { path, .. }) => extend(path, tile),
+            Some(Gesture::Line(path)) => *path = corner(path[0].0, tile),
             Some(Gesture::Place(t)) => *t = tile,
             Some(Gesture::Remove(marks, trees)) => mark(marks, trees, tile, ground),
             None => {}
@@ -158,8 +186,23 @@ impl Builder {
                 // `self.dir` stays as it was: drawing a belt must not change
                 // which way the next machine faces behind the player's back.
             }
+            // Track goes on every free tile along the way; it joins up by itself.
+            Some(Gesture::Line(path)) => {
+                if let Tool::Place(building) = &self.tool {
+                    for (tile, _) in path {
+                        if ground.at(tile).is_none() {
+                            out.push(Command::Place {
+                                building: building.clone(),
+                                pos: tile,
+                                dir: self.dir,
+                                recipe: None,
+                            });
+                        }
+                    }
+                }
+            }
             // A tap on something already built inspects it instead (the game does that).
-            Some(Gesture::Place(tile)) if ground.at(tile).is_some() => {}
+            Some(Gesture::Place(tile)) if !self.places_on(ground.at(tile)) => {}
             Some(Gesture::Place(tile)) => {
                 if let Tool::Place(building) = &self.tool {
                     out.push(Command::Place {
@@ -211,6 +254,14 @@ impl Builder {
                     dir,
                 })
                 .collect(),
+            (Some(Gesture::Line(path)), Tool::Place(b)) => path
+                .iter()
+                .map(|&(tile, _)| Ghost {
+                    building: b.clone(),
+                    tile,
+                    dir: self.dir,
+                })
+                .collect(),
             (Some(Gesture::Place(tile)), Tool::Place(b)) => vec![Ghost {
                 building: b.clone(),
                 tile: *tile,
@@ -229,6 +280,29 @@ fn mark(marks: &mut Vec<EntityId>, trees: &mut Vec<TilePos>, tile: TilePos, grou
         None if ground.tree(tile) && !trees.contains(&tile) => trees.push(tile),
         None => {}
     }
+}
+
+/// The tiles from `a` to `b` along the longer axis first, then the
+/// shorter: a straight run with at most one bend, as track is laid.
+fn corner(a: TilePos, b: TilePos) -> Vec<(TilePos, Dir)> {
+    let (dx, dy) = (b.x - a.x, b.y - a.y);
+    let bend = if dx.abs() >= dy.abs() {
+        TilePos::new(b.x, a.y)
+    } else {
+        TilePos::new(a.x, b.y)
+    };
+    let mut path = vec![(a, Dir::East)];
+    for to in [bend, b] {
+        let mut at = path[path.len() - 1].0;
+        while at != to {
+            let next = TilePos::new(at.x + (to.x - at.x).signum(), at.y + (to.y - at.y).signum());
+            let n = path.len();
+            path[n - 1].1 = dir_between(at, next);
+            path.push((next, dir_between(at, next)));
+            at = next;
+        }
+    }
+    path
 }
 
 fn dir_between(a: TilePos, b: TilePos) -> Dir {
@@ -299,6 +373,7 @@ mod tests {
             belt: true,
             dir,
             removable: true,
+            track: false,
         }
     }
 
@@ -389,6 +464,31 @@ mod tests {
         b.cancel(); // a second finger, or the radial menu opening
         assert!(b.marked().is_empty());
         assert!(b.end(&map).is_empty());
+    }
+
+    #[test]
+    fn track_is_drawn_along_the_drag_on_free_tiles() {
+        let mut map = Map::default();
+        map.0.insert(t(2, 0), belt(9, Dir::East));
+        let mut b = Builder {
+            lines: vec!["rail".into()],
+            ..Builder::default()
+        };
+        b.set_tool(Tool::Place("rail".into()));
+        assert!(b.draws_line());
+        b.start(t(0, 0), &map);
+        b.drag(t(3, 2), &map);
+        assert_eq!(b.ghosts().len(), 6);
+        let placed: Vec<_> = b
+            .end(&map)
+            .into_iter()
+            .map(|c| match c {
+                Command::Place { pos, .. } => (pos.x, pos.y),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        // The long way first, then the turn; the built tile is skipped.
+        assert_eq!(placed, [(0, 0), (1, 0), (3, 0), (3, 1), (3, 2)]);
     }
 
     #[test]

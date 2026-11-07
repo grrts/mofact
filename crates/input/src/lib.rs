@@ -234,7 +234,8 @@ impl Controls {
                 self.camera.handle(event);
             }
             (Pointer::Move { id, x, y }, Some((b, start, _))) if id == b => {
-                let taps = matches!(self.builder.tool, Tool::Place(_));
+                let taps =
+                    matches!(self.builder.tool, Tool::Place(_)) && !self.builder.draws_line();
                 if taps && dist(start, [x, y]) > self.slop {
                     // The finger is travelling: a pan, not a placement.
                     self.builder.cancel();

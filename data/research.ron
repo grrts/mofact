@@ -55,4 +55,10 @@
         units: 30, seconds: 20.0,
         buildings: ["fast-assembler"],
     ),
+    (
+        id: "railways", name: "Railways", tier: 2, requires: ["motors", "logistics"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1)],
+        units: 40, seconds: 15.0,
+        buildings: ["rail", "rail-signal", "train-stop", "locomotive"],
+    ),
 ]

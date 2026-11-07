@@ -221,6 +221,10 @@ enum Hit {
     Problem(usize),
     /// The sound button: turns sound off and on.
     Sound,
+    /// Give a train this schedule.
+    Schedule(EntityId, Vec<mofact_core::command::TrainStop>),
+    /// Start or stop picking a stop on the map for a train's schedule.
+    PickStop(EntityId),
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -254,6 +258,8 @@ pub struct Hud {
     muted: bool,
     /// The entity the inspect sheet shows.
     selected: Option<EntityId>,
+    /// The train waiting for a stop to be tapped on the map.
+    picking: Option<EntityId>,
     /// Whether the research sheet is open.
     research: bool,
     /// Whether the build sheet is open.
@@ -576,6 +582,16 @@ impl Hud {
                 self.selected = Some(entity);
                 vec![Action::Focus(at)]
             }
+            Hit::Schedule(entity, stops) => {
+                vec![Action::Send(Command::SetSchedule { entity, stops })]
+            }
+            Hit::PickStop(train) => {
+                self.picking = match self.picking {
+                    Some(t) if t == train => None,
+                    _ => Some(train),
+                };
+                Vec::new()
+            }
             Hit::Block => Vec::new(),
         }
     }
@@ -604,8 +620,14 @@ impl Hud {
         let selected = self
             .selected
             .and_then(|id| view.snapshot.entities.iter().find(|e| e.id == id));
-        if selected.is_none() {
+        let train = self
+            .selected
+            .and_then(|id| view.snapshot.trains.iter().find(|t| t.id == id));
+        if selected.is_none() && train.is_none() {
             self.selected = None;
+        }
+        if self.picking != self.selected {
+            self.picking = None;
         }
 
         // The toolbar, and the space left beside it for everything else.
@@ -677,6 +699,7 @@ impl Hud {
         // what to do next; the general tip would only push the map down.
         let hand_with_goal = *view.tool == Tool::Hand && view.snapshot.goal.is_some();
         if selected.is_none()
+            && train.is_none()
             && !self.research
             && !self.more
             && !self.problems
@@ -718,6 +741,10 @@ impl Hud {
 
         if let Some(e) = selected {
             self.sheet(view, o, e, [corner[0] - width, corner[1]], width);
+            return;
+        }
+        if let Some(t) = train {
+            self.train_sheet(view, o, t, [corner[0] - width, corner[1]], width);
             return;
         }
 
@@ -2017,7 +2044,8 @@ impl Hud {
 const RESERVED_KEYS: [char; 4] = ['m', 'r', 't', 'x'];
 
 /// One key for every building but the hub and belts (which have number
-/// keys): the first letter of its name that is free, in content order.
+/// keys): the first letter of its name that is free, in content order,
+/// then 8, 9 and 0.
 pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
     let mut out: Vec<(char, BuildingId)> = Vec::new();
     for b in &content.buildings {
@@ -2030,6 +2058,8 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
             .chars()
             .filter(char::is_ascii_lowercase)
             .chain('a'..='z')
+            // Once the letters run out, the number keys the toolbar leaves.
+            .chain(['8', '9', '0'])
             .find(|c| !RESERVED_KEYS.contains(c) && !out.iter().any(|(k, _)| k == c));
         if let Some(k) = key {
             out.push((k, b.id.clone()));
@@ -2083,6 +2113,18 @@ fn tip(tool: &Tool) -> &'static str {
         }
         Tool::Place(b) if b.as_str() == "underground-belt" => {
             "Place an entrance, then an exit up to 5 tiles on facing the same way."
+        }
+        Tool::Place(b) if b.as_str() == "rail" => {
+            "Drag to lay track; it joins up by itself. Signals and stops go on top."
+        }
+        Tool::Place(b) if b.as_str() == "rail-signal" => {
+            "Tap track to split it into blocks. Only one train at a time goes past."
+        }
+        Tool::Place(b) if b.as_str() == "train-stop" => {
+            "Tap track. Belts pointed in load the train; it unloads out of the arrow."
+        }
+        Tool::Place(b) if b.as_str() == "locomotive" => {
+            "Tap track to place, then tap the train to give it stops."
         }
         Tool::Place(b) if b.as_str() == "wind-turbine" => {
             "Tap to place next to a pole. Each turbine powers one lab."
@@ -2141,4 +2183,6 @@ fn wrap(o: &Overlay, text: &str, px: f32, width: f32) -> Vec<String> {
 mod tests;
 
 pub mod problems;
+mod train;
 use problems::Problem;
+pub use train::add_stop;

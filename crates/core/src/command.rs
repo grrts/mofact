@@ -33,6 +33,19 @@ pub enum Command {
     Clear { tile: TilePos },
     /// Put a cleared tree or boulder back: the undo of [`Command::Clear`].
     Regrow { tile: TilePos },
+    /// Give a train its schedule: the stops it visits in turn.
+    SetSchedule {
+        entity: EntityId,
+        stops: Vec<TrainStop>,
+    },
+}
+
+/// One stop on a train's schedule: the train stop at `at`, where it
+/// loads until full or unloads until empty.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TrainStop {
+    pub at: TilePos,
+    pub load: bool,
 }
 
 /// Why the simulation refused a command. Refused commands change nothing.

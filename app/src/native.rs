@@ -581,11 +581,17 @@ fn screenshots(
         scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t| ore.terrain(t));
-        for sheet in [
-            "toolbar", "build", "research", "radial", "recipes", "problems",
-        ] {
+        let sheets = [
+            "toolbar", "build", "research", "radial", "recipes", "problems", "train",
+        ];
+        for sheet in sheets {
             let mut hud = Hud::new();
             match sheet {
+                // A world with trains shows the first one's sheet.
+                "train" => match latest.trains.first() {
+                    Some(t) => hud.select(Some(t.id)),
+                    None => continue,
+                },
                 "build" => hud.toggle_build_sheet(),
                 "research" => hud.toggle_research(),
                 "problems" => hud.toggle_problems(),

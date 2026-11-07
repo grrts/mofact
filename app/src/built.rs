@@ -8,8 +8,8 @@ use mofact_input::{Ground, Occupant};
 use std::collections::HashMap;
 
 pub struct Built {
-    /// Footprint size and whether it's a belt, the hub, per building.
-    kinds: HashMap<BuildingId, ((u8, u8), bool, bool)>,
+    /// Footprint size and whether it's a belt, the hub, track, per building.
+    kinds: HashMap<BuildingId, ((u8, u8), bool, bool, bool)>,
     tiles: HashMap<TilePos, Occupant>,
     tick: Option<u64>,
     /// The generated map, for the trees the remove tool can clear.
@@ -25,7 +25,11 @@ impl Built {
             .map(|b| {
                 let belt = matches!(b.role, BuildingRole::Belt { .. });
                 let hub = matches!(b.role, BuildingRole::Hub);
-                (b.id.clone(), (b.size, belt, hub))
+                let track = matches!(
+                    b.role,
+                    BuildingRole::Rail | BuildingRole::RailSignal | BuildingRole::TrainStop
+                );
+                (b.id.clone(), (b.size, belt, hub, track))
             })
             .collect();
         Self {
@@ -46,7 +50,7 @@ impl Built {
         self.cleared = snap.cleared.clone();
         self.tiles.clear();
         for e in &snap.entities {
-            let Some(&((w, h), belt, hub)) = self.kinds.get(&e.building) else {
+            let Some(&((w, h), belt, hub, track)) = self.kinds.get(&e.building) else {
                 continue;
             };
             let occupant = Occupant {
@@ -54,6 +58,7 @@ impl Built {
                 belt,
                 dir: e.dir,
                 removable: !hub,
+                track,
             };
             for dy in 0..i32::from(h) {
                 for dx in 0..i32::from(w) {

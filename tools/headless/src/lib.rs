@@ -9,7 +9,7 @@
 //!
 //! A scenario is a RON file in `scenarios/`; see `scenarios/README.md`.
 
-use mofact_core::command::{Command, CommandResult};
+use mofact_core::command::{Command, CommandResult, TrainStop};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
@@ -52,6 +52,23 @@ pub enum Build {
     },
     /// A straight run of belts from (x, y), `len` tiles long, all facing `dir`.
     Belts { x: i32, y: i32, len: u32, dir: Dir },
+    /// A straight run of `building` (say, rail) from (x, y) along `dir`.
+    Line {
+        building: BuildingId,
+        x: i32,
+        y: i32,
+        len: u32,
+        dir: Dir,
+    },
+    /// A train on the track at (x, y), heading `dir`, running between
+    /// `stops`: (x, y, whether it loads there).
+    Train {
+        building: BuildingId,
+        x: i32,
+        y: i32,
+        dir: Dir,
+        stops: Vec<(i32, i32, bool)>,
+    },
 }
 
 #[derive(Debug, Deserialize)]
@@ -125,7 +142,11 @@ pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
     for r in &s.research {
         sim.complete_research(r);
     }
-    let mut place = |building: &BuildingId, pos: TilePos, dir: Dir, recipe: &Option<RecipeId>| {
+    let place = |sim: &mut Sim,
+                 building: &BuildingId,
+                 pos: TilePos,
+                 dir: Dir,
+                 recipe: &Option<RecipeId>| {
         let cmd = Command::Place {
             building: building.clone(),
             pos,
@@ -133,7 +154,7 @@ pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
             recipe: recipe.clone(),
         };
         match sim.apply(&cmd) {
-            CommandResult::Applied { .. } => Ok(()),
+            CommandResult::Applied { created, .. } => Ok(created),
             CommandResult::Refused(e) => Err(format!(
                 "{}: placing {building} at {},{}: {e:?}",
                 s.name, pos.x, pos.y
@@ -148,12 +169,50 @@ pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
                 y,
                 dir,
                 recipe,
-            } => place(building, TilePos::new(*x, *y), *dir, recipe)?,
+            } => {
+                place(&mut sim, building, TilePos::new(*x, *y), *dir, recipe)?;
+            }
             Build::Belts { x, y, len, dir } => {
                 let mut pos = TilePos::new(*x, *y);
                 for _ in 0..*len {
-                    place(&BuildingId::from("belt"), pos, *dir, &None)?;
+                    place(&mut sim, &BuildingId::from("belt"), pos, *dir, &None)?;
                     pos = pos.step(*dir);
+                }
+            }
+            Build::Line {
+                building,
+                x,
+                y,
+                len,
+                dir,
+            } => {
+                let mut pos = TilePos::new(*x, *y);
+                for _ in 0..*len {
+                    place(&mut sim, building, pos, *dir, &None)?;
+                    pos = pos.step(*dir);
+                }
+            }
+            Build::Train {
+                building,
+                x,
+                y,
+                dir,
+                stops,
+            } => {
+                let train = place(&mut sim, building, TilePos::new(*x, *y), *dir, &None)?
+                    .ok_or_else(|| format!("{}: {building} made nothing", s.name))?;
+                let stops = stops
+                    .iter()
+                    .map(|&(x, y, load)| TrainStop {
+                        at: TilePos::new(x, y),
+                        load,
+                    })
+                    .collect();
+                if let CommandResult::Refused(e) = sim.apply(&Command::SetSchedule {
+                    entity: train,
+                    stops,
+                }) {
+                    return Err(format!("{}: scheduling {building}: {e:?}", s.name));
                 }
             }
         }

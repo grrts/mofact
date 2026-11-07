@@ -54,11 +54,27 @@ impl Game {
         sim.set_world(ore.seed());
         let look = Look::new(&content);
         let (w, h) = target.size();
-        let controls = Controls::new(CameraControl::new(
+        let mut controls = Controls::new(CameraControl::new(
             camera.center,
             camera.pixels_per_tile,
             [w as f32, h as f32],
         ));
+        // Track is drawn along a drag; everything else is placed by a tap.
+        controls.builder.lines = content
+            .buildings
+            .iter()
+            .filter(|b| b.role == mofact_core::content::BuildingRole::Rail)
+            .map(|b| b.id.clone())
+            .collect();
+        controls.builder.on_track = content
+            .buildings
+            .iter()
+            .filter(|b| {
+                use mofact_core::content::BuildingRole as R;
+                matches!(b.role, R::RailSignal | R::TrainStop | R::Locomotive { .. })
+            })
+            .map(|b| b.id.clone())
+            .collect();
         Self {
             target: Some(target),
             renderer: Renderer::new(&gpu, look.atlases()),
@@ -299,8 +315,45 @@ impl Game {
                 }
                 let [x, y] = self.controls.camera.world_at(at);
                 let tile = mofact_core::geom::TilePos::new(x.floor() as i32, y.floor() as i32);
-                self.built.update(&self.sim.latest());
-                let found = self.built.at(tile).map(|o| o.id);
+                let latest = self.sim.latest();
+                // Choosing a stop for a train's schedule: a tap on a stop adds it.
+                if let Some(train) = self.hud.picking_stop() {
+                    let stop = latest.entities.iter().any(|e| {
+                        e.pos == tile
+                            && self.content.buildings.iter().any(|b| {
+                                b.id == e.building
+                                    && b.role == mofact_core::content::BuildingRole::TrainStop
+                            })
+                    });
+                    match latest.trains.iter().find(|t| t.id == train) {
+                        Some(t) if stop => {
+                            let stops = mofact_ui::add_stop(&t.schedule, tile);
+                            self.sim.send(mofact_core::command::Command::SetSchedule {
+                                entity: train,
+                                stops,
+                            });
+                            self.hud.stop_picked();
+                        }
+                        _ => self.hud.toast("Tap a train stop to add it"),
+                    }
+                    return;
+                }
+                // A train is picked where it stands, or on the tile it's moving onto.
+                let train = latest
+                    .trains
+                    .iter()
+                    .find(|t| t.pos == tile || (t.along > 0.0 && t.pos.step(t.dir) == tile));
+                if let Some(t) = train {
+                    self.hud.select(Some(t.id));
+                    return;
+                }
+                self.built.update(&latest);
+                let here = self.built.at(tile);
+                // A signal, stop or train in hand goes on the track; the tap builds, not inspects.
+                if placing && here.is_some() && self.controls.builder.places_on(here) {
+                    return;
+                }
+                let found = here.map(|o| o.id);
                 if hand || found.is_some() {
                     self.hud.select(found);
                 }

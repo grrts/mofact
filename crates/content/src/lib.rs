@@ -226,6 +226,17 @@ pub fn check(content: &Content) -> Vec<String> {
                     problems.push(format!("{owner} is an engine that gives nothing"));
                 }
             }
+            BuildingRole::Locomotive {
+                tiles_per_second,
+                capacity,
+            } if tiles_per_second <= 0.0 || tiles_per_second.is_nan() || capacity == 0 => {
+                problems.push(format!("{owner} is a train that carries nothing anywhere"));
+            }
+            BuildingRole::Rail | BuildingRole::RailSignal | BuildingRole::TrainStop
+                if b.size != (1, 1) =>
+            {
+                problems.push(format!("{owner} is track, which takes one tile"));
+            }
             _ => {}
         }
     }
@@ -406,7 +417,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len()
             ),
-            (20, 14, 23, 9)
+            (20, 14, 27, 10)
         );
         let circuit = c
             .recipes

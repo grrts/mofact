@@ -1,5 +1,5 @@
-//! Save format v9 (T11, R54): a versioned binary file. v2 adds research
-//! progress and labs (T28).
+//! Save format v10 (T11, R54): a versioned binary file. v2 adds research
+//! progress and labs (T28); v9 cleared trees, v10 rails and trains (T46).
 //!
 //! A save is the magic bytes `MOFACT`, a little-endian `u16` format version,
 //! then the world encoded with postcard. Content is stored by id, never by
@@ -11,8 +11,10 @@
 //! every save ever written keeps loading.
 
 use crate::entities::Entity;
+use crate::rails::{Phase, Train};
 use crate::tables::{Role, Tables};
 use crate::{Crafter, Lab, Sim, State, Tunnel};
+use mofact_core::command::TrainStop;
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
@@ -22,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 9;
+pub const VERSION: u16 = 10;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -154,6 +156,22 @@ enum SavedState {
     /// A crafter with more than one output; the first is in the crafter,
     /// the rest follow in recipe order.
     CrafterOuts(SavedCrafter, Vec<(ItemId, u32)>),
+    Rail,
+    Stop,
+    Train(SavedTrain),
+}
+
+/// A train. Its route is found again after a load.
+#[derive(Serialize, Deserialize)]
+struct SavedTrain {
+    cargo: Vec<(ItemId, u32)>,
+    schedule: Vec<TrainStop>,
+    next: u32,
+    heading: Dir,
+    to: Option<TilePos>,
+    along: u32,
+    phase: u8,
+    wait: u32,
 }
 
 /// A crafter, with its first output. Encodes the same as the struct variant
@@ -223,7 +241,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 cleared: Vec::new(),
             })
         }
-        9 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 10 adds rails and trains: new variants only.
+        9 | 10 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -349,6 +368,18 @@ impl Sim {
                     State::Pump => SavedState::Pump,
                     State::Well => SavedState::Well,
                     State::Engine { share } => SavedState::Engine { share: *share },
+                    State::Rail => SavedState::Rail,
+                    State::Stop { .. } => SavedState::Stop,
+                    State::Train(tr) => SavedState::Train(SavedTrain {
+                        cargo: tr.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
+                        schedule: tr.schedule.clone(),
+                        next: tr.next as u32,
+                        heading: tr.heading,
+                        to: tr.to,
+                        along: tr.along,
+                        phase: tr.phase.code(),
+                        wait: tr.wait,
+                    }),
                 };
                 let saved = Saved {
                     building: t.buildings[e.kind as usize].id.clone(),
@@ -562,18 +593,43 @@ impl Sim {
                 (SavedState::Engine { share }, Role::Engine { .. }) => State::Engine {
                     share: share.min(crate::power::FULL),
                 },
+                (SavedState::Rail, Role::Rail { .. }) => State::Rail,
+                (SavedState::Stop, Role::Stop) => State::Stop { docked: None },
+                (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
+                    cargo: tr
+                        .cargo
+                        .iter()
+                        .filter_map(|(i, n)| Some((item(i, &mut warnings)?, *n)))
+                        .collect(),
+                    next: tr.next as usize % tr.schedule.len().max(1),
+                    schedule: tr.schedule,
+                    at: s.pos,
+                    heading: tr.heading,
+                    to: tr.to,
+                    along: if tr.to.is_some() { tr.along } else { 0 },
+                    path: Vec::new(),
+                    phase: Phase::from_code(tr.phase),
+                    wait: tr.wait,
+                }),
                 _ => {
                     warnings.push(format!(
                         "building `{}` changed role; rebuilt empty",
                         s.building
                     ));
-                    sim.initial_state(kind, None)
+                    let mut state = sim.initial_state(kind, None);
+                    if let State::Train(tr) = &mut state {
+                        tr.at = s.pos;
+                        tr.heading = s.dir;
+                    }
+                    state
                 }
             };
+            let train = matches!(state, State::Train(_));
             let entity = Entity {
                 kind,
                 pos: s.pos,
-                size: b.size,
+                // Trains take no tiles of their own.
+                size: if train { (0, 0) } else { b.size },
                 dir: s.dir,
             };
             if !sim
@@ -589,6 +645,9 @@ impl Sim {
             sim.states
                 .resize(sim.states.len().max(slot as usize + 1), None);
             sim.states[slot as usize] = Some(state);
+            if train {
+                sim.rails.trains.push(mofact_core::ids::EntityId(slot));
+            }
         }
         // An underground end whose partner didn't load stands alone.
         for slot in 0..sim.states.len() {
@@ -601,6 +660,9 @@ impl Sim {
             }
         }
         sim.rebuild_grids();
+        sim.rebuild_blocks();
+        sim.rails.trains.sort();
+        sim.redock();
         sim.fluids = match sim.build_fluids(|slot| fluid.get(&slot).copied()) {
             Ok(f) => f,
             Err(_) => {
