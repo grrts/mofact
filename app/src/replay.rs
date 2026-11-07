@@ -132,3 +132,84 @@ fn input_replay_builds_the_starter_chain() {
         "{plates} plates in 3 minutes"
     );
 }
+
+/// T51's check: a 20-machine block, selected with one drag, pasted three
+/// times with a tap each, as fast as the fingers go: well under a minute.
+#[test]
+fn a_twenty_machine_block_pastes_three_times() {
+    let data = Path::new(env!("CARGO_MANIFEST_DIR")).join("../data");
+    let content = mofact_content::load_dir(&data).unwrap();
+    let mut sim = Sim::with_content(&content);
+    for (item, n) in [("iron-plate", 2000), ("copper-plate", 2000)] {
+        sim.add_stock(&ItemId::from(item), n);
+    }
+    // Two rows of ten assemblers making gears, with a belt between them.
+    for x in -5..5 {
+        for (y, dir) in [
+            (-4, mofact_core::geom::Dir::South),
+            (-2, mofact_core::geom::Dir::North),
+        ] {
+            let placed = sim.apply(&mofact_core::command::Command::Place {
+                building: BuildingId::from("assembler"),
+                pos: TilePos::new(x, y),
+                dir,
+                recipe: Some("gear".into()),
+            });
+            assert!(
+                matches!(placed, CommandResult::Applied { .. }),
+                "{placed:?}"
+            );
+        }
+    }
+    sim.step();
+    let mut controls = Controls::new(CameraControl::new([0.0, 0.0], 32.0, [800.0, 600.0]));
+    let mut built = Built::new(&content);
+    play(
+        &mut sim,
+        &mut controls,
+        &mut built,
+        Tool::Select,
+        drag(1, (-5, -4), (4, -2)),
+    );
+    assert_eq!(controls.builder.selection.len(), 20);
+
+    let snap = sim.snapshot();
+    let bp = mofact_input::Blueprint::capture(
+        "Blueprint 1",
+        snap.entities
+            .iter()
+            .filter(|e| controls.builder.selection.contains(&e.id))
+            .map(|e| (e.building.clone(), e.pos, 1, e.dir, e.recipe.clone())),
+    );
+    assert_eq!(bp.size, (10, 3));
+    controls.builder.hold(bp, TilePos::new(-5, -4), Vec::new());
+    for row in [0, 4, 8] {
+        // A tap puts the block's middle under the finger, Place builds it.
+        play(
+            &mut sim,
+            &mut controls,
+            &mut built,
+            Tool::Paste,
+            tap(1, 0, row + 1),
+        );
+        built.update(&sim.snapshot());
+        assert!(controls.builder.blocked(&built).is_empty());
+        for c in controls.builder.build_paste() {
+            assert!(
+                matches!(sim.apply(&c), CommandResult::Applied { .. }),
+                "{c:?}"
+            );
+        }
+        sim.step();
+    }
+    let assemblers = sim
+        .snapshot()
+        .entities
+        .iter()
+        .filter(|e| {
+            e.building.as_str() == "assembler"
+                && e.recipe.as_ref().is_some_and(|r| r.as_str() == "gear")
+        })
+        .count();
+    assert_eq!(assemblers, 80);
+}

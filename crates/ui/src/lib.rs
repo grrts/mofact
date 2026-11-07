@@ -52,18 +52,21 @@ pub const LONG_PRESS: Duration = Duration::from_millis(450);
 
 /// The toolbar, left to right (top to bottom in landscape): the label's
 /// string key and the building it places.
-const TOOLS: [(&str, Option<&str>); 7] = [
+const TOOLS: [(&str, Option<&str>); 8] = [
     ("tool.move", None),
     ("tool.belt", Some("belt")),
     ("tool.drill", Some("drill")),
     ("tool.furnace", Some("furnace")),
     ("tool.assembler", Some("assembler")),
     ("tool.more", None),
+    ("tool.select", None),
     ("tool.remove", None),
 ];
 /// The slot that opens the build sheet with every other building, and
 /// shows the one in hand when it is one of those.
 const MORE: usize = 5;
+/// The select tool (T51), which also stands for a blueprint in hand.
+const SELECT: usize = 6;
 /// The last tool, Remove.
 const REMOVE: usize = TOOLS.len() - 1;
 
@@ -71,6 +74,7 @@ fn tool_at(i: usize) -> Tool {
     match i {
         0 => Tool::Hand,
         1 => Tool::Belt,
+        SELECT => Tool::Select,
         REMOVE => Tool::Remove,
         _ => Tool::Place(TOOLS[i].1.unwrap_or_default().into()),
     }
@@ -87,6 +91,7 @@ fn tool_index(tool: &Tool) -> Option<usize> {
         Tool::Hand => Some(0),
         Tool::Belt => Some(1),
         Tool::Remove => Some(REMOVE),
+        Tool::Select | Tool::Paste => Some(SELECT),
         Tool::Place(b) => TOOLS
             .iter()
             .position(|(_, id)| *id == Some(b.as_str()))
@@ -123,6 +128,10 @@ pub struct View<'a> {
     pub store: &'a StoreView,
     /// Whether a crash report from last time is waiting to be sent.
     pub crash: bool,
+    /// How many buildings the select tool has selected (T51).
+    pub selection: usize,
+    /// The blueprint library.
+    pub blueprints: &'a [mofact_input::Blueprint],
 }
 
 /// Whether this is the demo, and how buying the full game is going.
@@ -279,6 +288,20 @@ pub enum Action {
     Restore,
     /// Copy last time's crash report, to paste into an email or a bug.
     CopyCrash,
+    /// Take a copy of the selection in hand, to paste (T51).
+    Copy,
+    /// Take the selection in hand to move it: building it moves the originals.
+    Cut,
+    /// Remove everything selected, as one undo step.
+    DeleteSelection,
+    /// Keep the selection in the blueprint library.
+    SaveBlueprint,
+    /// Build the blueprint in hand where it is.
+    PlacePaste,
+    /// Take the library's blueprint at this place in it in hand.
+    Paste(usize),
+    /// Delete the library's blueprint at this place in it.
+    ForgetBlueprint(usize),
 }
 
 /// A control on screen, and what tapping it does.
@@ -354,6 +377,18 @@ enum Hit {
     Preset(u8),
     CancelNew,
     StartNew,
+    /// The selection's and blueprint's buttons (T51).
+    Copy,
+    Cut,
+    Erase,
+    Keep,
+    Place,
+    /// Open or close the blueprint library.
+    Library,
+    /// A blueprint in the library: take it in hand, or delete it (a
+    /// second tap deletes).
+    Pick(usize),
+    Forget(usize),
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -461,6 +496,10 @@ pub struct Hud {
     more: bool,
     /// Whether the problems list is open.
     problems: bool,
+    /// Whether the blueprint library is open, and the blueprint asked to
+    /// be deleted (a second tap deletes it).
+    library: bool,
+    confirm_forget: Option<usize>,
     /// Whether the goal card shows how to meet it, and the goal it last showed.
     hint: bool,
     goal_seen: Option<u16>,
@@ -811,6 +850,7 @@ impl Hud {
                     self.selected = None;
                 }
                 self.more = false;
+                self.library = false;
                 vec![Action::Tool(tool_at(i))]
             }
             Hit::Done => vec![Action::Tool(Tool::Hand)],
@@ -870,6 +910,7 @@ impl Hud {
                 Vec::new()
             }
             Hit::Close => {
+                self.library = false;
                 self.selected = None;
                 self.research = false;
                 self.unlock = false;
@@ -1052,6 +1093,29 @@ impl Hud {
                 };
                 Vec::new()
             }
+            Hit::Copy => vec![Action::Copy],
+            Hit::Cut => vec![Action::Cut],
+            Hit::Erase => vec![Action::DeleteSelection],
+            Hit::Keep => vec![Action::SaveBlueprint],
+            Hit::Place => vec![Action::PlacePaste],
+            Hit::Library => {
+                self.library = !self.library;
+                self.confirm_forget = None;
+                Vec::new()
+            }
+            Hit::Pick(i) => {
+                self.library = false;
+                vec![Action::Paste(i)]
+            }
+            Hit::Forget(i) => {
+                if self.confirm_forget == Some(i) {
+                    self.confirm_forget = None;
+                    vec![Action::ForgetBlueprint(i)]
+                } else {
+                    self.confirm_forget = Some(i);
+                    Vec::new()
+                }
+            }
             Hit::Block => Vec::new(),
         }
     }
@@ -1206,6 +1270,7 @@ impl Hud {
             && !self.unlock
             && !self.more
             && !self.problems
+            && !self.library
             && self.browse.is_none()
             && !hand_with_goal
             && !self.map
@@ -1258,6 +1323,14 @@ impl Hud {
             self.problems_sheet(view, o, [corner[0] - width, corner[1]], width, room);
             return;
         }
+        if !matches!(view.tool, Tool::Select | Tool::Paste) {
+            self.library = false;
+        }
+        if self.library {
+            let room = corner[1] - tip_y;
+            self.library_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
+        }
 
         if let Some(e) = selected {
             self.sheet(view, o, e, [corner[0] - width, corner[1]], width);
@@ -1275,7 +1348,8 @@ impl Hud {
         };
         let mut right = corner[0];
         let left = self.undo_buttons(view, o, [ml, corner[1]]);
-        if placing.is_some() || *view.tool == Tool::Belt {
+        let pasting = *view.tool == Tool::Paste;
+        if placing.is_some() || *view.tool == Tool::Belt || pasting {
             let d = 60.0 * u;
             let r = [right - d, corner[1] - d, d, d];
             o.panel([r[0], r[1]], [d, d], d / 2.0, PANEL);
@@ -1322,6 +1396,111 @@ impl Hud {
                 self.pills(o, tiers, [left, corner[1]], right - left, true);
             }
         }
+        // The selection's buttons, and the library's (T51).
+        if *view.tool == Tool::Select || pasting {
+            let mut row: Vec<Pill> = Vec::new();
+            if pasting {
+                row.push((tr("button.place"), None, true, Hit::Place));
+            } else if view.selection > 0 {
+                row.push((tr("button.copy"), None, false, Hit::Copy));
+                row.push((tr("button.cut"), None, false, Hit::Cut));
+                row.push((tr("button.delete"), None, false, Hit::Erase));
+                row.push((tr("button.save"), None, false, Hit::Keep));
+            }
+            row.push((tr("button.blueprints"), None, false, Hit::Library));
+            self.pills(o, row, [left, corner[1]], right - left, true);
+        }
+    }
+
+    /// The blueprint library, bottom-left at `at`, at most `room` tall:
+    /// a row per blueprint with a sketch of it. A tap takes one in hand.
+    fn library_sheet(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32, room: f32) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let gap = 8.0 * u;
+        let title = 30.0 * u;
+        let row = 64.0 * u;
+        let list = view.blueprints;
+        let fits = ((room - 2.0 * pad - title + gap) / (row + gap))
+            .floor()
+            .max(1.0) as usize;
+        let rows = list.len().clamp(1, fits);
+        let height = pad + title + rows as f32 * (row + gap) - gap + pad;
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let (left, top) = (r[0] + pad, r[1] + pad);
+        let px = 20.0 * u;
+        o.text(
+            tr("blueprint.title"),
+            [left, top + o.cap_height(px) + 4.0 * u],
+            px,
+            TEXT,
+        );
+        let close = 32.0 * u;
+        let c = [r[0] + r[2] - pad - close, top - 2.0 * u, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+        let inner = width - 2.0 * pad;
+        if list.is_empty() {
+            let lines = wrap(o, tr("blueprint.empty"), 14.0 * u, inner);
+            for (k, l) in lines.iter().enumerate().take(3) {
+                let y = top + title + 20.0 * u + k as f32 * 20.0 * u;
+                o.text(l, [left, y], 14.0 * u, MUTED);
+            }
+            return;
+        }
+        for (i, bp) in list.iter().enumerate().take(rows) {
+            let b = [left, top + title + i as f32 * (row + gap), inner, row];
+            o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, RAISED);
+            self.hits.push((b, Hit::Pick(i)));
+            // A sketch: each building's icon where it stands.
+            let sk = row - 12.0 * u;
+            let (sx, sy) = (b[0] + 6.0 * u, b[1] + 6.0 * u);
+            o.panel([sx, sy], [sk, sk], 6.0 * u, PANEL);
+            let span = bp.size.0.max(bp.size.1).max(1) as f32;
+            let tile = (sk - 4.0 * u) / span;
+            let (ox, oy) = (
+                sx + (sk - tile * bp.size.0 as f32) / 2.0,
+                sy + (sk - tile * bp.size.1 as f32) / 2.0,
+            );
+            for p in &bp.pieces {
+                let at = [ox + p.at.0 as f32 * tile, oy + p.at.1 as f32 * tile];
+                let s = tile * f32::from(p.size);
+                match view.look.building(&p.building) {
+                    Some((sprite, t)) if s >= 6.0 => o.icon(sprite, at, s, t),
+                    Some((_, t)) => o.panel(at, [s, s], 0.0, t),
+                    None => o.panel(at, [s, s], 0.0, MUTED),
+                }
+            }
+            let tx = sx + sk + 10.0 * u;
+            let tw = b[0] + b[2] - tx - 48.0 * u;
+            let npx = fit(o, &bp.name, 15.0 * u, tw);
+            o.text(&bp.name, [tx, b[1] + 26.0 * u], npx, TEXT);
+            let detail = trf(
+                "blueprint.detail",
+                &[&bp.size.0, &bp.size.1, &bp.pieces.len()],
+            );
+            let dpx = fit(o, &detail, 12.0 * u, tw);
+            o.text(&detail, [tx, b[1] + 46.0 * u], dpx, MUTED);
+            // Delete, with a second tap to be sure.
+            let d = 36.0 * u;
+            let x = [b[0] + b[2] - d - 8.0 * u, b[1] + (row - d) / 2.0, d, d];
+            let asked = self.confirm_forget == Some(i);
+            let fill = if asked { palette::STARVE } else { PANEL };
+            o.panel([x[0], x[1]], [d, d], d / 2.0, fill);
+            let ink = if asked { TEXT } else { palette::STARVE };
+            let xw = o.measure("×", 20.0 * u);
+            o.text("×", [x[0] + (d - xw) / 2.0, x[1] + d * 0.72], 20.0 * u, ink);
+            self.hits.push((x, Hit::Forget(i)));
+        }
     }
 
     /// The tip for the tool in hand. With a tool other than Move it names
@@ -1340,7 +1519,11 @@ impl Hud {
                 .map_or(tr("tip.build"), |d| d.name.as_str()),
             _ => tr(TOOLS[slot].0),
         };
-        let text = trf("tip.named", &[&name, &tip(view.tool)]);
+        let what = match view.tool {
+            Tool::Select if view.selection > 0 => trf("tip.selected", &[&view.selection]),
+            _ => tip(view.tool).to_string(),
+        };
+        let text = trf("tip.named", &[&name, &what]);
         let ink = if *view.tool == Tool::Remove {
             palette::STARVE
         } else {
@@ -3599,6 +3782,8 @@ fn tip(tool: &Tool) -> &'static str {
         Tool::Hand => "tip.hand",
         Tool::Belt => "tip.belt",
         Tool::Remove => "tip.remove",
+        Tool::Select => "tip.select",
+        Tool::Paste => "tip.paste",
         Tool::Place(b) => match b.as_str() {
             "drill" => "tip.drill",
             "furnace" => "tip.furnace",
