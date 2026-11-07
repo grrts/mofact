@@ -296,7 +296,9 @@ impl Scene {
                 let (bend, joins) = carriers.shape(e.pos, e.dir);
                 let speed = look.belt_speed(&e.building).unwrap_or(1.0);
                 let phase = (seconds * 2.0 * f64::from(speed)).fract() as f32;
-                let (surface, frame) = look.belt_layers(&e.building, bend, joins, phase);
+                let (surface, frame, turns) =
+                    look.belt_layers(&e.building, bend, joins, phase, instance.turns);
+                let instance = Instance { turns, ..instance };
                 let surface = Instance {
                     uv: uv(surface),
                     ..instance

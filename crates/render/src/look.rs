@@ -64,11 +64,13 @@ enum Art {
         bend: Bend,
         frame: u8,
     },
-    /// The still layer of a belt tile: rails, caps and side openings.
+    /// The still layer of a belt tile: rails, caps and side openings. A
+    /// corner is lit for the quarter `turns` it is drawn at.
     BeltFrame {
         bend: Bend,
         joins: Joins,
         trim: Option<Rgba>,
+        turns: u8,
     },
     Hub,
     Pole,
@@ -384,6 +386,7 @@ impl Look {
                     bend: Bend::Straight,
                     joins: Joins::from_bits(bits),
                     trim,
+                    turns: 0,
                 };
                 push(
                     &mut look,
@@ -393,19 +396,26 @@ impl Look {
                 );
             }
             for (b, bend) in [(1, Bend::FromLeft), (2, Bend::FromRight)] {
-                for end in [false, true] {
-                    let joins = Joins {
-                        end,
-                        ..Joins::default()
-                    };
-                    let art = Art::BeltFrame { bend, joins, trim };
-                    let bits = joins.bits();
-                    push(
-                        &mut look,
-                        format!("belt-frame:{tier}:{b}:{bits}"),
-                        (1, 1),
-                        art,
-                    );
+                for turns in 0..4u8 {
+                    for end in [false, true] {
+                        let joins = Joins {
+                            end,
+                            ..Joins::default()
+                        };
+                        let art = Art::BeltFrame {
+                            bend,
+                            joins,
+                            trim,
+                            turns,
+                        };
+                        let bits = joins.bits();
+                        push(
+                            &mut look,
+                            format!("belt-frame:{tier}:{b}:{turns}:{bits}"),
+                            (1, 1),
+                            art,
+                        );
+                    }
                 }
             }
         }
@@ -767,25 +777,45 @@ impl Look {
 
     /// The two layers that draw a belt tile, both facing east and turned
     /// with it: its surface at `phase` (0 to 1) of its cycle, then its frame.
+    ///
+    /// Drawn at `turns` quarter turns clockwise, a straight tile's rails would
+    /// show their lit edge on the south or east for half the directions, so
+    /// those are mirrored across the belt (`MIRROR` in the turns the shader
+    /// takes) and use the frame with its side openings swapped. Corners are
+    /// painted lit for each turn instead. Returns the turns to draw with.
     pub fn belt_layers(
         &self,
         building: &BuildingId,
         bend: Bend,
         joins: Joins,
         phase: f32,
-    ) -> (&str, &str) {
+        turns: u32,
+    ) -> (&str, &str, u32) {
         let tier = self.belt_tier.get(building).copied().unwrap_or(0);
         let frames_at = self.belt_frame.get(tier).copied().unwrap_or(0);
         let frames = usize::from(belt::FRAMES);
         let frame = ((phase.rem_euclid(1.0) * frames as f32) as usize).min(frames - 1);
         let b = Bend::ALL.iter().position(|&x| x == bend).unwrap_or(0);
         let surface = self.belt_surface + b * frames + frame;
-        let framed = match bend {
-            Bend::Straight => usize::from(joins.bits()),
-            _ => 16 + (b - 1) * 2 + usize::from(joins.end),
+        let turns = turns % 4;
+        let mirror = bend == Bend::Straight && matches!(turns, 1 | 2);
+        let (framed, turns) = match bend {
+            Bend::Straight if mirror => {
+                let swapped = Joins {
+                    left: joins.right,
+                    right: joins.left,
+                    ..joins
+                };
+                (usize::from(swapped.bits()), turns | MIRROR)
+            }
+            Bend::Straight => (usize::from(joins.bits()), turns),
+            _ => {
+                let lit = ((b - 1) * 4 + turns as usize) * 2;
+                (16 + lit + usize::from(joins.end), turns)
+            }
         };
         let name = |i: usize| self.sprites.get(i).map_or(BELT, |s| s.name.as_str());
-        (name(surface), name(frames_at + framed))
+        (name(surface), name(frames_at + framed), turns)
     }
 
     /// Whether `building` is drawn facing east and turned by its direction:
@@ -1040,11 +1070,11 @@ impl Look {
     }
 }
 
-/// Each band's atlas is this many tiles on a side, padding included: 3,432
+/// Each band's atlas is this many tiles on a side, padding included: 3,564
 /// pixels at the closest zoom, inside the 4,096 every target GPU takes. Machines
 /// have a sprite per recipe, state and direction, so this grows with content;
 /// when tier 3-4 fills it, turn machine bodies on the GPU instead.
-pub const ATLAS_TILES: u32 = 26;
+pub const ATLAS_TILES: u32 = 27;
 
 /// The side of the atlas for the band of `px` pixels a tile. Each sprite
 /// carries its padding, which is most of a tile's room in the smallest band,
@@ -1052,6 +1082,10 @@ pub const ATLAS_TILES: u32 = 26;
 pub fn atlas_size(px: u32) -> u32 {
     (px + 2 * crate::atlas::PAD) * ATLAS_TILES
 }
+
+/// Set in an instance's turns to mirror its sprite across the way it runs
+/// (top to bottom as painted) before it is turned.
+pub const MIRROR: u32 = 4;
 
 /// Items and badges are drawn at this fraction of a tile.
 pub const ITEM_TILES: f32 = 0.5;
@@ -1076,7 +1110,12 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             let phase = f32::from(frame) / f32::from(belt::FRAMES);
             belt::surface(&mut c, z, fine, bend, phase);
         }
-        Art::BeltFrame { bend, joins, trim } => belt::trimmed(&mut c, z, fine, bend, joins, trim),
+        Art::BeltFrame {
+            bend,
+            joins,
+            trim,
+            turns,
+        } => belt::trimmed(&mut c, z, fine, bend, joins, trim, turns),
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
@@ -1237,6 +1276,82 @@ pub(crate) mod tests {
             look.sprite(&drill, Dir::East, None, false),
             Some("drill:none:cold:0")
         );
+    }
+
+    /// `rgba`, a `z`-pixel square sprite, as the shader lays it on screen at
+    /// `turns` (with [`MIRROR`]): the pixel each screen pixel shows.
+    fn on_screen(rgba: &[u8], z: u32, turns: u32) -> Vec<[u8; 4]> {
+        let mut out = vec![[0; 4]; (z * z) as usize];
+        for y in 0..z {
+            for x in 0..z {
+                let mut t = ((x as f32 + 0.5) / z as f32, (y as f32 + 0.5) / z as f32);
+                for _ in 0..turns % 4 {
+                    t = (t.1, 1.0 - t.0);
+                }
+                if turns & MIRROR != 0 {
+                    t.1 = 1.0 - t.1;
+                }
+                let (px, py) = ((t.0 * z as f32) as u32, (t.1 * z as f32) as u32);
+                let i = ((py * z + px) * 4) as usize;
+                out[(y * z + x) as usize] = [rgba[i], rgba[i + 1], rgba[i + 2], rgba[i + 3]];
+            }
+        }
+        out
+    }
+
+    /// Belt rails are lit from the top left of the screen whichever way the
+    /// belt runs: where a rail crosses a tile's edge, the lit side of it is
+    /// its north (or west) side, on straight runs and corners alike.
+    #[test]
+    fn belt_rails_are_lit_from_the_same_side_whichever_way_they_run() {
+        let look = Look::new(&content());
+        let belt: BuildingId = "belt".into();
+        let z = 64u32;
+        let bright = |p: [u8; 4]| u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2]);
+        for bend in Bend::ALL {
+            for (turns, dir) in Dir::ALL.into_iter().enumerate() {
+                let (_, frame, drawn) =
+                    look.belt_layers(&belt, bend, Joins::default(), 0.0, turns as u32);
+                let s = look.sprites.iter().find(|s| s.name == frame).unwrap();
+                let (_, _, c) = render(&s.art, 1.0, 1.0, z, true);
+                let px = on_screen(&c.rgba(), z, drawn);
+                // Each edge, one pixel in, read across the rails.
+                let lines: [Box<dyn Fn(u32) -> u32>; 4] = [
+                    Box::new(|i| i * z + 1),
+                    Box::new(|i| i * z + z - 2),
+                    Box::new(|i| z + i),
+                    Box::new(|i| (z - 2) * z + i),
+                ];
+                let mut crossings = 0;
+                for line in &lines {
+                    let at = |i: u32| px[line(i) as usize];
+                    let mut i = 0;
+                    while i < z {
+                        // A rail: a run of opaque pixels brighter than the belt.
+                        let rail = |p: [u8; 4]| p[3] > 200 && bright(p) > 180;
+                        if rail(at(i)) {
+                            let start = i;
+                            while i < z && rail(at(i)) {
+                                i += 1;
+                            }
+                            let (first, last) = (at(start), at(i - 1));
+                            if i - start >= 4 {
+                                crossings += 1;
+                                assert!(
+                                    bright(first) > bright(last),
+                                    "{bend:?} running {dir:?}: a rail is lit on its far side"
+                                );
+                            }
+                        }
+                        i += 1;
+                    }
+                }
+                assert!(
+                    crossings >= 4,
+                    "{bend:?} running {dir:?}: {crossings} rails found"
+                );
+            }
+        }
     }
 
     #[test]

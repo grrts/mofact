@@ -47,6 +47,10 @@ fn vs(@builtin(vertex_index) vi: u32, s: Sprite) -> Out {
     for (var i = 0u; i < s.turns % 4u; i = i + 1u) {
         t = vec2<f32>(t.y, 1.0 - t.x);
     }
+    // MIRROR: flipped across the way it runs, as painted, before turning.
+    if (s.turns & 4u) != 0u {
+        t.y = 1.0 - t.y;
+    }
     var out: Out;
     out.clip = vec4<f32>(world * globals.xf.xy + globals.xf.zw, 0.0, 1.0);
     out.uv = s.uv.xy + t * s.uv.zw;

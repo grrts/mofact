@@ -92,8 +92,13 @@ fn angle(s: f32, u: f32) -> f32 {
 /// The quarter ring of a corner between radii `r0` and `r1`, in pixels around
 /// the tile's centre, for a tile `z` pixels across.
 fn ring(z: f32, s: f32, r0: f32, r1: f32) -> Option<tiny_skia::Path> {
+    ring_part(z, s, r0, r1, 0.0, 1.0)
+}
+
+/// The part of [`ring`] from `u0` to `u1` of the way round (0 in, 1 out).
+fn ring_part(z: f32, s: f32, r0: f32, r1: f32, u0: f32, u1: f32) -> Option<tiny_skia::Path> {
     let (cx, cy) = (0.5 * z, s * 0.5 * z);
-    let (a0, a1) = (angle(s, 0.0), angle(s, 1.0));
+    let (a0, a1) = (angle(s, u0), angle(s, u1));
     let mut pb = PathBuilder::new();
     arc(&mut pb, cx, cy, r1 * z, a0, a1, true);
     arc(&mut pb, cx, cy, r0 * z, a1, a0, false);
@@ -203,7 +208,7 @@ fn arrow(c: &mut Canvas, s: f32) {
 /// with nothing beyond it and opened where a belt feeds in from the side.
 /// On a corner only `joins.end` counts.
 pub fn frame(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins) {
-    trimmed(c, z, fine, bend, joins, None);
+    trimmed(c, z, fine, bend, joins, None, 0);
 }
 
 /// The rails' colour and their lit edge: steel, or for a faster belt its
@@ -216,8 +221,27 @@ fn rails(trim: Option<Rgba>, fine: bool) -> (Rgba, Rgba) {
     }
 }
 
+/// How many pieces a corner's rail is lit in, each on its own side.
+const LIT_STEPS: usize = 12;
+
 /// [`frame`] with its rails in `trim`, a tier's colour.
-pub fn trimmed(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins, trim: Option<Rgba>) {
+///
+/// Light comes from the top left of the screen, so every rail shows a lit
+/// edge on its north or west side. A straight frame is lit on its north
+/// rail edges as painted, and the renderer mirrors it where turning it
+/// would put that edge on the south or east. A corner can't be mirrored
+/// into place, so it is painted for the `turns` (quarter turns clockwise)
+/// it will be drawn at: each piece of a rail is lit on whichever edge then
+/// faces the top left.
+pub fn trimmed(
+    c: &mut Canvas,
+    z: f32,
+    fine: bool,
+    bend: Bend,
+    joins: Joins,
+    trim: Option<Rgba>,
+    turns: u8,
+) {
     let (rail, rail_hi) = rails(trim, fine);
     c.save();
     c.translate(z / 2.0, z / 2.0);
@@ -248,7 +272,12 @@ pub fn trimmed(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins, tri
                 for x in [-outer, inner] {
                     c.fill_rect(x * z, y0 * z, (outer - inner) * z, (y1 - y0) * z, rail);
                     if fine {
-                        c.fill_rect(x * z, y0 * z, z * 0.025, (y1 - y0) * z, rail_hi);
+                        // Lit on both edges: whichever way the belt is
+                        // turned, one of them faces the light.
+                        let w = (outer - inner) * z;
+                        for e in [x * z, x * z + w - z * 0.025] {
+                            c.fill_rect(e, y0 * z, z * 0.025, (y1 - y0) * z, rail_hi);
+                        }
                     }
                 }
             } else if fine {
@@ -266,7 +295,19 @@ pub fn trimmed(c: &mut Canvas, z: f32, fine: bool, bend: Bend, joins: Joins, tri
         for (r0, r1) in [(0.5 - outer, 0.5 - inner), (0.5 + inner, 0.5 + outer)] {
             fill(c, ring(z, s, r0, r1), rail);
             if fine {
-                fill(c, ring(z, s, r0, r0 + 0.025), rail_hi);
+                for k in 0..LIT_STEPS {
+                    let (u0, u1) = (k as f32, k as f32 + 1.0);
+                    let (u0, u1) = (u0 / LIT_STEPS as f32, u1 / LIT_STEPS as f32);
+                    // Outward from the corner's centre, on screen once turned.
+                    let a = angle(s, (u0 + u1) / 2.0);
+                    let (mut dx, mut dy) = (a.cos(), a.sin());
+                    for _ in 0..turns % 4 {
+                        (dx, dy) = (-dy, dx);
+                    }
+                    // The inner edge faces back towards the centre.
+                    let edge = if dx + dy > 0.0 { r0 } else { r1 - 0.025 };
+                    fill(c, ring_part(z, s, edge, edge + 0.025, u0, u1), rail_hi);
+                }
             }
         }
         if fine {
