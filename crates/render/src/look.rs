@@ -81,6 +81,8 @@ enum Art {
     Solar,
     /// A radar (S3).
     Radar,
+    /// The radar with its dish turned to frame `0` of [`RADAR_FRAMES`].
+    RadarSpin(u8),
     Splitter,
     Underground {
         exit: bool,
@@ -667,7 +669,17 @@ impl Look {
                     push(&mut look, id.to_owned(), b.size, art)
                 }
                 Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
-                Kind::Radar => push(&mut look, id.to_owned(), b.size, Art::Radar),
+                Kind::Radar => {
+                    push(&mut look, id.to_owned(), b.size, Art::Radar);
+                    for k in 0..RADAR_FRAMES {
+                        push(
+                            &mut look,
+                            format!("{id}:spin:{k}"),
+                            b.size,
+                            Art::RadarSpin(k),
+                        );
+                    }
+                }
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -1005,14 +1017,24 @@ impl Look {
     }
 
     /// For a wind turbine on a grid, its sprite with the blades turned for
-    /// `t` seconds; `None` for anything that doesn't spin.
-    pub fn spinning(&self, building: &BuildingId, t: f64) -> Option<&str> {
+    /// `t` seconds, and for a working radar its dish turned; `None` for
+    /// anything that doesn't spin.
+    pub fn spinning(&self, building: &BuildingId, t: f64, working: bool) -> Option<&str> {
         let b = self.buildings.get(building)?;
-        if b.kind != Kind::Generator || b.size.0 > 1 {
-            return None;
-        }
-        let frame = ((t / ROTOR_SECONDS).fract() * f64::from(ROTOR_FRAMES)) as usize;
-        let at = b.base + 1 + frame.min(usize::from(ROTOR_FRAMES) - 1);
+        let (frame, frames) = match b.kind {
+            Kind::Generator if b.size.0 == 1 => (
+                ((t / ROTOR_SECONDS).fract() * f64::from(ROTOR_FRAMES)) as usize,
+                ROTOR_FRAMES,
+            ),
+            // There and back: 0, 1 .. last .. 1, 0.
+            Kind::Radar if working => {
+                let last = usize::from(RADAR_FRAMES) - 1;
+                let k = ((t / RADAR_SECONDS).fract() * 2.0 * last as f64) as usize;
+                (if k > last { 2 * last - k } else { k }, RADAR_FRAMES)
+            }
+            _ => return None,
+        };
+        let at = b.base + 1 + frame.min(usize::from(frames) - 1);
         self.sprites.get(at).map(|s| s.name.as_str())
     }
 
@@ -1202,6 +1224,13 @@ pub const ATLAS_TILES: u32 = 27;
 /// seconds that third takes.
 const ROTOR_FRAMES: u8 = 12;
 const ROTOR_SECONDS: f64 = 1.4;
+/// Frames of a radar dish's scan from one side to the other, the seconds a
+/// scan there and back takes, and how far it swings each way (radians).
+/// The atlas has room for only a few 2x2 frames, so it swings rather than
+/// turning all the way round.
+const RADAR_FRAMES: u8 = 6;
+const RADAR_SECONDS: f64 = 4.0;
+const RADAR_SWING: f32 = 0.9;
 
 /// The side of the atlas for the band of `px` pixels a tile. Each sprite
 /// carries its padding, which is most of a tile's room in the smallest band,
@@ -1257,6 +1286,11 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         }
         Art::Solar => draw::solar(&mut c, z, fine),
         Art::Radar => draw::radar(&mut c, z, fine),
+        Art::RadarSpin(k) => {
+            let along = f32::from(k) / f32::from(RADAR_FRAMES - 1) * 2.0 - 1.0;
+            let angle = -std::f32::consts::FRAC_PI_4 + along * RADAR_SWING;
+            draw::radar_turned(&mut c, z, fine, angle)
+        }
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
         Art::Notch => draw::notch_east(&mut c, z),
@@ -1563,5 +1597,21 @@ pub(crate) mod tests {
                 assert!(atlas.get(&s.name).is_some(), "{} at {px}", s.name);
             }
         }
+    }
+
+    #[test]
+    fn a_working_radar_scans_there_and_back_and_an_idle_one_rests() {
+        let look = Look::new(&content());
+        let radar = BuildingId::from("radar");
+        assert_eq!(look.spinning(&radar, 1.0, false), None);
+        let at = |t: f64| look.spinning(&radar, t, true).unwrap().to_owned();
+        assert_eq!(at(0.0), "radar:spin:0");
+        assert_eq!(
+            at(RADAR_SECONDS / 2.0),
+            format!("radar:spin:{}", RADAR_FRAMES - 1)
+        );
+        assert_eq!(at(RADAR_SECONDS * 0.99), "radar:spin:1", "and back");
+        assert_eq!(at(RADAR_SECONDS), "radar:spin:0");
+        assert_eq!(at(RADAR_SECONDS * 0.4), at(RADAR_SECONDS * 0.6));
     }
 }

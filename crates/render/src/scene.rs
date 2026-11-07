@@ -302,7 +302,8 @@ impl Scene {
             let sprite = match e.grid {
                 Some(_) => {
                     let lag = f64::from(e.id.0 % 7) * 0.13;
-                    look.spinning(&e.building, seconds + lag).unwrap_or(sprite)
+                    look.spinning(&e.building, seconds + lag, working)
+                        .unwrap_or(sprite)
                 }
                 None => sprite,
             };
