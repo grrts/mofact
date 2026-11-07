@@ -9,6 +9,7 @@
 pub mod belt;
 pub mod canvas;
 pub mod draw;
+pub mod icon;
 pub mod palette;
 pub mod rail;
 
