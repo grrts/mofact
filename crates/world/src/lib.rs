@@ -50,12 +50,18 @@ pub enum Terrain {
     Forest = 4,
     Scrub = 5,
     Rock = 6,
+    Cliff = 7,
 }
 
 impl Terrain {
-    /// Lakes: nothing can be built on them.
+    /// Lakes and rivers.
     pub fn is_water(self) -> bool {
         matches!(self, Terrain::DeepWater | Terrain::Water)
+    }
+
+    /// Nothing can be built here: water and cliffs.
+    pub fn blocks(self) -> bool {
+        self.is_water() || self == Terrain::Cliff
     }
 }
 
@@ -73,6 +79,12 @@ pub enum Decor {
 }
 
 impl Decor {
+    /// Trees and boulders stand in the way of building until cleared; the
+    /// small things are built over.
+    pub fn blocks(self) -> bool {
+        matches!(self, Decor::Tree | Decor::Pine | Decor::Boulder)
+    }
+
     pub const ALL: [Decor; 7] = [
         Decor::Tree,
         Decor::Pine,
@@ -183,7 +195,7 @@ pub fn generate(gen: &WorldGen, pos: ChunkPos) -> Chunk {
 /// Everything generated at one tile.
 pub fn tile_at(gen: &WorldGen, t: TilePos) -> Tile {
     let (terrain, shade) = terrain_at(gen, t);
-    let ore = if terrain.is_water() {
+    let ore = if terrain.blocks() {
         None
     } else {
         ore_on_land(gen, t)
@@ -202,15 +214,32 @@ pub fn tile_at(gen: &WorldGen, t: TilePos) -> Tile {
 
 /// The ore generated at one tile.
 pub fn ore_at(gen: &WorldGen, t: TilePos) -> Option<Ore> {
-    if terrain_at(gen, t).0.is_water() {
+    if terrain_at(gen, t).0.blocks() {
         return None;
     }
     ore_on_land(gen, t)
 }
 
-/// Whether a tile is lake, where nothing can be built.
-pub fn is_water(gen: &WorldGen, t: TilePos) -> bool {
-    terrain_at(gen, t).0.is_water()
+/// What stops building on a tile, if anything: water, a cliff, or a tree
+/// or boulder until it is cleared.
+pub fn obstacle(gen: &WorldGen, t: TilePos) -> Option<Obstacle> {
+    let tile = tile_at(gen, t);
+    if tile.terrain.blocks() {
+        Some(Obstacle::Terrain)
+    } else if tile.decor.is_some_and(Decor::blocks) {
+        Some(Obstacle::Tree)
+    } else {
+        None
+    }
+}
+
+/// Why a tile can't be built on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Obstacle {
+    /// Water or a cliff: never.
+    Terrain,
+    /// A tree or a boulder: once it is cleared.
+    Tree,
 }
 
 /// How far `t` is from [`START`], in tiles.
@@ -230,8 +259,8 @@ fn keep_dry(t: TilePos) -> f64 {
     keep
 }
 
-/// The terrain at a tile and its shade.
-pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
+/// Height and moisture at a tile (0 to 1), and how strongly it is kept dry.
+fn fields(gen: &WorldGen, t: TilePos) -> (f64, f64, f64) {
     let s = gen.seed;
     // Bend the noise a little so lake shores and forest edges wander.
     let wx = t.x + ((value_noise(s ^ 0x3a17, t.x, t.y, 9) - 0.5) * 10.0) as i32;
@@ -249,6 +278,47 @@ pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
     let near = smooth((40.0 - from_start(t)) / 22.0);
     wet += (wet.clamp(0.36, 0.6) - wet) * near;
 
+    (height, wet, keep)
+}
+
+/// The broad shape of the land, without the wobble and fine detail, for
+/// cliffs to follow in long clean lines.
+fn ridge(gen: &WorldGen, t: TilePos) -> f64 {
+    let s = gen.seed;
+    0.6 * value_noise(s ^ 0xe1e7, t.x, t.y, 96) + 0.4 * value_noise(s ^ 0x2b0b, t.x, t.y, 36)
+}
+
+/// Highland contour steps: a cliff runs wherever a tile and its neighbour
+/// fall on different steps.
+fn contour(height: f64) -> i32 {
+    ((height - 0.56) / 0.05).floor() as i32
+}
+
+/// The terrain at a tile and its shade.
+pub fn terrain_at(gen: &WorldGen, t: TilePos) -> (Terrain, u8) {
+    let s = gen.seed;
+    let (height, wet, keep) = fields(gen, t);
+    // Rivers: where a slow, winding noise crosses its middle, through the
+    // lowland between the lakes and the hills.
+    let bend =
+        value_noise(s ^ 0x41fe, t.x, t.y, 150) + 0.25 * value_noise(s ^ 0x7e77, t.x, t.y, 40);
+    let river = (bend - 0.625).abs();
+    let lowland = (0.34..0.64).contains(&height) && keep < 0.2;
+    if lowland && river < 0.009 {
+        return (Terrain::Water, 200);
+    }
+    if lowland && river < 0.016 {
+        return (Terrain::Sand, 140);
+    }
+    // Cliffs: ragged lines along the highland contours, with gaps to pass through.
+    if height > 0.56 && keep < 0.2 && value_noise(s ^ 0xc11f, t.x, t.y, 14) > 0.4 {
+        let step = contour(ridge(gen, t));
+        let east = contour(ridge(gen, TilePos::new(t.x + 1, t.y)));
+        let south = contour(ridge(gen, TilePos::new(t.x, t.y + 1)));
+        if step >= 0 && (step != east || step != south) {
+            return (Terrain::Cliff, (height.clamp(0.0, 1.0) * 255.0) as u8);
+        }
+    }
     let terrain = if height < 0.29 {
         Terrain::DeepWater
     } else if height < 0.335 {
@@ -280,7 +350,7 @@ fn decor_at(gen: &WorldGen, t: TilePos, terrain: Terrain) -> Option<Decor> {
         Terrain::Scrub => &[(Bush, 40), (Stone, 35), (Tuft, 80), (Pine, 10)],
         Terrain::Sand => &[(Stone, 20), (Tuft, 25)],
         Terrain::Rock => &[(Boulder, 90), (Stone, 110), (Pine, 15)],
-        Terrain::Water | Terrain::DeepWater => &[],
+        Terrain::Water | Terrain::DeepWater | Terrain::Cliff => &[],
     };
     // Groves: trees bunch together rather than lying evenly.
     let grove = value_noise(gen.seed ^ 0x6a0e, t.x, t.y, 7);
@@ -550,7 +620,7 @@ mod tests {
         );
     }
 
-    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 13_658_882_497_565_849_921;
+    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 8_404_887_726_163_785_125;
 
     #[test]
     fn spawn_has_iron_and_copper_close_by() {
@@ -643,6 +713,7 @@ mod map_print {
                         Terrain::Forest => 'f',
                         Terrain::Scrub => ',',
                         Terrain::Rock => '^',
+                        Terrain::Cliff => '%',
                     }
                 })
                 .collect();

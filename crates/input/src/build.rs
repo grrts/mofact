@@ -19,6 +19,11 @@ pub struct Occupant {
 /// The built world, as the tools see it.
 pub trait Ground {
     fn at(&self, tile: TilePos) -> Option<Occupant>;
+    /// Whether a tree or boulder stands on an empty tile, for the remove
+    /// tool to clear.
+    fn tree(&self, _tile: TilePos) -> bool {
+        false
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,8 +54,9 @@ enum Gesture {
         start: Option<Occupant>,
     },
     Place(TilePos),
-    /// What the finger has passed over so far, in the order it got there.
-    Remove(Vec<EntityId>),
+    /// What the finger has passed over so far, in the order it got there,
+    /// and the trees it passed over.
+    Remove(Vec<EntityId>, Vec<TilePos>),
 }
 
 #[derive(Debug)]
@@ -100,9 +106,9 @@ impl Builder {
             }
             Tool::Place(_) => Some(Gesture::Place(tile)),
             Tool::Remove => {
-                let mut marks = Vec::new();
-                mark(&mut marks, tile, ground);
-                Some(Gesture::Remove(marks))
+                let (mut marks, mut trees) = (Vec::new(), Vec::new());
+                mark(&mut marks, &mut trees, tile, ground);
+                Some(Gesture::Remove(marks, trees))
             }
         };
         Vec::new()
@@ -113,7 +119,7 @@ impl Builder {
         match &mut self.gesture {
             Some(Gesture::Belt { path, .. }) => extend(path, tile),
             Some(Gesture::Place(t)) => *t = tile,
-            Some(Gesture::Remove(marks)) => mark(marks, tile, ground),
+            Some(Gesture::Remove(marks, trees)) => mark(marks, trees, tile, ground),
             None => {}
         }
         Vec::new()
@@ -164,8 +170,9 @@ impl Builder {
                     });
                 }
             }
-            Some(Gesture::Remove(marks)) => {
+            Some(Gesture::Remove(marks, trees)) => {
                 out.extend(marks.into_iter().map(|entity| Command::Remove { entity }));
+                out.extend(trees.into_iter().map(|tile| Command::Clear { tile }));
             }
             None => {}
         }
@@ -175,7 +182,15 @@ impl Builder {
     /// What a remove drag has marked so far, to draw before it goes.
     pub fn marked(&self) -> &[EntityId] {
         match &self.gesture {
-            Some(Gesture::Remove(marks)) => marks,
+            Some(Gesture::Remove(marks, _)) => marks,
+            _ => &[],
+        }
+    }
+
+    /// The trees a remove drag has marked so far.
+    pub fn marked_trees(&self) -> &[TilePos] {
+        match &self.gesture {
+            Some(Gesture::Remove(_, trees)) => trees,
             _ => &[],
         }
     }
@@ -207,11 +222,12 @@ impl Builder {
 }
 
 /// Mark what stands on `tile` for removal, once; the hub can't be marked.
-fn mark(marks: &mut Vec<EntityId>, tile: TilePos, ground: &dyn Ground) {
-    if let Some(o) = ground.at(tile).filter(|o| o.removable) {
-        if !marks.contains(&o.id) {
-            marks.push(o.id);
-        }
+fn mark(marks: &mut Vec<EntityId>, trees: &mut Vec<TilePos>, tile: TilePos, ground: &dyn Ground) {
+    match ground.at(tile) {
+        Some(o) if o.removable && !marks.contains(&o.id) => marks.push(o.id),
+        Some(_) => {}
+        None if ground.tree(tile) && !trees.contains(&tile) => trees.push(tile),
+        None => {}
     }
 }
 

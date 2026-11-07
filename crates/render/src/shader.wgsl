@@ -105,6 +105,8 @@ fn land(kind: f32, shade: f32) -> vec3<f32> {
         c = vec3<f32>(0.278, 0.263, 0.188); // scrub
     } else if kind == 6.0 {
         c = vec3<f32>(0.247, 0.259, 0.271); // rock
+    } else if kind == 7.0 {
+        c = vec3<f32>(0.141, 0.129, 0.122); // cliff face
     }
     return c * (0.9 + 0.2 * shade);
 }

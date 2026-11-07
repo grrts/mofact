@@ -146,6 +146,11 @@ pub struct Sim {
     /// Parallel to entity slots; `None` for removed entities.
     states: Vec<Option<State>>,
     ore: HashMap<TilePos, Item>,
+    /// The generated map, when the game has one: ore a drill is placed on
+    /// is copied into `ore` from here, so saves carry it.
+    world: Option<mofact_world::WorldGen>,
+    /// Tiles whose tree or boulder has been cleared, sorted.
+    cleared: std::sync::Arc<Vec<TilePos>>,
     stock: Vec<u32>,
     delivered: Vec<u64>,
     research: Research,
@@ -226,6 +231,52 @@ impl Sim {
         if let Some(i) = self.tables.item(item) {
             self.ore.insert(pos, i);
         }
+    }
+
+    /// Mine the map generated from `seed`, the same one the player sees.
+    pub fn set_world(&mut self, seed: u64) {
+        let n = self.tables.ores.len() as u8;
+        self.world = (n > 0).then(|| mofact_world::WorldGen::new(seed, n));
+    }
+
+    /// Whether a `size` footprint at `pos` stands on open ground: no water
+    /// or cliff, and no tree or boulder that hasn't been cleared.
+    fn ground_clear(&self, pos: TilePos, size: (u8, u8)) -> Result<(), CommandError> {
+        let Some(world) = &self.world else {
+            return Ok(());
+        };
+        let mut overgrown = false;
+        for dy in 0..i32::from(size.1) {
+            for dx in 0..i32::from(size.0) {
+                let t = TilePos::new(pos.x + dx, pos.y + dy);
+                match mofact_world::obstacle(world, t) {
+                    Some(mofact_world::Obstacle::Terrain) => return Err(CommandError::Terrain),
+                    Some(mofact_world::Obstacle::Tree) => {
+                        overgrown |= self.cleared.binary_search(&t).is_err();
+                    }
+                    None => {}
+                }
+            }
+        }
+        if overgrown {
+            Err(CommandError::Overgrown)
+        } else {
+            Ok(())
+        }
+    }
+
+    /// The ore under `pos`: placed by hand, or else generated.
+    pub fn ore_at(&self, pos: TilePos) -> Option<ItemId> {
+        self.ore_item(pos)
+            .map(|i| self.tables.items[i as usize].clone())
+    }
+
+    fn ore_item(&self, pos: TilePos) -> Option<Item> {
+        if let Some(&i) = self.ore.get(&pos) {
+            return Some(i);
+        }
+        let ore = mofact_world::ore_at(self.world.as_ref()?, pos)?;
+        self.tables.ores.get(usize::from(ore.resource)).copied()
     }
 
     pub fn add_stock(&mut self, item: &ItemId, n: u32) {
@@ -347,9 +398,12 @@ impl Sim {
                 if !self.entities.is_free(&entity) {
                     return Err(CommandError::Blocked);
                 }
-                if matches!(b.role, Role::Miner { .. }) && !self.ore.contains_key(pos) {
-                    return Err(CommandError::Blocked);
-                }
+                self.ground_clear(*pos, b.size)?;
+                let mined = if matches!(b.role, Role::Miner { .. }) {
+                    Some(self.ore_item(*pos).ok_or(CommandError::NoOre)?)
+                } else {
+                    None
+                };
                 if b.cost.iter().any(|&(i, n)| self.stock[i as usize] < n) {
                     return Err(CommandError::CannotAfford);
                 }
@@ -369,6 +423,9 @@ impl Sim {
                 }
                 for &(i, n) in &cost {
                     self.stock[i as usize] -= n;
+                }
+                if let Some(ore) = mined {
+                    self.ore.insert(*pos, ore);
                 }
                 self.regrid(kind);
                 Ok((vec![Command::Remove { entity: id }], Some(id)))
@@ -436,6 +493,28 @@ impl Sim {
                     }],
                     None,
                 ))
+            }
+            Command::Clear { tile } => {
+                let world = self.world.as_ref().ok_or(CommandError::NoSuchEntity)?;
+                if mofact_world::obstacle(world, *tile) != Some(mofact_world::Obstacle::Tree) {
+                    return Err(CommandError::NoSuchEntity);
+                }
+                let cleared = std::sync::Arc::make_mut(&mut self.cleared);
+                let Err(at) = cleared.binary_search(tile) else {
+                    return Err(CommandError::NoSuchEntity);
+                };
+                cleared.insert(at, *tile);
+                Ok((vec![Command::Regrow { tile: *tile }], None))
+            }
+            Command::Regrow { tile } => {
+                let Ok(at) = self.cleared.binary_search(tile) else {
+                    return Err(CommandError::NoSuchEntity);
+                };
+                if self.entities.at(*tile).is_some() {
+                    return Err(CommandError::Blocked);
+                }
+                std::sync::Arc::make_mut(&mut self.cleared).remove(at);
+                Ok((vec![Command::Clear { tile: *tile }], None))
             }
             Command::SetRecipe { entity, recipe } => {
                 let kind = self
@@ -1225,6 +1304,7 @@ impl Sim {
             entities: Vec::with_capacity(self.states.len()),
             // Belts hold up to four items; most hold one or two.
             belt_items: Vec::with_capacity(self.states.len() * 2),
+            cleared: self.cleared.clone(),
             ..Snapshot::default()
         };
         for (id, e) in self.entities.iter() {

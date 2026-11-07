@@ -12,6 +12,9 @@ pub struct Built {
     kinds: HashMap<BuildingId, ((u8, u8), bool, bool)>,
     tiles: HashMap<TilePos, Occupant>,
     tick: Option<u64>,
+    /// The generated map, for the trees the remove tool can clear.
+    pub world: Option<mofact_world::WorldGen>,
+    cleared: std::sync::Arc<Vec<TilePos>>,
 }
 
 impl Built {
@@ -29,6 +32,8 @@ impl Built {
             kinds,
             tiles: HashMap::new(),
             tick: None,
+            world: None,
+            cleared: Default::default(),
         }
     }
 
@@ -38,6 +43,7 @@ impl Built {
             return;
         }
         self.tick = Some(snap.tick);
+        self.cleared = snap.cleared.clone();
         self.tiles.clear();
         for e in &snap.entities {
             let Some(&((w, h), belt, hub)) = self.kinds.get(&e.building) else {
@@ -62,5 +68,12 @@ impl Built {
 impl Ground for Built {
     fn at(&self, tile: TilePos) -> Option<Occupant> {
         self.tiles.get(&tile).copied()
+    }
+
+    fn tree(&self, tile: TilePos) -> bool {
+        self.world.as_ref().is_some_and(|w| {
+            mofact_world::obstacle(w, tile) == Some(mofact_world::Obstacle::Tree)
+                && self.cleared.binary_search(&tile).is_err()
+        })
     }
 }

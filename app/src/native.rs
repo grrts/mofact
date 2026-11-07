@@ -519,6 +519,8 @@ fn screenshots(
         ("world-wide", camera.center, 20.0),
         ("world-west", [-60.0, -10.0], 40.0),
         ("world-north", [40.0, -110.0], 40.0),
+        ("world-cliffs", [27.0, 70.0], 32.0),
+        ("world-river", [54.0, -6.0], 32.0),
     ] {
         let camera = Camera {
             center,
