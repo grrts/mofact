@@ -1423,12 +1423,16 @@ fn a_whole_session_of_han_text_fits_the_atlas() {
             f.draw(size, 3.0, &Tool::Place("assembler".into()));
             f.draw((2556, 1179), 3.0, &Tool::Belt);
         }
-        // And every string, a frame for each size text comes in.
-        let all = texts(lang).concat();
+        // And every string at every size text comes in, a sheetful of
+        // characters a frame.
+        let all: Vec<char> = texts(lang).concat().chars().collect();
         i18n::set_lang(lang);
         for px in [30.0, 33.0, 36.0, 39.0, 42.0, 45.0] {
-            f.overlay.clear();
-            f.overlay.text(&all, [0.0, 100.0], px, [255; 4]);
+            for sheet in all.chunks(150) {
+                f.overlay.clear();
+                let sheet: String = sheet.iter().collect();
+                f.overlay.text(&sheet, [0.0, 100.0], px, [255; 4]);
+            }
         }
         i18n::set_lang(i18n::Lang::En);
         assert_eq!(f.overlay.dropped, 0, "{}: glyphs left out", lang.code());

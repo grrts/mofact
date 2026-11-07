@@ -108,7 +108,8 @@ impl Overlay {
         self.panels.clear();
         // Between frames no quad points at a glyph, so they can go: room
         // for the next frame's, which come back as they are drawn.
-        if self.atlas.filled() > 0.75 {
+        let icons = (self.glyphs_from.1 + self.glyphs_from.2) as f32 / self.atlas.size as f32;
+        if self.atlas.filled() > icons + (1.0 - icons) / 2.0 {
             self.atlas.rewind(self.glyphs_from, "glyph:");
         }
     }
@@ -260,7 +261,9 @@ mod tests {
         o.text("鉄板", [0.0, 40.0], 16.0, [255; 4]);
         assert_eq!(o.instances.len(), 2, "both drawn by the Japanese face");
         let mut frames = 0;
-        while o.atlas.filled() <= 0.75 {
+        let start = o.atlas.filled();
+        let half = start + (1.0 - start) / 2.0;
+        while o.atlas.filled() <= half {
             o.clear();
             o.text(
                 &format!("鉄板{frames}"),
@@ -271,7 +274,7 @@ mod tests {
             frames += 1;
         }
         o.clear();
-        assert!(o.atlas.filled() < 0.75, "glyphs cleared");
+        assert!(o.atlas.filled() < half, "glyphs cleared");
         assert!(o.atlas.get("panel").is_some(), "but not the panel");
         o.text("鉄", [0.0, 40.0], 16.0, [255; 4]);
         assert_eq!((o.instances.len(), o.dropped), (1, 0));
