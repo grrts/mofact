@@ -79,6 +79,8 @@ enum Art {
     TurbineSpin(u8),
     /// A generator bigger than a tile: a solar panel.
     Solar,
+    /// A radar (S3).
+    Radar,
     Splitter,
     Underground {
         exit: bool,
@@ -219,6 +221,7 @@ enum Kind {
     Stop,
     Train,
     Mega,
+    Radar,
 }
 
 impl Kind {
@@ -519,6 +522,7 @@ impl Look {
                 BuildingRole::TrainStop => (Kind::Stop, Vec::new()),
                 BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
                 BuildingRole::Megaproject { .. } => (Kind::Mega, Vec::new()),
+                BuildingRole::Radar { .. } => (Kind::Radar, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -655,6 +659,7 @@ impl Look {
                 }
                 Kind::Train => push(&mut look, id.to_owned(), b.size, Art::Locomotive),
                 Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
+                Kind::Radar => push(&mut look, id.to_owned(), b.size, Art::Radar),
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -1050,7 +1055,7 @@ impl Look {
             // A pipe or rail on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
-            Kind::Train | Kind::Mega => b.base,
+            Kind::Train | Kind::Mega | Kind::Radar => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
@@ -1243,6 +1248,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             draw::turbine(&mut c, z, fine, 0.3 + turn / 2.0)
         }
         Art::Solar => draw::solar(&mut c, z, fine),
+        Art::Radar => draw::radar(&mut c, z, fine),
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
         Art::Notch => draw::notch_east(&mut c, z),

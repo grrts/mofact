@@ -165,6 +165,13 @@ pub enum BuildingRole {
     Megaproject {
         stages: Vec<Stage>,
     },
+    /// Charts the land (S3): while powered, it lifts the fog from the
+    /// nearest unexplored patch every `seconds_per_patch`, out to `reach`
+    /// tiles away.
+    Radar {
+        reach: u32,
+        seconds_per_patch: f32,
+    },
 }
 
 /// One stage of a megaproject: its name and what it takes.

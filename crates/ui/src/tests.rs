@@ -39,6 +39,7 @@ fn snapshot() -> Snapshot {
         pins: Default::default(),
         trains: vec![train()],
         mega: None,
+        explored: Default::default(),
     }
 }
 

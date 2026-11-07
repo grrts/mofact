@@ -23,6 +23,7 @@ mod built;
 mod bundled;
 pub mod cloud;
 pub mod crash;
+mod fog;
 pub mod game;
 mod guide;
 pub mod haptics;

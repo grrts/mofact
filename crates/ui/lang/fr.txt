@@ -23,6 +23,7 @@ tip.rail_signal = Touchez un rail pour le couper en cantons. Un seul train à la
 tip.train_stop = Touchez un rail. Les tapis qui y entrent chargent le train ; il décharge par la flèche.
 tip.locomotive = Touchez un rail pour placer, puis le train pour lui donner des arrêts.
 tip.wind_turbine = Touchez pour placer près d'un poteau. Chaque éolienne alimente un labo.
+tip.radar = Touchez pour placer près d'un poteau. Alimenté, il cartographie les terres alentour, les plus proches d'abord.
 tip.place = Touchez pour placer. Choisissez une recette, ou laissez-la choisir selon ce qui arrive.
 tip.remove = Touchez ou glissez pour marquer, relâchez pour retirer. Annuler remet tout en place.
 
@@ -315,6 +316,7 @@ building.underground-belt = Tapis souterrain
 building.lab = Labo
 building.pole = Poteau
 building.wind-turbine = Éolienne
+building.radar = Radar
 building.pipe = Tuyau
 building.underground-pipe = Tuyau souterrain
 building.tank = Réservoir

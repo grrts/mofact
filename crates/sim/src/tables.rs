@@ -82,6 +82,12 @@ pub enum Role {
         per_tick: u32,
         capacity: u32,
     },
+    /// Charts one fog cell every `every` ticks while powered, out to
+    /// `reach` cells away (S3).
+    Radar {
+        reach: i32,
+        every: u32,
+    },
 }
 
 impl Role {
@@ -237,6 +243,13 @@ impl Tables {
                     speed: *speed,
                 },
                 BuildingRole::Lab { speed } => Role::Lab { speed: *speed },
+                BuildingRole::Radar {
+                    reach,
+                    seconds_per_patch,
+                } => Role::Radar {
+                    reach: (*reach as i32 + mofact_core::FOG_CELL - 1) / mofact_core::FOG_CELL,
+                    every: ticks(*seconds_per_patch).max(1),
+                },
                 BuildingRole::Megaproject { stages } => Role::Mega {
                     stages: stages.iter().map(|st| stacks(&t, &st.needs)).collect(),
                     names: stages.iter().map(|st| st.name.clone()).collect(),

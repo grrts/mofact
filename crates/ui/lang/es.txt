@@ -23,6 +23,7 @@ tip.rail_signal = Toca una vía para dividirla en tramos. Solo pasa un tren a la
 tip.train_stop = Toca una vía. Las cintas que entran cargan el tren; descarga por la flecha.
 tip.locomotive = Toca una vía para colocarla y luego el tren para darle paradas.
 tip.wind_turbine = Toca para colocar junto a un poste. Cada aerogenerador alimenta un laboratorio.
+tip.radar = Toca para colocar junto a un poste. Con energía explora la tierra a su alrededor, lo más cercano primero.
 tip.place = Toca para colocar. Elige una receta o deja que elija según lo que llega.
 tip.remove = Toca o arrastra para marcar, suelta para quitar. Deshacer lo devuelve todo.
 
@@ -315,6 +316,7 @@ building.underground-belt = Cinta subterránea
 building.lab = Laboratorio
 building.pole = Poste
 building.wind-turbine = Aerogenerador
+building.radar = Radar
 building.pipe = Tubería
 building.underground-pipe = Tubería subterránea
 building.tank = Depósito

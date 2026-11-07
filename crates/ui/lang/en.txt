@@ -28,6 +28,7 @@ tip.rail_signal = Tap track to split it into blocks. Only one train at a time go
 tip.train_stop = Tap track. Belts pointed in load the train; it unloads out of the arrow.
 tip.locomotive = Tap track to place, then tap the train to give it stops.
 tip.wind_turbine = Tap to place next to a pole. Each turbine powers one lab.
+tip.radar = Tap to place next to a pole. With power it charts the land around it, nearest first.
 tip.place = Tap to place. Pick a recipe, or let it pick from what arrives.
 tip.remove = Tap or drag to mark, lift to remove. Undo brings things back.
 

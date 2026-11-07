@@ -23,6 +23,7 @@ tip.rail_signal = Tippe auf ein Gleis, um es in Blöcke zu teilen. Pro Block fä
 tip.train_stop = Tippe auf ein Gleis. Bänder hinein beladen den Zug; er entlädt am Pfeil.
 tip.locomotive = Auf ein Gleis tippen, dann auf den Zug, um ihm Haltestellen zu geben.
 tip.wind_turbine = Neben einem Mast platzieren. Jede Turbine versorgt ein Labor.
+tip.radar = Neben einem Mast platzieren. Mit Strom kartiert es das Land ringsum, das nächste zuerst.
 tip.place = Tippen zum Platzieren. Wähle ein Rezept oder lass die Maschine nach dem Eingang wählen.
 tip.remove = Tippen oder ziehen zum Markieren, loslassen zum Abreißen. Rückgängig holt alles zurück.
 
@@ -315,6 +316,7 @@ building.underground-belt = Tunnelband
 building.lab = Labor
 building.pole = Mast
 building.wind-turbine = Windrad
+building.radar = Radar
 building.pipe = Rohr
 building.underground-pipe = Tunnelrohr
 building.tank = Tank

@@ -1971,3 +1971,98 @@ fn repeatable_research_never_runs_out_and_each_level_speeds_drills() {
     assert_eq!(loaded.snapshot().research, sim.snapshot().research);
     assert_eq!(ticks(&loaded), three);
 }
+
+/// Content whose radar reaches four cells, so a test can watch it finish.
+fn short_radar() -> Content {
+    let mut c = content();
+    let radar = c
+        .buildings
+        .iter_mut()
+        .find(|b| b.id == BuildingId::from("radar"))
+        .unwrap();
+    radar.role = mofact_core::content::BuildingRole::Radar {
+        reach: 4 * mofact_core::FOG_CELL as u32,
+        seconds_per_patch: 1.0,
+    };
+    c
+}
+
+fn cell(x: i32, y: i32) -> mofact_core::geom::FogCell {
+    mofact_core::geom::FogCell::new(x, y)
+}
+
+/// Cells a disc of `r` cells round (0, 0) holds.
+fn disc(r: i32) -> usize {
+    (-r..=r)
+        .flat_map(|y| (-r..=r).map(move |x| x * x + y * y))
+        .filter(|d| *d <= r * r + r)
+        .count()
+}
+
+#[test]
+fn a_new_game_sees_the_land_round_its_hub() {
+    let mut sim = Sim::with_content(&content());
+    assert!(sim.snapshot().explored.is_empty());
+    place(&mut sim, "hub", 0, 0, Dir::East, None);
+    let snap = sim.snapshot();
+    assert_eq!(snap.explored.len(), disc(REVEAL_HUB));
+    assert!(sim.explored(cell(5, 0)) && sim.explored(cell(-4, 3)));
+    assert!(!sim.explored(cell(6, 0)) && !sim.explored(cell(4, 4)));
+    assert!(snap.explored.windows(2).all(|w| w[0] < w[1]), "sorted");
+}
+
+#[test]
+fn a_powered_radar_charts_the_nearest_land_first_and_stops_at_its_reach() {
+    let c = short_radar();
+    let mut sim = Sim::with_content(&c);
+    for (i, n) in [
+        ("iron-plate", 100),
+        ("gear", 50),
+        ("wire", 50),
+        ("circuit", 20),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    place(&mut sim, "pole", 0, 0, Dir::East, None);
+    place(&mut sim, "wind-turbine", 1, 0, Dir::East, None);
+    let radar = place(&mut sim, "radar", 0, 1, Dir::East, None);
+    // It sees round itself as soon as it stands.
+    assert_eq!(sim.snapshot().explored.len(), disc(REVEAL_RADAR));
+    run(&mut sim, 2);
+    // The nearest hidden cells are 2 and 3 cells off on the two axes.
+    let found: Vec<_> = sim
+        .snapshot()
+        .explored
+        .iter()
+        .copied()
+        .filter(|c| c.x * c.x + c.y * c.y > REVEAL_RADAR * REVEAL_RADAR + REVEAL_RADAR)
+        .collect();
+    assert!(!found.is_empty(), "nothing charted in two seconds");
+    assert!(
+        found.iter().all(|c| c.x * c.x + c.y * c.y == 13),
+        "{found:?}"
+    );
+    run(&mut sim, 60);
+    let snap = sim.snapshot();
+    assert_eq!(snap.explored.len(), disc(4));
+    assert!(!sim.explored(cell(5, 0)));
+    let view = snap.entities.iter().find(|e| e.id == radar).unwrap();
+    assert_eq!(view.state, MachineState::Idle, "done, so it rests");
+    // The fog it lifted stays lifted over a save, and it doesn't start again.
+    let (loaded, _) = Sim::load(&c, &sim.save()).unwrap();
+    assert_eq!(loaded.snapshot().explored, snap.explored);
+    let view = loaded.snapshot();
+    let view = view.entities.iter().find(|e| e.id == radar).unwrap();
+    assert_eq!(view.state, MachineState::Idle);
+}
+
+#[test]
+fn an_unpowered_radar_charts_nothing() {
+    let mut sim = Sim::with_content(&short_radar());
+    for (i, n) in [("iron-plate", 100), ("gear", 50), ("circuit", 20)] {
+        sim.add_stock(&item(i), n);
+    }
+    place(&mut sim, "radar", 0, 1, Dir::East, None);
+    run(&mut sim, 10);
+    assert_eq!(sim.snapshot().explored.len(), disc(REVEAL_RADAR));
+}

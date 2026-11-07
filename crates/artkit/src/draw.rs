@@ -2331,3 +2331,94 @@ pub fn skyhook(c: &mut Canvas, z: f32, fine: bool, tiles: f32) {
         }
     }
 }
+
+/// A radar (S3), two tiles a side: a bolted plate, a turntable, and a
+/// dish on it looking out to the north-east, with its feed horn and a
+/// lamp that shows it is charting.
+pub fn radar(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.08 + sh,
+            s * 0.08 + sh * 1.3,
+            s * 0.84,
+            s * 0.84,
+            s * 0.1,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.08, s * 0.08, s * 0.84, s * 0.84, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.11, s * 0.11, s * 0.78, s * 0.78, s * 0.08),
+        pal::MACHINE,
+    );
+    // The plate's lit top edge, as the other machines have.
+    fill(
+        c,
+        rr(s * 0.14, s * 0.12, s * 0.72, s * 0.05, s * 0.02),
+        shade(pal::MACHINE, 0.12),
+    );
+    if fine {
+        for (bx, by) in [(0.17, 0.17), (0.83, 0.17), (0.17, 0.83), (0.83, 0.83)] {
+            bolt(c, bx * s, by * s, s * 0.018);
+        }
+    }
+    let (cx, cy) = (s * 0.5, s * 0.52);
+    // The turntable, and the mast's shadow on it.
+    c.fill_circle(cx, cy, s * 0.24, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.21, shade(pal::MACHINE, -0.12));
+    if fine {
+        c.stroke_circle(
+            cx,
+            cy,
+            s * 0.17,
+            shade(pal::MACHINE, 0.1),
+            (s * 0.01).max(1.0),
+        );
+    }
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(-PI / 4.0);
+    // The dish: a deep bowl, its rim lit and its inside in shade.
+    fill(
+        c,
+        ellipse(sh * 0.6, sh * 0.9, s * 0.3, s * 0.17),
+        pal::SHADOW,
+    );
+    fill(c, ellipse(0.0, 0.0, s * 0.3, s * 0.17), pal::MACHINE_EDGE);
+    fill(c, ellipse(0.0, s * 0.01, s * 0.27, s * 0.145), pal::PIPE);
+    fill(
+        c,
+        ellipse(0.0, s * 0.03, s * 0.21, s * 0.1),
+        shade(pal::PIPE, -0.25),
+    );
+    if fine {
+        // Ribs across the bowl.
+        for k in [-1.0f32, 0.0, 1.0] {
+            let x = k * s * 0.1;
+            c.line(
+                &[(x, -s * 0.11), (x * 1.15, s * 0.12)],
+                shade(pal::PIPE, 0.15),
+                (s * 0.008).max(1.0),
+            );
+        }
+    }
+    // The feed arm out of the bowl, and the horn at its end.
+    c.line(
+        &[(0.0, s * 0.03), (0.0, -s * 0.2)],
+        pal::MACHINE_EDGE,
+        s * 0.035,
+    );
+    c.fill_circle(0.0, -s * 0.21, s * 0.04, pal::MACHINE_EDGE);
+    c.fill_circle(0.0, -s * 0.21, s * 0.025, pal::ACCENT);
+    c.restore();
+    // The lamp on the plate.
+    c.fill_circle(s * 0.78, s * 0.78, s * 0.035, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.78, s * 0.78, s * 0.022, pal::GLASS);
+}
