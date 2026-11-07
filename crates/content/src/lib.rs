@@ -439,7 +439,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len() // with three repeatable (S2)
             ),
-            (53, 64, 34, 36)
+            (53, 64, 37, 36)
         );
         let circuit = c
             .recipes

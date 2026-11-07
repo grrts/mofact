@@ -5,7 +5,7 @@
 //! applying a command yields the command that reverses it.
 
 use crate::geom::{Dir, TilePos};
-use crate::ids::{BuildingId, EntityId, RecipeId, ResearchId};
+use crate::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -42,6 +42,25 @@ pub enum Command {
         entity: EntityId,
         stops: Vec<TrainStop>,
     },
+    /// Choose what a requester chest asks drones for, and how many to
+    /// keep; `None` asks for nothing (T49).
+    SetRequest {
+        entity: EntityId,
+        request: Option<(ItemId, u32)>,
+    },
+    /// Leave a ghost for construction drones to build (T50), as `Place`
+    /// would build it now. Refused where something stands or is planned.
+    Plan {
+        building: BuildingId,
+        pos: TilePos,
+        dir: Dir,
+        recipe: Option<RecipeId>,
+    },
+    /// Take away the ghost whose top-left tile is `pos`.
+    Unplan { pos: TilePos },
+    /// Mark an entity for construction drones to take down, or with
+    /// `false` unmark it.
+    Mark { entity: EntityId, on: bool },
 }
 
 /// One stop on a train's schedule: the train stop at `at`, where it

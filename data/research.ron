@@ -185,6 +185,7 @@
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1)],
         units: 120, seconds: 40.0,
         recipes: ["drone", "orbital-pack"],
+        buildings: ["drone-port", "provider-chest", "requester-chest"],
     ),
     (
         id: "fusion", name: "Fusion", tier: 7, requires: ["drones"],

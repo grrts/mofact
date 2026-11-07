@@ -738,6 +738,7 @@ mod tests {
 
     fn belt(x: i32) -> EntityView {
         EntityView {
+            request: None,
             id: EntityId(x as u32),
             building: "belt".into(),
             pos: TilePos::new(x, 0),
@@ -920,6 +921,7 @@ mod tests {
         let look = Look::new(&content());
         let (atlases, mut scene) = (look.atlases(), Scene::default());
         let furnace = |state| EntityView {
+            request: None,
             id: EntityId(9),
             building: "furnace".into(),
             pos: TilePos::new(2, 0),
@@ -963,6 +965,7 @@ mod tests {
         let look = Look::new(&content());
         let (atlases, mut scene) = (look.atlases(), Scene::default());
         let pipe = |fill: Option<f32>| EntityView {
+            request: None,
             id: EntityId(3),
             building: "pipe".into(),
             pos: TilePos::new(1, 0),

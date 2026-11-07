@@ -81,6 +81,12 @@ enum Art {
     Solar,
     /// A radar (S3).
     Radar,
+    /// A drone port (T49).
+    DronePort,
+    /// A logistic chest; `requester` tells its band's colour.
+    Chest {
+        requester: bool,
+    },
     Splitter,
     Underground {
         exit: bool,
@@ -224,6 +230,8 @@ enum Kind {
     Train,
     Mega,
     Radar,
+    Port,
+    Chest,
 }
 
 impl Kind {
@@ -525,6 +533,10 @@ impl Look {
                 BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
                 BuildingRole::Megaproject { .. } => (Kind::Mega, Vec::new()),
                 BuildingRole::Radar { .. } => (Kind::Radar, Vec::new()),
+                BuildingRole::DronePort { .. } => (Kind::Port, Vec::new()),
+                BuildingRole::ProviderChest { .. } | BuildingRole::RequesterChest { .. } => {
+                    (Kind::Chest, Vec::new())
+                }
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -668,6 +680,11 @@ impl Look {
                 }
                 Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
                 Kind::Radar => push(&mut look, id.to_owned(), b.size, Art::Radar),
+                Kind::Port => push(&mut look, id.to_owned(), b.size, Art::DronePort),
+                Kind::Chest => {
+                    let requester = matches!(b.role, BuildingRole::RequesterChest { .. });
+                    push(&mut look, id.to_owned(), b.size, Art::Chest { requester });
+                }
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -1063,7 +1080,7 @@ impl Look {
             // A pipe or rail on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
-            Kind::Train | Kind::Mega | Kind::Radar => b.base,
+            Kind::Train | Kind::Mega | Kind::Radar | Kind::Port | Kind::Chest => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
@@ -1257,6 +1274,15 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         }
         Art::Solar => draw::solar(&mut c, z, fine),
         Art::Radar => draw::radar(&mut c, z, fine),
+        Art::DronePort => draw::drone_port(&mut c, z, fine),
+        Art::Chest { requester } => {
+            let trim = if requester {
+                mofact_artkit::palette::GLASS
+            } else {
+                mofact_artkit::palette::ACCENT
+            };
+            draw::logistic_chest(&mut c, z, fine, trim, requester)
+        }
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
         Art::Notch => draw::notch_east(&mut c, z),
