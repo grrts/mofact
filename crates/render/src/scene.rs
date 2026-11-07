@@ -239,9 +239,17 @@ impl Scene {
         let seen = |x: f32, y: f32, w: f32, h: f32| {
             x + w >= lo[0] && y + h >= lo[1] && x <= hi[0] && y <= hi[1]
         };
+        // A big factory has far more outside the view than in it (T65): a
+        // cheap test on the tile skips the rest, with room for the biggest
+        // building and the neighbours a belt joins to.
+        let reach = f32::from(look.largest()) + 1.0;
+        let near = |t: TilePos| {
+            let (x, y) = (t.x as f32, t.y as f32);
+            x + reach >= lo[0] && y + reach >= lo[1] && x - 1.0 <= hi[0] && y - 1.0 <= hi[1]
+        };
 
         let mut carriers = Carriers::default();
-        for e in &latest.entities {
+        for e in latest.entities.iter().filter(|e| near(e.pos)) {
             if let Some(c) = look.conveyor(&e.building) {
                 carriers.0.insert(e.pos, (c, e.dir, e.exit));
             }
@@ -262,7 +270,7 @@ impl Scene {
         let mut badges = Vec::new();
         // Badges keep a readable size on screen when zoomed out, as in the prototype.
         let badge = (7.0 / camera.pixels_per_tile).max(0.2) * 2.0;
-        for e in &latest.entities {
+        for e in latest.entities.iter().filter(|e| near(e.pos)) {
             let Some((w, h)) = look.size(&e.building) else {
                 continue;
             };
@@ -378,16 +386,21 @@ impl Scene {
         }
 
         let mut before: HashMap<_, Vec<f32>> = HashMap::new();
-        for item in &prev.belt_items {
+        for item in prev.belt_items.iter().filter(|i| near(i.tile)) {
             before.entry(item.tile).or_default().push(item.along);
         }
         let mut index: HashMap<_, usize> = HashMap::new();
-        let counts = latest.belt_items.iter().fold(HashMap::new(), |mut m, i| {
-            *m.entry(i.tile).or_insert(0usize) += 1;
-            m
-        });
+        let counts =
+            latest
+                .belt_items
+                .iter()
+                .filter(|i| near(i.tile))
+                .fold(HashMap::new(), |mut m, i| {
+                    *m.entry(i.tile).or_insert(0usize) += 1;
+                    m
+                });
         let size = ITEM_TILES;
-        for item in &latest.belt_items {
+        for item in latest.belt_items.iter().filter(|i| near(i.tile)) {
             let n = index.entry(item.tile).or_insert(0);
             let k = *n;
             *n += 1;
@@ -750,6 +763,50 @@ mod tests {
         for (x, want) in xs.iter().zip([1.2, 1.4, 1.6]) {
             assert!((x - want).abs() < 1e-5, "{xs:?}");
         }
+    }
+
+    #[test]
+    fn far_away_things_change_nothing_on_screen_but_edge_ones_still_draw() {
+        // Culling by tile before anything else (T65) must draw the same: a
+        // big assembler poking in from just off the left edge still shows,
+        // and a thousand belts and items far away add nothing.
+        let look = Look::new(&content());
+        let (atlases, mut scene) = (look.atlases(), Scene::default());
+        let (lo, _) = CAMERA.visible(640, 360);
+        let mut near = snap(0.5);
+        let mut edge = belt(0);
+        edge.building = "hub".into();
+        edge.id = EntityId(500);
+        edge.pos = TilePos::new(lo[0].floor() as i32 - 2, 0);
+        near.entities.push(edge);
+        scene.build(&look, &atlases, &CAMERA, (640, 360), &near, &near, 1.0);
+        let alone = scene.instances.clone();
+        assert!(
+            alone.iter().any(|i| i.pos[0] < lo[0]),
+            "the assembler on the edge is drawn"
+        );
+        let mut crowded = near.clone();
+        for k in 0..1000 {
+            let mut b = belt(0);
+            b.id = EntityId(1000 + k);
+            b.pos = TilePos::new(300 + k as i32 % 40, 300 + k as i32 / 40);
+            crowded.belt_items.push(BeltItemView {
+                item: "iron-plate".into(),
+                tile: b.pos,
+                along: 0.5,
+            });
+            crowded.entities.push(b);
+        }
+        scene.build(
+            &look,
+            &atlases,
+            &CAMERA,
+            (640, 360),
+            &crowded,
+            &crowded,
+            1.0,
+        );
+        assert_eq!(scene.instances, alone);
     }
 
     #[test]

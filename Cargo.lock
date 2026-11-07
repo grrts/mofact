@@ -537,6 +537,7 @@ name = "mofact"
 version = "0.1.0"
 dependencies = [
  "mofact-audio",
+ "mofact-bench",
  "mofact-content",
  "mofact-core",
  "mofact-headless",
@@ -587,7 +588,10 @@ dependencies = [
  "mofact-content",
  "mofact-core",
  "mofact-headless",
+ "mofact-input",
+ "mofact-render",
  "mofact-sim",
+ "mofact-ui",
 ]
 
 [[package]]

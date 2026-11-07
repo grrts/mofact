@@ -794,6 +794,15 @@ impl Look {
     }
 
     /// The footprint of `building`, in tiles.
+    /// The most tiles across or down any building is.
+    pub fn largest(&self) -> u8 {
+        self.buildings
+            .values()
+            .map(|b| b.size.0.max(b.size.1))
+            .max()
+            .unwrap_or(1)
+    }
+
     pub fn size(&self, building: &BuildingId) -> Option<(u8, u8)> {
         self.buildings.get(building).map(|b| b.size)
     }
