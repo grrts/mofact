@@ -5,12 +5,12 @@
 [
     (
         id: "first-plates", title: "Deliver 50 iron plates",
-        hint: "Your drill digs iron ore, the furnace smelts it and the belt brings plates to the hub. Let it run.",
+        hint: "Plates make themselves: the drill digs ore, the furnace smelts it, the belt brings plates to the hub. Your plates are the number at the top left; they pay for building.",
         want: Deliver(item: "iron-plate", count: 50),
     ),
     (
         id: "more-drills", title: "Have 3 drills",
-        hint: "Tap Drill, then tap iron ore. Point it at a belt that runs into a furnace, and belt the furnace to the hub.",
+        hint: "More drills, more plates. Build the glowing line: a drill on ore, a furnace in front of it, a belt to the hub.",
         want: Build(building: "drill", count: 3),
         reward: [(item: "iron-plate", count: 30)],
     ),

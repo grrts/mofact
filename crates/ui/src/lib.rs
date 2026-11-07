@@ -68,6 +68,12 @@ fn tool_at(i: usize) -> Tool {
     }
 }
 
+/// One clock for everything that pulses.
+fn pulse_clock() -> Instant {
+    static AT: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    *AT.get_or_init(Instant::now)
+}
+
 fn tool_index(tool: &Tool) -> Option<usize> {
     match tool {
         Tool::Hand => Some(0),
@@ -101,6 +107,8 @@ pub struct View<'a> {
     /// The edges the display covers or rounds off (a notch, the home
     /// indicator), in pixels: top, right, bottom, left.
     pub safe: [f32; 4],
+    /// A toolbar tool to point the player at: the coach's next step.
+    pub nudge: Option<Tool>,
 }
 
 impl View<'_> {
@@ -888,6 +896,13 @@ impl Hud {
                     1.5 * u,
                     palette::ACCENT,
                 );
+            }
+            // The coach's next tool glows until it is picked.
+            if current != Some(i) && view.nudge.as_ref().and_then(tool_index) == Some(i) {
+                let t = pulse_clock().elapsed().as_secs_f32();
+                let a = 64.0 + ((t * 4.0).sin() * 0.5 + 0.5) * 80.0;
+                let [cr, cg, cb, _] = palette::ACCENT;
+                o.panel([r[0], r[1]], [r[2], r[3]], 10.0 * u, [cr, cg, cb, a as u8]);
             }
             let icon = (28.0 * u).min(r[3] * 0.4);
             let ix = r[0] + (r[2] - icon) / 2.0;

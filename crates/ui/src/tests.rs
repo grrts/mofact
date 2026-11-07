@@ -74,6 +74,7 @@ impl Fixture {
             belt: &self.belt,
             history: (true, false),
             safe: [0.0; 4],
+            nudge: None,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);

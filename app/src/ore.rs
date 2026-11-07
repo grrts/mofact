@@ -135,6 +135,22 @@ impl OreMap {
         }
     }
 
+    /// The ore at `t`, once its chunk is generated.
+    pub fn ore_at(&self, t: TilePos) -> Option<&ItemId> {
+        if let Some((_, i)) = self.extra.iter().find(|(e, _)| *e == t) {
+            return Some(i);
+        }
+        let pos = ChunkPos {
+            x: t.x.div_euclid(CHUNK_SIZE),
+            y: t.y.div_euclid(CHUNK_SIZE),
+        };
+        self.chunks
+            .get(&pos)?
+            .iter()
+            .find(|(e, _)| *e == t)
+            .map(|(_, i)| i)
+    }
+
     pub fn tiles(&self) -> impl Iterator<Item = (TilePos, &ItemId)> {
         self.chunks
             .values()
