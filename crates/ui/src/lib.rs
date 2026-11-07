@@ -715,6 +715,16 @@ impl Hud {
             .or(under.map(|at| &self.hits[at].1))
     }
 
+    /// The screen rectangles (x, y, width, height) its controls and cards
+    /// took last frame, so the map can keep its own labels out from under them.
+    pub fn panels(&self) -> Vec<[f32; 4]> {
+        self.hits
+            .iter()
+            .filter(|(_, h)| *h != Hit::Block)
+            .map(|(r, _)| *r)
+            .collect()
+    }
+
     /// Whether `p` is over a control or panel.
     pub fn covers(&self, p: [f32; 2]) -> bool {
         self.hit(p).is_some()

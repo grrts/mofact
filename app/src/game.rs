@@ -482,9 +482,11 @@ impl Game {
             target.size(),
             scale,
         );
+        let panels = self.hud.panels();
         let nudge = coach_marks(
             &mut self.overlay,
             coach.as_ref(),
+            &panels,
             &camera,
             target.size(),
             scale,
@@ -913,6 +915,7 @@ pub fn ore_for(content: &Content, scenario: &mofact_headless::Scenario, seed: u6
 fn coach_marks(
     o: &mut Overlay,
     coach: Option<&Coach>,
+    panels: &[[f32; 4]],
     camera: &Camera,
     (sw, sh): (u32, u32),
     scale: f32,
@@ -926,15 +929,46 @@ fn coach_marks(
         ]
     };
     let px = 13.0 * scale;
-    // A label centred on `mid`, its bottom edge at `y` (or top edge, `below`).
-    let label = |o: &mut Overlay, text: &str, mid: f32, y: f32, below: bool, ink: [u8; 4]| {
-        let (pad, h) = (8.0 * scale, 24.0 * scale);
-        let w = o.measure(text, px) + 2.0 * pad;
-        let x = (mid - w / 2.0).clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
-        let top = if below { y } else { y - h };
-        o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
-        o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
-    };
+    // A label centred on `mid`, above the span `ys` (top and bottom on
+    // screen), or below it when `below`. Where the HUD's cards or a label
+    // already drawn cover that spot (a goal card over the hub on a phone
+    // held sideways), it tries the other side, then each side slid clear
+    // along the row, and keeps its first spot if nothing is clear.
+    let mut taken: Vec<[f32; 4]> = panels.to_vec();
+    let mut label =
+        |o: &mut Overlay, text: &str, mid: f32, ys: [f32; 2], below: bool, ink: [u8; 4]| {
+            let (pad, h, gap) = (8.0 * scale, 24.0 * scale, 4.0 * scale);
+            let w = o.measure(text, px) + 2.0 * pad;
+            let fit = |x: f32| x.clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
+            let x0 = fit(mid - w / 2.0);
+            let top_of = |below: bool| if below { ys[1] + gap } else { ys[0] - gap - h };
+            let over = |x: f32, top: f32, r: &[f32; 4]| {
+                x < r[0] + r[2] && x + w > r[0] && top < r[1] + r[3] && top + h > r[1]
+            };
+            let clear = |x: f32, top: f32| {
+                top >= 0.0 && top + h <= sh as f32 && !taken.iter().any(|r| over(x, top, r))
+            };
+            let mut spot = None;
+            'find: for side in [below, !below] {
+                let top = top_of(side);
+                let mut xs = vec![x0];
+                for r in taken.iter().filter(|r| over(x0, top, r)) {
+                    xs.push(fit(r[0] - w - gap));
+                    xs.push(fit(r[0] + r[2] + gap));
+                }
+                for x in xs {
+                    // Not so far along that it stops pointing at its building.
+                    if (x - x0).abs() <= w * 0.75 && clear(x, top) {
+                        spot = Some((x, top));
+                        break 'find;
+                    }
+                }
+            }
+            let (x, top) = spot.unwrap_or((x0, top_of(below)));
+            taken.push([x, top, w, h]);
+            o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
+            o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
+        };
     let accent = [0xff, 0xd1, 0x66, 0xff];
     match coach? {
         Coach::Labels(labels) => {
@@ -945,12 +979,8 @@ fn coach_marks(
             for (pos, (w, h), text, below) in labels {
                 let p = at(*pos);
                 let mid = p[0] + f32::from(*w) * ppt / 2.0;
-                let y = if *below {
-                    p[1] + f32::from(*h) * ppt + 4.0 * scale
-                } else {
-                    p[1] - 4.0 * scale
-                };
-                label(o, text, mid, y, *below, [0xe9, 0xed, 0xf0, 0xff]);
+                let ys = [p[1], p[1] + f32::from(*h) * ppt];
+                label(o, text, mid, ys, *below, [0xe9, 0xed, 0xf0, 0xff]);
             }
             None
         }
@@ -971,12 +1001,11 @@ fn coach_marks(
             let first = at(step.tiles[0]);
             let last = at(*step.tiles.last().unwrap_or(&step.tiles[0]));
             let mid = (first[0] + last[0]) / 2.0 + ppt / 2.0;
-            let y = if *below {
-                first[1].max(last[1]) + ppt + 6.0 * scale
-            } else {
-                first[1].min(last[1]) - 6.0 * scale
-            };
-            label(o, step.say(), mid, y, *below, accent);
+            let ys = [
+                first[1].min(last[1]) - 2.0 * scale,
+                first[1].max(last[1]) + ppt + 2.0 * scale,
+            ];
+            label(o, step.say(), mid, ys, *below, accent);
             Some(step.tool())
         }
     }
