@@ -65,6 +65,12 @@ impl LocalSim {
         }
     }
 
+    /// Gate research above `tier` behind the full game, or open it all
+    /// with `None`, at the start of the next tick.
+    pub fn set_demo(&self, tier: Option<u8>) {
+        self.inner.borrow_mut().queued.push(Job::Demo(tier));
+    }
+
     /// Undo the latest player action, at the start of the next tick.
     pub fn undo(&self) {
         self.inner.borrow_mut().queued.push(Job::Undo);

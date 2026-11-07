@@ -117,6 +117,8 @@ pub struct ResearchDef {
     pub cost: Vec<(Item, u32)>,
     pub units: u32,
     pub seconds: f32,
+    /// The tier it opens.
+    pub tier: u8,
 }
 
 #[derive(Clone, Debug)]
@@ -305,6 +307,7 @@ impl Tables {
                 cost: stacks(&t, &r.cost),
                 units: r.units.max(1),
                 seconds: r.seconds,
+                tier: r.tier,
             };
             for &(item, _) in &def.cost {
                 if !t.packs.contains(&item) {

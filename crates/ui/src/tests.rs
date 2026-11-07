@@ -71,6 +71,7 @@ struct Fixture {
     hud: Hud,
     belt: BuildingId,
     slots: Vec<SlotView>,
+    store: StoreView,
 }
 
 impl Fixture {
@@ -99,6 +100,7 @@ impl Fixture {
                 },
                 SlotView::default(),
             ],
+            store: StoreView::default(),
         }
     }
 
@@ -117,6 +119,7 @@ impl Fixture {
             safe: [0.0; 4],
             nudge: None,
             slots: &self.slots,
+            store: &self.store,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -1153,4 +1156,58 @@ fn the_skyhook_sheet_shows_what_its_stage_still_needs() {
             "the needs fit the screen"
         );
     }
+}
+
+#[test]
+fn research_past_the_demo_opens_the_full_game_sheet() {
+    let mut f = Fixture::new();
+    f.snapshot.research.done = [
+        "steel-working",
+        "motors",
+        "fluid-handling",
+        "steam-power",
+        "oil-processing",
+        "sulfur-processing",
+        "advanced-electronics",
+        "chemistry",
+        "silicon-processing",
+        "precision-engineering",
+    ]
+    .map(ResearchId::from)
+    .to_vec();
+    f.store.demo = Some(4);
+    f.store.price = Some("€4.99".into());
+    for (size, scale) in [((1280, 720), 1.0), ((1080, 2340), 3.0)] {
+        f.hud = Hud::new();
+        f.draw(size, scale, &Tool::Hand);
+        f.hud.toggle_research();
+        f.draw(size, scale, &Tool::Hand);
+        assert!(
+            f.hud
+                .hits
+                .iter()
+                .any(|(_, h)| h == &Hit::Study(Some("solar-energy".into()))),
+            "the demo's own tiers can still be studied"
+        );
+        f.tap(centre(f.find(&Hit::Unlock)));
+        f.draw(size, scale, &Tool::Hand);
+        let buy = f.find(&Hit::Buy);
+        assert!(buy[0] + buy[2] <= size.0 as f32);
+        assert_eq!(f.tap(centre(buy)).1, vec![Action::Buy]);
+        assert_eq!(
+            f.tap(centre(f.find(&Hit::Restore))).1,
+            vec![Action::Restore]
+        );
+    }
+    // Once bought the sheet goes, and the rows say Study.
+    f.store.demo = None;
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| h == &Hit::Buy));
+    f.hud.toggle_research();
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    assert!(f
+        .hud
+        .hits
+        .iter()
+        .any(|(_, h)| h == &Hit::Study(Some("titanium-smelting".into()))));
 }

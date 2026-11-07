@@ -30,6 +30,7 @@ mod ore;
 mod perf;
 #[cfg(test)]
 mod replay;
+pub mod shop;
 pub mod slots;
 pub mod sound;
 #[cfg(not(target_arch = "wasm32"))]
