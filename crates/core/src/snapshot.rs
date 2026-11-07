@@ -185,4 +185,7 @@ pub struct ResearchView {
     pub progress: (u32, u32),
     /// Finished research, in content order.
     pub done: Vec<ResearchId>,
+    /// The levels done of each repeatable research begun (S2).
+    #[serde(default)]
+    pub levels: Vec<(ResearchId, u32)>,
 }

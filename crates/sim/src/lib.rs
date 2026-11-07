@@ -38,7 +38,7 @@ pub use thread::SimHandle;
 use entities::{Entities, Entity};
 use fluids::Fluids;
 use mofact_core::command::{Command, CommandError, CommandResult};
-use mofact_core::content::Content;
+use mofact_core::content::{Bonus, Content, Repeat};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
 use mofact_core::snapshot::{
@@ -191,12 +191,17 @@ pub struct Sim {
     demo: Option<u8>,
 }
 
-/// Research progress, kept per research so switching loses nothing.
+/// Research progress, kept per research so switching loses nothing. A
+/// repeatable research (S2) counts every unit ever done in `units`, and is
+/// `done` once its first level is.
 #[derive(Clone, Debug, Default)]
 struct Research {
     current: Option<u16>,
     units: Vec<u32>,
     done: Vec<bool>,
+    /// What repeatable research has added, as extra speed: drills,
+    /// crafters, labs. Worked out from `units`, never saved.
+    boost: [f32; 3],
 }
 
 impl Sim {
@@ -218,6 +223,7 @@ impl Sim {
                 current: None,
                 units: vec![0; r],
                 done: vec![false; r],
+                boost: [0.0; 3],
             },
             ..Self::default()
         }
@@ -254,11 +260,50 @@ impl Sim {
     }
 
     fn finish_research(&mut self, r: u16) {
-        self.research.done[r as usize] = true;
-        self.research.units[r as usize] = self.tables.research[r as usize].units;
-        if self.research.current == Some(r) {
-            self.research.current = None;
+        let def = &self.tables.research[r as usize];
+        let units = &mut self.research.units[r as usize];
+        if def.repeat.is_some() {
+            // A level more, and labs carry on with the next.
+            let (level, _) = Repeat::level(def.units, *units);
+            *units = Repeat::total(def.units, level + 1) as u32;
+        } else {
+            *units = def.units;
+            if self.research.current == Some(r) {
+                self.research.current = None;
+            }
         }
+        self.research.done[r as usize] = true;
+        self.boost();
+    }
+
+    /// The levels done of repeatable research `r` (S2): 0 for other research.
+    fn level(&self, r: usize) -> u32 {
+        let def = &self.tables.research[r];
+        match def.repeat {
+            Some(_) => Repeat::level(def.units, self.research.units[r]).0,
+            None => 0,
+        }
+    }
+
+    /// Work out what repeatable research adds, after a level or a load.
+    fn boost(&mut self) {
+        let mut boost = [0.0; 3];
+        for r in 0..self.tables.research.len() {
+            if let Some(rep) = self.tables.research[r].repeat {
+                let k = match rep.bonus {
+                    Bonus::Mining => 0,
+                    Bonus::Crafting => 1,
+                    Bonus::Research => 2,
+                };
+                boost[k] += rep.per_level * self.level(r) as f32;
+            }
+        }
+        self.research.boost = boost;
+    }
+
+    /// Ticks a drill takes per ore, with research's boost.
+    fn mine_ticks(&self, ticks: u32) -> u32 {
+        ((ticks as f32 / (1.0 + self.research.boost[0])).round() as u32).max(1)
     }
 
     fn open(&self, lock: Option<u16>) -> bool {
@@ -725,7 +770,8 @@ impl Sim {
                             .ok_or(CommandError::UnknownContent)?;
                         let def = &self.tables.research[r as usize];
                         let ready = def.requires.iter().all(|&q| self.research.done[q as usize]);
-                        if self.research.done[r as usize] || !ready {
+                        let again = def.repeat.is_some();
+                        if (self.research.done[r as usize] && !again) || !ready {
                             return Err(CommandError::Locked);
                         }
                         if self.gated(r) {
@@ -1158,6 +1204,7 @@ impl Sim {
                 let Role::Miner { ticks } = self.tables.buildings[e.kind as usize].role else {
                     return;
                 };
+                let ticks = self.mine_ticks(ticks);
                 if out.is_none() {
                     *waiting = 0;
                     *prog += u32::from(go);
@@ -1178,7 +1225,7 @@ impl Sim {
                 let speed = match &self.tables.buildings[e.kind as usize].role {
                     Role::Crafter { speed, .. } => *speed,
                     _ => 1.0,
-                };
+                } * (1.0 + self.research.boost[1]);
                 let t = &self.tables;
                 // A recipe's first output leaves by the front, a by-product
                 // by the right, a third by the left; fluid inputs come in by
@@ -1302,7 +1349,7 @@ impl Sim {
                 let speed = match self.tables.buildings[e.kind as usize].role {
                     Role::Lab { speed } => speed,
                     _ => 1.0,
-                };
+                } * (1.0 + self.research.boost[2]);
                 if lab.unit.is_none() {
                     if let Some(r) = self.research.current {
                         let cost = &self.tables.research[r as usize].cost;
@@ -1326,7 +1373,16 @@ impl Sim {
                         if *prog >= ticks(def.seconds / speed) {
                             let r = *r as usize;
                             lab.unit = None;
-                            if !self.research.done[r] {
+                            let def = &self.tables.research[r];
+                            if def.repeat.is_some() {
+                                self.research.units[r] += 1;
+                                let (_, (into, _)) =
+                                    Repeat::level(def.units, self.research.units[r]);
+                                if into == 0 {
+                                    self.research.done[r] = true;
+                                    self.boost();
+                                }
+                            } else if !self.research.done[r] {
                                 self.research.units[r] += 1;
                                 if self.research.units[r] >= self.tables.research[r].units {
                                     self.finish_research(r as u16);
@@ -1670,6 +1726,7 @@ impl Sim {
                     let Role::Miner { ticks } = b.role else {
                         unreachable!()
                     };
+                    let ticks = self.mine_ticks(ticks);
                     let st = if out.is_some() && *waiting > BLOCKED_AFTER {
                         MachineState::Blocked
                     } else if out.is_none() && !self.ore.contains_key(&e.pos) {
@@ -1694,7 +1751,7 @@ impl Sim {
                         let speed = match b.role {
                             Role::Crafter { speed, .. } => speed,
                             _ => 1.0,
-                        };
+                        } * (1.0 + self.research.boost[1]);
                         c.prog as f32
                             / ticks(self.tables.recipes[r as usize].seconds / speed) as f32
                     });
@@ -1722,7 +1779,7 @@ impl Sim {
                     let speed = match b.role {
                         Role::Lab { speed } => speed,
                         _ => 1.0,
-                    };
+                    } * (1.0 + self.research.boost[2]);
                     match lab.unit {
                         Some((r, prog)) => {
                             let def = &self.tables.research[r as usize];
@@ -1814,14 +1871,20 @@ impl Sim {
                 .current
                 .map(|r| t.research[r as usize].id.clone()),
             progress: self.research.current.map_or((0, 0), |r| {
-                (
-                    self.research.units[r as usize],
-                    t.research[r as usize].units,
-                )
+                let def = &t.research[r as usize];
+                let units = self.research.units[r as usize];
+                match def.repeat {
+                    Some(_) => Repeat::level(def.units, units).1,
+                    None => (units, def.units),
+                }
             }),
             done: (0..t.research.len())
                 .filter(|&r| self.research.done[r])
                 .map(|r| t.research[r].id.clone())
+                .collect(),
+            levels: (0..t.research.len())
+                .filter(|&r| t.research[r].repeat.is_some() && self.research.units[r] > 0)
+                .map(|r| (t.research[r].id.clone(), self.level(r)))
                 .collect(),
         };
         snap.goal = self.goal_progress().map(|(have, need)| GoalView {

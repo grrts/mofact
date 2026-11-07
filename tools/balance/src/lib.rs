@@ -486,7 +486,11 @@ mod tests {
                 "drones",
                 "fusion",
                 "satellites",
-                "skyhook"
+                "skyhook",
+                // Repeatable (S2), open alongside the skyhook.
+                "deep-survey",
+                "lean-assembly",
+                "lab-automation",
             ]
         );
     }
