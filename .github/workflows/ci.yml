@@ -61,7 +61,8 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           cargo build -p mofact
-          sudo unshare -n -- sudo -u "$USER" --preserve-env=HOME,PATH xvfb-run -a ./target/debug/mofact --frames 120
+          # As root: it saves under /root, which is writable for it.
+          sudo unshare -n -- xvfb-run -a ./target/debug/mofact --frames 120
       - name: App shell smoke test
         if: runner.os == 'macOS'
         run: cargo run -p mofact -- --frames 120
