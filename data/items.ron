@@ -67,7 +67,7 @@
     (id: "ion-thruster", name: "Ion thruster", kind: Solid, shape: Nozzle,  color: "ion-thruster", tier: 8),
     (id: "satellite",    name: "Satellite",    kind: Solid, shape: Satellite, color: "satellite", tier: 8),
     (id: "stellar-pack", name: "Stellar pack", kind: Solid, shape: Pack,    color: "pack-stellar", tier: 8),
-    (id: "tether-segment", name: "Tether segment", kind: Solid, shape: Plate, color: "tether", tier: 8),
+    (id: "tether-segment", name: "Tether segment", kind: Solid, shape: Wire, color: "tether", tier: 8),
     (id: "climber",      name: "Climber",      kind: Solid, shape: Frame,   color: "climber",    tier: 8),
     (id: "orbital-beacon", name: "Orbital beacon", kind: Solid, shape: Satellite, color: "beacon", tier: 8),
 ]
