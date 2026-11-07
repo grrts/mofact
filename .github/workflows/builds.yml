@@ -8,6 +8,8 @@ name: Builds
 on:
   push:
     branches: [main]
+    # A tag like v0.2.0 also makes a GitHub release of these builds.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -103,6 +105,7 @@ jobs:
             cp target/$t/release/Mofact "$app/"
             cp platform/ios/Info.plist "$app/"
             cp platform/ios/icons/*.png "$app/"
+            plutil -replace CFBundleVersion -string "${{ github.run_number }}" "$app/Info.plist"
           done
       # Install on a simulator, launch, and check the game is still running
       # and drawing a few seconds later.
@@ -124,3 +127,35 @@ jobs:
           path: |
             platform/ios/build/aarch64-apple-ios/Mofact.app
             ios-simulator.png
+
+  # A version tag: check it names the workspace version, then publish the
+  # three builds and the changelog's entry as a GitHub release.
+  release:
+    name: Release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [windows, android, ios]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag matches Cargo.toml and the changelog
+        run: |
+          version=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+          test "v$version" = "$GITHUB_REF_NAME" || { echo "tag $GITHUB_REF_NAME, but Cargo.toml says $version"; exit 1; }
+          grep -q "^## $version" CHANGELOG.md || { echo "CHANGELOG.md has no ## $version"; exit 1; }
+          awk -v v="## $version" '$0 ~ "^## " { on = index($0, v) == 1; if (on) next } on' CHANGELOG.md > notes.md
+      - uses: actions/download-artifact@v4
+        with:
+          path: builds
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cd builds
+          cp mofact-windows/mofact.exe "mofact-$GITHUB_REF_NAME-windows.exe"
+          cp mofact-android/mofact.apk "mofact-$GITHUB_REF_NAME-android-unsigned.apk"
+          (cd mofact-ios && zip -qr "../mofact-$GITHUB_REF_NAME-ios-unsigned.zip" .)
+          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+            --title "Mofact $GITHUB_REF_NAME" --notes-file ../notes.md \
+            mofact-$GITHUB_REF_NAME-*
