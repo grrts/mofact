@@ -216,6 +216,8 @@ pub enum Action {
     Map(bool),
     /// Turn low-power mode on (true) or off: 30 fps and calmer ground.
     LowPower(bool),
+    /// Turn colour-blind mode on (true) or off (T58).
+    ColourBlind(bool),
     /// The game menu opened: the slots it lists want refreshing.
     MenuOpened,
     /// Save the game being played and switch to the one in this slot.
@@ -271,6 +273,8 @@ enum Hit {
     Map,
     /// The low-power toggle: turns low-power mode on and off.
     Power,
+    /// The colour-blind toggle in the game menu.
+    ColourBlind,
     /// The menu button: opens and closes the game menu.
     Menu,
     /// A slot's buttons in the game menu.
@@ -348,6 +352,8 @@ pub struct Hud {
     map: bool,
     /// Whether low-power mode is on.
     low_power: bool,
+    /// Whether colour-blind mode is on (T58).
+    colour_blind: bool,
     /// Whether the game menu is open, the slot asked to be deleted (a
     /// second tap deletes it), and the new game being set up.
     menu: bool,
@@ -444,6 +450,16 @@ impl Hud {
     /// Turn low-power mode on or off, as a saved setting does at start.
     pub fn set_low_power(&mut self, on: bool) {
         self.low_power = on;
+    }
+
+    /// Whether colour-blind mode is on (T58).
+    pub fn colour_blind(&self) -> bool {
+        self.colour_blind
+    }
+
+    /// Turn colour-blind mode on or off, as a platform does from a saved setting.
+    pub fn set_colour_blind(&mut self, on: bool) {
+        self.colour_blind = on;
     }
 
     /// Whether the game menu is open.
@@ -771,6 +787,15 @@ impl Hud {
                     seed: g.seed.parse().unwrap_or(0),
                     preset: g.preset,
                 }]
+            }
+            Hit::ColourBlind => {
+                self.colour_blind = !self.colour_blind;
+                self.toast(if self.colour_blind {
+                    "Colour-blind mode: safer colours, and marks on look-alike items."
+                } else {
+                    "Colour-blind mode off."
+                });
+                vec![Action::ColourBlind(self.colour_blind)]
             }
             Hit::Power => {
                 self.low_power = !self.low_power;
@@ -1595,27 +1620,21 @@ impl Hud {
             }
             y += row;
         }
-        // Low-power mode.
-        let on = self.low_power;
-        let label = if on {
-            "Low-power mode: on"
-        } else {
-            "Low-power mode: off"
-        };
-        let (fill, ink) = if on {
-            (PRESSED, WORKING)
-        } else {
-            (RAISED, TEXT)
-        };
-        self.button(
-            o,
-            [left, y, inner, bh],
-            label,
-            15.0 * u,
-            fill,
-            ink,
-            Hit::Power,
-        );
+        // Low-power and colour-blind mode, side by side.
+        let half = (inner - gap) / 2.0;
+        for (i, on, name, hit) in [
+            (0.0, self.low_power, "Low power", Hit::Power),
+            (1.0, self.colour_blind, "Colour-blind", Hit::ColourBlind),
+        ] {
+            let label = format!("{name}: {}", if on { "on" } else { "off" });
+            let (fill, ink) = if on {
+                (PRESSED, view.look.status(palette::Status::Working))
+            } else {
+                (RAISED, TEXT)
+            };
+            let b = [left + i * (half + gap), y, half, bh];
+            self.button(o, b, &label, 15.0 * u, fill, ink, hit);
+        }
     }
 
     /// The die for a random seed: a rounded square with five pips.
@@ -1802,7 +1821,7 @@ impl Hud {
             [at[0] + 12.0 * u, at[1] + (h - 9.0 * u) / 2.0],
             [9.0 * u, 9.0 * u],
             4.5 * u,
-            palette::STARVE,
+            palette::status(palette::Status::Starved, self.colour_blind),
         );
         o.text(
             &text,
@@ -2608,7 +2627,7 @@ impl Hud {
         );
         self.hits.push((c, Hit::Close));
         if !belt && !hub && !wired && !plumbing {
-            let (label, color) = state(e.state);
+            let (label, color) = state(e.state, view.look);
             let spx = 12.0 * u;
             let sw = o.measure(label, spx) + 16.0 * u;
             let sx = c[0] - 8.0 * u - sw;
@@ -2720,7 +2739,7 @@ impl Hud {
                     color,
                 );
             } else if !hub && !wired && !plumbing && e.progress > 0.0 {
-                let fill = state(e.state).1;
+                let fill = state(e.state, view.look).1;
                 o.panel(
                     [left, y],
                     [bw * e.progress.clamp(0.0, 1.0), 6.0 * u],
@@ -2806,14 +2825,15 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
 /// A pill: its label, icon, whether it is the one chosen, and what a tap does.
 type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
 
-/// A machine state's label and colour.
-fn state(s: MachineState) -> (&'static str, Rgba) {
+/// A machine state's label and colour, in `look`'s colours (T58).
+fn state(s: MachineState, look: &Look) -> (&'static str, Rgba) {
+    use palette::Status;
     match s {
         MachineState::Idle => ("Idle", MUTED),
-        MachineState::Working => ("Working", WORKING),
-        MachineState::Starved => ("Starved", palette::STARVE),
-        MachineState::Blocked => ("Output full", palette::ACCENT),
-        MachineState::NoPower => ("No power", palette::STARVE),
+        MachineState::Working => ("Working", look.status(Status::Working)),
+        MachineState::Starved => ("Starved", look.status(Status::Starved)),
+        MachineState::Blocked => ("Output full", look.status(Status::Blocked)),
+        MachineState::NoPower => ("No power", look.status(Status::Starved)),
     }
 }
 

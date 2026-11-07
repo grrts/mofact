@@ -32,9 +32,6 @@ fn screen(camera: &Camera, (w, h): (u32, u32), x: f32, y: f32) -> [f32; 2] {
 }
 
 const BELT: [u8; 4] = [0x9a, 0xa8, 0xb8, 0xb0];
-const WORKING: [u8; 4] = [0x63, 0xd4, 0x8a, 0xff];
-const STARVED: [u8; 4] = [0xf2, 0xb8, 0x4b, 0xff];
-const STOPPED: [u8; 4] = [0xff, 0x5d, 0x5d, 0xff];
 const IDLE: [u8; 4] = [0xc8, 0xcf, 0xd6, 0xff];
 const PIN: [u8; 4] = [0xff, 0x6b, 0xd0, 0xff];
 const SHADOW: [u8; 4] = [0x10, 0x14, 0x18, 0xc0];
@@ -43,6 +40,7 @@ const SHADOW: [u8; 4] = [0x10, 0x14, 0x18, 0xc0];
 pub fn factory(
     o: &mut Overlay,
     content: &Content,
+    look: &Look,
     camera: &Camera,
     size: (u32, u32),
     scale: f32,
@@ -79,12 +77,17 @@ pub fn factory(
             o.panel(c, [s, s], s * 0.3, BELT);
             continue;
         }
-        let color = match e.state {
-            MachineState::Working => WORKING,
-            MachineState::Starved => STARVED,
-            MachineState::Blocked | MachineState::NoPower => STOPPED,
-            MachineState::Idle => IDLE,
+        use mofact_render::palette::Status;
+        let status = match e.state {
+            MachineState::Working => Status::Working,
+            MachineState::Starved | MachineState::NoPower => Status::Starved,
+            MachineState::Blocked => Status::Blocked,
+            MachineState::Idle => Status::Idle,
         };
+        let color = look.status(status);
+        // In colour-blind mode a machine in trouble is a ring, not a dot,
+        // so its state reads without its colour.
+        let hollow = look.colour_blind() && matches!(status, Status::Starved | Status::Blocked);
         let (w, h) = (w.max(least * 1.5), h.max(least * 1.5));
         let mid = [
             at[0] + f32::from(def.size.0) * ppt / 2.0,
@@ -98,6 +101,15 @@ pub fn factory(
             SHADOW,
         );
         o.panel(c, [w, h], w * 0.25, color);
+        if hollow {
+            let k = 0.5;
+            o.panel(
+                [c[0] + w * (1.0 - k) / 2.0, c[1] + h * (1.0 - k) / 2.0],
+                [w * k, h * k],
+                w * k * 0.25,
+                SHADOW,
+            );
+        }
     }
 }
 

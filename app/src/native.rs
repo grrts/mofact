@@ -341,6 +341,9 @@ pub fn run() -> Result<(), String> {
     );
 
     let mut saves = autosave::Autosave::new(save_path);
+    let mut settings = files.settings();
+    app.game.set_low_power(settings.0);
+    app.game.set_colour_blind(settings.1);
     let mut presented = 0u64;
     let mut cycled = false;
     let mut second = (Instant::now(), 0u32);
@@ -409,6 +412,11 @@ pub fn run() -> Result<(), String> {
         if app.game.wants_slots() {
             report(app.game.serve(&mut files));
             saves.set_path(files.path(crate::slots::Store::current(&files)));
+        }
+        let now = (app.game.low_power(), app.game.colour_blind());
+        if now != settings {
+            settings = now;
+            report(files.set_settings(now));
         }
         report(saves.update(&app.game.sim));
         if app.background {
@@ -610,7 +618,7 @@ fn screenshots(
         scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
         scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
         overlay.clear();
-        crate::worldmap::factory(&mut overlay, content, &camera, size, scale, &latest);
+        crate::worldmap::factory(&mut overlay, content, &look, &camera, size, scale, &latest);
         let patches = ore.patches(&camera, size);
         crate::worldmap::patches(&mut overlay, &look, &camera, size, scale, &patches);
         let pins = [
@@ -640,6 +648,75 @@ fn screenshots(
         let path = dir.join(format!("{name}.png"));
         write_png(&path, size, &pixels)?;
         println!("{}", path.display());
+    }
+    // Colour-blind mode (T58): stuck machines up close with the problems
+    // list, then the same factory on the map.
+    {
+        let look = Look::with_colour_blind(content, true);
+        let mut renderer = Renderer::new(&gpu, look.atlases());
+        let mut overlay = Overlay::new(&look);
+        let (size, scale) = ((1179, 2556), 3.0);
+        let mut stuck = stuck.clone();
+        for (n, e) in stuck.entities.iter_mut().enumerate() {
+            if look.has_badge(&e.building) {
+                e.state = [
+                    mofact_core::snapshot::MachineState::Working,
+                    mofact_core::snapshot::MachineState::Starved,
+                    mofact_core::snapshot::MachineState::Blocked,
+                ][n % 3];
+            }
+        }
+        for (name, ppt) in [("hud-phone-colour-blind", 32.0), ("map-colour-blind", 1.0)] {
+            let camera = Camera {
+                pixels_per_tile: ppt * scale,
+                ..camera
+            };
+            scene.build(&look, renderer.atlases(), &camera, size, &prev, &stuck, 0.5);
+            scene.animate(&look, renderer.atlases(), &camera, size, &stuck, 1.3);
+            ore.fill(&camera, size);
+            scene.ore(&look, renderer.atlases(), &camera, size, ore.tiles());
+            scene.decor(renderer.atlases(), &camera, size, ore.decor(&camera, size));
+            scene.terrain(&camera, size, ore.version(), |t, s| ore.terrain(t, s));
+            overlay.clear();
+            let mut hud = Hud::new();
+            hud.set_colour_blind(true);
+            if ppt < 4.0 {
+                hud.set_map(true);
+                crate::worldmap::factory(
+                    &mut overlay,
+                    content,
+                    &look,
+                    &camera,
+                    size,
+                    scale,
+                    &stuck,
+                );
+                let patches = ore.patches(&camera, size);
+                crate::worldmap::patches(&mut overlay, &look, &camera, size, scale, &patches);
+            } else {
+                hud.toggle_problems();
+            }
+            let view = View {
+                size,
+                scale,
+                content,
+                look: &look,
+                snapshot: &stuck,
+                tool: &Tool::Hand,
+                dir: mofact_core::geom::Dir::East,
+                recipe: None,
+                belt: &"belt".into(),
+                history: (false, false),
+                safe: [59.0 * scale, 0.0, 34.0 * scale, 0.0],
+                nudge: None,
+                slots: &slots,
+            };
+            hud.draw(&view, &mut overlay);
+            let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
+            let path = dir.join(format!("{name}.png"));
+            write_png(&path, size, &pixels)?;
+            println!("{}", path.display());
+        }
     }
     for (name, size, scale, safe) in screens {
         let camera = Camera {

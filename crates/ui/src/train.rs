@@ -11,14 +11,16 @@ use mofact_core::snapshot::{TrainState, TrainView};
 const ROWS: usize = 6;
 
 /// A train's state, as its chip says it.
-fn train_state(s: TrainState) -> (&'static str, Rgba) {
+fn train_state(s: TrainState, look: &Look) -> (&'static str, Rgba) {
+    use palette::Status;
+    let ok = look.status(Status::Working);
     match s {
         TrainState::Idle => ("No stops", MUTED),
-        TrainState::Moving => ("On its way", WORKING),
-        TrainState::Waiting => ("Waiting for track", palette::ACCENT),
-        TrainState::Loading => ("Loading", WORKING),
-        TrainState::Unloading => ("Unloading", WORKING),
-        TrainState::NoPath => ("No route", palette::STARVE),
+        TrainState::Moving => ("On its way", ok),
+        TrainState::Waiting => ("Waiting for track", look.status(Status::Blocked)),
+        TrainState::Loading => ("Loading", ok),
+        TrainState::Unloading => ("Unloading", ok),
+        TrainState::NoPath => ("No route", look.status(Status::Starved)),
     }
 }
 
@@ -89,7 +91,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
-        let (label, color) = train_state(t.state);
+        let (label, color) = train_state(t.state, view.look);
         let spx = 12.0 * u;
         let sw = o.measure(label, spx) + 16.0 * u;
         let sx = c[0] - 8.0 * u - sw;

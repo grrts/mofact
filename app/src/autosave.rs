@@ -109,6 +109,25 @@ impl Files {
     fn marker(&self) -> PathBuf {
         self.first.with_extension("slot")
     }
+
+    /// The settings that outlive a game: low-power and colour-blind mode,
+    /// as `(low_power, colour_blind)`. Missing or unreadable means off.
+    pub fn settings(&self) -> (bool, bool) {
+        let text = std::fs::read_to_string(self.first.with_file_name("settings.txt"));
+        let text = text.unwrap_or_default();
+        let on = |key: &str| text.lines().any(|l| l.trim() == format!("{key} = on"));
+        (on("low-power"), on("colour-blind"))
+    }
+
+    pub fn set_settings(&self, (low_power, colour_blind): (bool, bool)) -> Result<(), String> {
+        let flag = |on: bool| if on { "on" } else { "off" };
+        let text = format!(
+            "low-power = {}\ncolour-blind = {}\n",
+            flag(low_power),
+            flag(colour_blind)
+        );
+        write(&self.first.with_file_name("settings.txt"), text.as_bytes())
+    }
 }
 
 impl crate::slots::Store for Files {
@@ -178,6 +197,9 @@ mod tests {
         assert_eq!(Files::new(dir.join("autosave.mofact")).current(), 2);
         files.remove(2);
         assert_eq!(files.read(2), None);
+        assert_eq!(files.settings(), (false, false));
+        files.set_settings((false, true)).unwrap();
+        assert_eq!(files.settings(), (false, true));
         std::fs::remove_dir_all(dir).unwrap();
     }
 }

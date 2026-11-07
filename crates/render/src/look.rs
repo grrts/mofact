@@ -150,9 +150,13 @@ enum Art {
     Item {
         shape: Shape,
         color: Rgba,
+        /// A sign that tells it from items of the same shape (T58), 0 for none.
+        mark: u8,
     },
     Badge {
         starved: bool,
+        /// Painted in the colour-blind set.
+        safe: bool,
     },
     /// Track joined on the sides in `links`, as pipes are.
     Rail {
@@ -285,6 +289,8 @@ pub struct Look {
     belt_tier: HashMap<BuildingId, usize>,
     /// How fast each belt runs, in tiles a second, to move its surface.
     belt_speed: HashMap<BuildingId, f32>,
+    /// Colour-blind mode (T58): safer colours, and marks on look-alike items.
+    colour_blind: bool,
 }
 
 /// What carries items from tile to tile, for joining belts up when drawn.
@@ -321,7 +327,22 @@ fn dir_index(d: Dir) -> usize {
 
 impl Look {
     pub fn new(content: &Content) -> Self {
-        let mut look = Look::default();
+        Self::with_colour_blind(content, false)
+    }
+
+    /// The look for `content`, in colour-blind mode (T58) if `on`.
+    pub fn with_colour_blind(content: &Content, on: bool) -> Self {
+        let mut look = Look {
+            colour_blind: on,
+            ..Look::default()
+        };
+        let item_color = |key: &str| {
+            if on {
+                palette::item_safe(key)
+            } else {
+                palette::item(key)
+            }
+        };
         for r in &content.recipes {
             if let Some(out) = r.outputs.first() {
                 look.products
@@ -333,7 +354,7 @@ impl Look {
                 .items
                 .iter()
                 .find(|i| &i.id == id)
-                .map(|i| (shape(i.shape), palette::item(&i.color)))
+                .map(|i| (shape(i.shape), item_color(&i.color)))
         };
         let push = |look: &mut Look, name: String, (w, h): (u8, u8), art| {
             look.sprites.push(Sprite {
@@ -348,13 +369,19 @@ impl Look {
             &mut look,
             STARVED.into(),
             (1, 1),
-            Art::Badge { starved: true },
+            Art::Badge {
+                starved: true,
+                safe: on,
+            },
         );
         push(
             &mut look,
             BLOCKED.into(),
             (1, 1),
-            Art::Badge { starved: false },
+            Art::Badge {
+                starved: false,
+                safe: on,
+            },
         );
         look.belt_surface = look.sprites.len();
         for (b, bend) in Bend::ALL.into_iter().enumerate() {
@@ -417,12 +444,29 @@ impl Look {
             let art = Art::PipeFluid { links };
             push(&mut look, format!("{PIPE_FLUID}:{links}"), (1, 1), art);
         }
+        // In colour-blind mode, each item after the first of its shape
+        // carries a mark of its own.
+        let mut same_shape: Vec<(IconShape, u8)> = Vec::new();
         for i in &content.items {
-            look.items
-                .insert(i.id.clone(), (look.sprites.len(), palette::item(&i.color)));
+            let color = item_color(&i.color);
+            look.items.insert(i.id.clone(), (look.sprites.len(), color));
+            let at = match same_shape.iter().position(|(k, _)| *k == i.shape) {
+                Some(at) => at,
+                None => {
+                    same_shape.push((i.shape, 0));
+                    same_shape.len() - 1
+                }
+            };
+            let seen = &mut same_shape[at].1;
+            let mark = match *seen {
+                0 => 0,
+                n => (n - 1) % draw::MARKS + 1,
+            };
+            *seen = seen.saturating_add(1);
             let art = Art::Item {
                 shape: shape(i.shape),
-                color: palette::item(&i.color),
+                color,
+                mark: if on { mark } else { 0 },
             };
             push(&mut look, format!("item:{}", i.id.as_str()), (1, 1), art);
         }
@@ -987,6 +1031,16 @@ impl Look {
             .map(|&(i, _)| (self.sprites[i].name.as_str(), palette::WHITE))
     }
 
+    /// Whether this is the colour-blind look (T58).
+    pub fn colour_blind(&self) -> bool {
+        self.colour_blind
+    }
+
+    /// The colour that says `status`, in this look's set.
+    pub fn status(&self, status: palette::Status) -> Rgba {
+        palette::status(status, self.colour_blind)
+    }
+
     /// An item's colour, for flat marks such as ore on the ground.
     pub fn item_color(&self, item: &ItemId) -> Option<Rgba> {
         self.items.get(item).map(|&(_, c)| c)
@@ -1143,12 +1197,13 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             trim: Some(trim),
             big: true,
         } => draw::precision_assembler(&mut c, z, product, fine, pose, trim),
-        Art::Item { shape, color } => {
+        Art::Item { shape, color, mark } => {
             // On a belt, the prototype draws items 0.32 of a tile across.
             let s = w as f32;
             draw::item(&mut c, shape, color, s / 2.0, s / 2.0, s * 0.64, !fine);
+            draw::mark(&mut c, mark, s / 2.0, s / 2.0, s * 0.8);
         }
-        Art::Badge { starved } => draw::badge(&mut c, w as f32 / 2.0, starved),
+        Art::Badge { starved, safe } => draw::badge(&mut c, w as f32 / 2.0, starved, safe),
         Art::Rail { links } => rail::rail(&mut c, z, fine, links),
         Art::Signal { links } => rail::signal(&mut c, z, fine, links),
         Art::Stop { links } => rail::stop(&mut c, z, fine, links),
@@ -1165,6 +1220,40 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    #[test]
+    fn in_colour_blind_mode_no_two_items_share_both_shape_and_mark() {
+        let content = content();
+        let signs = |look: &Look| -> Vec<(String, (Shape, u8), Rgba)> {
+            content
+                .items
+                .iter()
+                .map(|i| {
+                    let (at, color) = look.items[&i.id];
+                    match look.sprites[at].art {
+                        Art::Item { shape, mark, .. } => {
+                            (i.id.as_str().to_owned(), (shape, mark), color)
+                        }
+                        _ => panic!("{} is not drawn as an item", i.id.as_str()),
+                    }
+                })
+                .collect()
+        };
+        let safe = signs(&Look::with_colour_blind(&content, true));
+        for (n, (a, sa, _)) in safe.iter().enumerate() {
+            for (b, sb, _) in &safe[n + 1..] {
+                assert_ne!(sa, sb, "{a} and {b} look alike without colour");
+            }
+        }
+        // The usual look has no marks, and takes the usual colours.
+        let plain = signs(&Look::new(&content));
+        assert!(plain.iter().all(|(_, (_, m), _)| *m == 0));
+        let ore = |v: &[(String, (Shape, u8), Rgba)]| {
+            v.iter().find(|(id, ..)| id == "copper-ore").unwrap().2
+        };
+        assert_ne!(ore(&safe), ore(&plain));
+        assert!(Look::with_colour_blind(&content, true).colour_blind());
+    }
 
     pub(crate) fn content() -> Content {
         let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../data");
