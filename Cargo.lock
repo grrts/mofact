@@ -595,6 +595,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mofact-bot"
+version = "0.1.0"
+dependencies = [
+ "mofact-balance",
+ "mofact-content",
+ "mofact-core",
+ "mofact-headless",
+ "mofact-sim",
+]
+
+[[package]]
 name = "mofact-content"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,18 @@
+[package]
+name = "mofact-bot"
+description = "A scripted bot that plays a new game through to the megaproject, headless (T60)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+mofact-core.workspace = true
+mofact-content.workspace = true
+mofact-sim.workspace = true
+mofact-headless.workspace = true
+mofact-balance = { path = "../balance" }
+
+[lints]
+workspace = true
