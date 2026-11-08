@@ -35,6 +35,8 @@ const PRESSED: Rgba = [0x3a, 0x44, 0x4f, 0xff];
 const TEXT: Rgba = [0xe9, 0xed, 0xf0, 0xff];
 const MUTED: Rgba = [0x8a, 0x95, 0xa1, 0xff];
 const WORKING: Rgba = [0x63, 0xd4, 0x8a, 0xff];
+/// What the start menu lays over the factory behind it.
+const TITLE_DIM: Rgba = [0x10, 0x14, 0x18, 0xc8];
 /// The least a control's tap target spans, in points (R30): Apple's and
 /// Google's guidance for a fingertip. Smaller controls take taps from a
 /// finger-sized area round them.
@@ -393,6 +395,13 @@ enum Hit {
     /// second tap deletes).
     Pick(usize),
     Forget(usize),
+    /// The start menu's buttons: play on, a new game, the saves, the
+    /// settings, and the full game.
+    TitleContinue,
+    TitleNew,
+    TitleLoad,
+    TitleSettings,
+    TitleBuy,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -485,6 +494,12 @@ pub struct Hud {
     /// second tap deletes it), and the new game being set up.
     menu: bool,
     confirm_delete: Option<u8>,
+    /// Whether the start menu covers the screen, and whether the sheet
+    /// open now was opened from it, so closing that sheet goes back to it.
+    title: bool,
+    from_title: bool,
+    /// The first empty save slot, as of the last frame drawn.
+    empty_slot: Option<u8>,
     new_game: Option<NewGame>,
     /// Dice rolls so far, so each roll gives another seed.
     rolls: u64,
@@ -653,6 +668,34 @@ impl Hud {
     /// Whether the game menu is open.
     pub fn menu_open(&self) -> bool {
         self.menu
+    }
+
+    /// Whether the start menu is up.
+    pub fn title_open(&self) -> bool {
+        self.title
+    }
+
+    /// Put up the start menu, as the game does when it starts.
+    pub fn open_title(&mut self) {
+        self.title = true;
+        self.from_title = false;
+        self.menu = false;
+        self.new_game = None;
+        self.confirm_delete = None;
+        self.selected = None;
+        self.research = false;
+        self.unlock = false;
+        self.problems = false;
+        self.more = false;
+        self.library = false;
+        self.browse = None;
+        self.radial = None;
+    }
+
+    /// Close the start menu and play, as its Continue button does.
+    pub fn close_title(&mut self) {
+        self.title = false;
+        self.from_title = false;
     }
 
     /// Open the game menu, or with `new_game` its new-game form for that
@@ -921,6 +964,10 @@ impl Hud {
                 });
                 Vec::new()
             }
+            Hit::Close if self.from_title => {
+                self.open_title();
+                Vec::new()
+            }
             Hit::Close => {
                 self.library = false;
                 self.selected = None;
@@ -953,6 +1000,41 @@ impl Hud {
                 self.muted = !self.muted;
                 vec![Action::Mute(self.muted)]
             }
+            Hit::TitleContinue => {
+                self.close_title();
+                Vec::new()
+            }
+            Hit::TitleNew | Hit::TitleLoad | Hit::TitleSettings => {
+                self.title = false;
+                self.from_title = true;
+                self.menu = true;
+                self.confirm_delete = None;
+                self.new_game = None;
+                // A new game goes straight to its form in the first empty
+                // slot; with none empty, the slots show, to make room.
+                if hit == Hit::TitleNew {
+                    if let Some(n) = self.empty_slot.filter(|n| *n < SLOTS) {
+                        self.rolls += 1;
+                        self.new_game = Some(NewGame {
+                            slot: n,
+                            seed: roll(self.rolls).to_string(),
+                            preset: 0,
+                        });
+                    }
+                }
+                vec![Action::MenuOpened]
+            }
+            Hit::TitleBuy => {
+                self.title = false;
+                self.from_title = true;
+                self.unlock = true;
+                Vec::new()
+            }
+            Hit::Menu if self.menu && self.from_title => {
+                // Closing a menu opened from the start menu goes back to it.
+                self.open_title();
+                Vec::new()
+            }
             Hit::Menu => {
                 self.menu = !self.menu;
                 self.confirm_delete = None;
@@ -970,6 +1052,7 @@ impl Hud {
             }
             Hit::SlotLoad(n) => {
                 self.menu = false;
+                self.from_title = false;
                 vec![Action::LoadSlot(n)]
             }
             Hit::SlotDelete(n) => {
@@ -1031,6 +1114,7 @@ impl Hud {
                     return Vec::new();
                 };
                 self.menu = false;
+                self.from_title = false;
                 vec![Action::NewGame {
                     slot: g.slot,
                     seed: g.seed.parse().unwrap_or(0),
@@ -1173,6 +1257,15 @@ impl Hud {
         let [st, sr, sb, sl] = view.safe;
         let (mt, mr, mb, ml) = (m + st, m + sr, m + sb, m + sl);
         let gap = 10.0 * u;
+        self.empty_slot = view
+            .slots
+            .iter()
+            .position(|s| !s.used)
+            .and_then(|n| u8::try_from(n).ok());
+        if self.title {
+            self.title_screen(view, o, [w, h], [mt, mr, mb, ml]);
+            return;
+        }
         let selected = self
             .selected
             .and_then(|id| view.snapshot.entities.iter().find(|e| e.id == id));
@@ -2231,6 +2324,93 @@ impl Hud {
                 TEXT,
                 Hit::CopyCrash,
             );
+        }
+    }
+
+    /// The start menu: the game's name over the factory, dimmed, and a
+    /// button each to play on, start a new game, load one, change the
+    /// settings and, in the demo, buy the full game. It takes the whole
+    /// screen, so nothing builds underneath. `margins` are top, right,
+    /// bottom and left, clear of notches and the home indicator.
+    fn title_screen(&mut self, view: &View, o: &mut Overlay, [w, h]: [f32; 2], margins: [f32; 4]) {
+        let u = self.unit;
+        let [mt, mr, mb, ml] = margins;
+        o.panel([0.0, 0.0], [w, h], 0.0, TITLE_DIM);
+        self.hits.push(([0.0, 0.0, w, h], Hit::Block));
+        let mut buttons: Vec<(String, Hit)> = vec![
+            (tr("title.continue").to_string(), Hit::TitleContinue),
+            (tr("menu.new_game").to_string(), Hit::TitleNew),
+            (tr("title.load").to_string(), Hit::TitleLoad),
+            (tr("title.settings").to_string(), Hit::TitleSettings),
+        ];
+        if view.store.demo.is_some() {
+            buttons.push((tr("unlock.buy").to_string(), Hit::TitleBuy));
+        }
+        let (room_w, room_h) = (w - ml - mr, h - mt - mb);
+        let bh = 52.0 * u;
+        let gap = 10.0 * u;
+        let name_px = 48.0 * u;
+        let tag_px = 15.0 * u;
+        let head = name_px + 12.0 * u + tag_px + 28.0 * u;
+        let n = buttons.len() as f32;
+        let one = head + n * bh + (n - 1.0) * gap;
+        // A short screen, as a phone held sideways, puts the name on the
+        // left and the buttons in a column on the right.
+        let side = one > room_h && room_w > room_h;
+        let col = if side {
+            (room_w / 2.0 - gap).min(340.0 * u)
+        } else {
+            room_w.min(360.0 * u)
+        };
+        let bh = if side {
+            ((room_h - (n - 1.0) * gap) / n).clamp(FINGER * view.scale.max(0.5), bh)
+        } else {
+            bh
+        };
+        let list = n * bh + (n - 1.0) * gap;
+        let (name_at, list_at) = if side {
+            let cx = ml + room_w / 4.0;
+            let top = mt + (room_h - (name_px + 12.0 * u + tag_px)) / 2.0;
+            (
+                [cx, top],
+                [ml + room_w / 2.0 + gap, mt + (room_h - list) / 2.0],
+            )
+        } else {
+            let top = mt + ((room_h - one) / 2.0).max(0.0);
+            let cx = ml + room_w / 2.0;
+            ([cx, top], [cx - col / 2.0, top + head])
+        };
+        let name = "Mofact";
+        let npx = fit(o, name, name_px, col);
+        let nw = o.measure(name, npx);
+        let y = name_at[1] + o.cap_height(npx);
+        o.text(name, [name_at[0] - nw / 2.0, y], npx, TEXT);
+        let tag = tr("title.tagline");
+        let tpx = fit(o, tag, tag_px, col);
+        let tw = o.measure(tag, tpx);
+        o.text(
+            tag,
+            [name_at[0] - tw / 2.0, y + 12.0 * u + o.cap_height(tpx)],
+            tpx,
+            MUTED,
+        );
+        let mut y = list_at[1];
+        for (i, (label, hit)) in buttons.into_iter().enumerate() {
+            let (fill, ink) = if i == 0 {
+                (palette::ACCENT, palette::GROUND)
+            } else {
+                (RAISED, TEXT)
+            };
+            self.button(
+                o,
+                [list_at[0], y, col, bh],
+                &label,
+                18.0 * u,
+                fill,
+                ink,
+                hit,
+            );
+            y += bh + gap;
         }
     }
 

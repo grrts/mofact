@@ -489,3 +489,7 @@ toast.blueprint_saved = Gespeichert als {0}
 toast.library_full = Die Bibliothek ist voll: zuerst eine Blaupause löschen.
 toast.paste_blocked = Etwas steht im Weg: auf freien Boden schieben.
 toast.planned = Drohnen bauen es, sobald der Vorrat reicht
+title.continue = Weiterspielen
+title.load = Spiel laden
+title.settings = Einstellungen
+title.tagline = Baue eine Fabrik, die von selbst läuft

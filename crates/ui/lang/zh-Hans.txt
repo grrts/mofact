@@ -489,3 +489,7 @@ toast.blueprint_saved = 已保存为{0}
 toast.library_full = 模板已满：先删除一个。
 toast.paste_blocked = 有东西挡路：移到空地上。
 toast.planned = 库存足了，无人机就会建造
+title.continue = 回到游戏
+title.load = 读取游戏
+title.settings = 设置
+title.tagline = 建造一座自动运转的工厂

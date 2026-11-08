@@ -882,6 +882,7 @@ fn screenshots(
             "mega",
             "unlock",
             "large-text",
+            "title",
         ];
         // As a fresh install sees it: the demo, with the price known.
         let store = mofact_ui::StoreView {
@@ -921,6 +922,7 @@ fn screenshots(
                 // A whole chain for the ratio calculator.
                 "plan" => hud.browse("circuit".into()),
                 "menu" => hud.open_menu(None),
+                "title" => hud.open_title(),
                 "large-text" => {
                     hud.set_large_text(true);
                     hud.open_menu(None);

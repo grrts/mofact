@@ -489,3 +489,7 @@ toast.blueprint_saved = {0}として保存しました
 toast.library_full = ブループリントがいっぱいです。先に1つ消してください。
 toast.paste_blocked = 何かがあって置けません。空いた場所へ動かしましょう。
 toast.planned = 在庫がそろうとドローンが建てます
+title.continue = 続ける
+title.load = ゲームをロード
+title.settings = 設定
+title.tagline = 自動で動く工場をつくろう

@@ -489,3 +489,7 @@ toast.blueprint_saved = Gardé sous {0}
 toast.library_full = La bibliothèque est pleine : supprimez d'abord un plan.
 toast.paste_blocked = Quelque chose gêne : glissez-le sur un terrain libre.
 toast.planned = Les drones le construiront dès que le stock suivra
+title.continue = Continuer
+title.load = Charger une partie
+title.settings = Réglages
+title.tagline = Bâtissez une usine qui tourne toute seule
