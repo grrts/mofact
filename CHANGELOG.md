@@ -5,6 +5,9 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Fixed:** on an iPhone or iPad (Safari), building anything (usually a
+  drill, the first thing placed) stopped the web game, because Safari can't
+  vibrate. The game now buzzes only where the browser can.
 - **Power cables:** wires hang between poles as sagging cables with a
   highlight and a shadow on the ground, tied to an insulator on top of each
   pole and to a socket on every building that uses or makes power.

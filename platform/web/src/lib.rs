@@ -24,6 +24,20 @@ use wasm_bindgen::prelude::*;
 use wasm_bindgen::JsCast;
 use web_sys::{HtmlCanvasElement, KeyboardEvent, PointerEvent, WheelEvent};
 
+/// Call `target.name(args)` if the browser has it, and ignore any error.
+/// Some browsers leave out parts of the web platform (Safari on iPhone has
+/// no `navigator.vibrate`); calling one that isn't there throws, which
+/// would stop the frame loop, so the game froze on the first thing built.
+fn call_if_there(target: &JsValue, name: &str, args: &[JsValue]) {
+    let Ok(f) = js_sys::Reflect::get(target, &name.into()) else {
+        return;
+    };
+    if let Some(f) = f.dyn_ref::<js_sys::Function>() {
+        let args: js_sys::Array = args.iter().collect();
+        let _ = f.apply(target, &args);
+    }
+}
+
 const SAVE_KEY: &str = "mofact-save";
 /// Where the other save slots go, and which slot is played (T63).
 const SLOT_KEY: &str = "mofact-slot";
@@ -100,9 +114,14 @@ impl Shell {
         self.game.safe = self.safe_area(scale);
         self.game.frame(size, scale);
         if let Some(text) = self.game.clipboard.take() {
-            let _ = self.window.navigator().clipboard().write_text(&text);
+            let nav = self.window.navigator();
+            // Only a secure page has a clipboard to write to.
+            if let Ok(clipboard) = js_sys::Reflect::get(&nav, &"clipboard".into()) {
+                call_if_there(&clipboard, "writeText", &[text.into()]);
+            }
         }
-        // Phones' browsers buzz; the rest ignore it.
+        // Phones' browsers buzz; the rest ignore it. Safari has no
+        // `vibrate` at all, so it is called only where it exists.
         if let Some(feel) = self.game.haptic.take() {
             use mofact::haptics::Haptic;
             let ms = match feel {
@@ -110,7 +129,7 @@ impl Shell {
                 Haptic::Warning => 25,
                 Haptic::Success => 40,
             };
-            let _ = self.window.navigator().vibrate_with_duration(ms);
+            call_if_there(&self.window.navigator(), "vibrate", &[ms.into()]);
         }
         // Remember the toggles in the menu for next time.
         let g = &self.game;
