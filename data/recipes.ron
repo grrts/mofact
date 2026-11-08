@@ -338,4 +338,107 @@
         inputs: [(item: "climber", count: 1), (item: "ai-core", count: 4), (item: "ion-thruster", count: 2)],
         outputs: [(item: "orbital-beacon", count: 1)],
     ),
+    // Tiers 9 to 12: each new pack eats a lot of what came before, so the
+    // factory has to keep growing to feed it.
+    (
+        id: "graphene", name: "Graphene", category: "chemistry", seconds: 4.0,
+        inputs: [(item: "coal", count: 2), (item: "light-oil", count: 20)],
+        outputs: [(item: "graphene", count: 1)],
+    ),
+    (
+        id: "nanotube", name: "Nanotube", category: "assembling", seconds: 6.0,
+        inputs: [(item: "graphene", count: 2), (item: "superconductor", count: 1), (item: "copper-plate", count: 4)],
+        outputs: [(item: "nanotube", count: 2)],
+    ),
+    (
+        id: "nanobot", name: "Nanobot", category: "assembling", seconds: 16.0,
+        inputs: [(item: "nanotube", count: 3), (item: "processor", count: 1), (item: "battery", count: 2)],
+        outputs: [(item: "nanobot", count: 1)],
+    ),
+    (
+        id: "nano-pack", name: "Nano pack", category: "assembling", seconds: 30.0,
+        inputs: [(item: "nanobot", count: 1), (item: "steel", count: 8), (item: "plastic", count: 6)],
+        outputs: [(item: "nano-pack", count: 2)],
+    ),
+    (
+        id: "coolant", name: "Cryo coolant", category: "chemistry", seconds: 2.0,
+        inputs: [(item: "water", count: 100), (item: "superconductor", count: 1)],
+        outputs: [(item: "coolant", count: 50)],
+    ),
+    (
+        id: "quantum-chip", name: "Quantum chip", category: "chemistry", seconds: 12.0,
+        inputs: [(item: "processor", count: 2), (item: "nanotube", count: 2), (item: "coolant", count: 30)],
+        outputs: [(item: "quantum-chip", count: 1)],
+    ),
+    (
+        id: "quantum-core", name: "Quantum core", category: "assembling", seconds: 30.0,
+        inputs: [(item: "quantum-chip", count: 2), (item: "ai-core", count: 1), (item: "aluminium-plate", count: 6)],
+        outputs: [(item: "quantum-core", count: 1)],
+    ),
+    (
+        id: "quantum-pack", name: "Quantum pack", category: "assembling", seconds: 40.0,
+        inputs: [(item: "quantum-core", count: 1), (item: "nanobot", count: 1), (item: "low-density-structure", count: 4)],
+        outputs: [(item: "quantum-pack", count: 3)],
+    ),
+    (
+        id: "plasma", name: "Plasma", category: "chemistry", seconds: 8.0,
+        inputs: [(item: "fusion-cell", count: 1), (item: "water", count: 200)],
+        outputs: [(item: "plasma", count: 200)],
+    ),
+    (
+        id: "exotic-matter", name: "Exotic matter", category: "chemistry", seconds: 20.0,
+        inputs: [(item: "plasma", count: 50), (item: "graphene", count: 4), (item: "rare-earth-oxide", count: 2)],
+        outputs: [(item: "exotic-matter", count: 1)],
+    ),
+    (
+        id: "field-coil", name: "Field coil", category: "assembling", seconds: 20.0,
+        inputs: [(item: "exotic-matter", count: 1), (item: "superconductor", count: 6), (item: "titanium-plate", count: 6)],
+        outputs: [(item: "field-coil", count: 1)],
+    ),
+    (
+        id: "exotic-pack", name: "Exotic pack", category: "assembling", seconds: 45.0,
+        inputs: [(item: "field-coil", count: 1), (item: "quantum-chip", count: 1), (item: "aluminium-plate", count: 8)],
+        outputs: [(item: "exotic-pack", count: 3)],
+    ),
+    (
+        id: "singularity-core", name: "Singularity core", category: "assembling", seconds: 60.0,
+        inputs: [(item: "exotic-matter", count: 3), (item: "quantum-core", count: 1), (item: "fusion-cell", count: 2)],
+        outputs: [(item: "singularity-core", count: 1)],
+    ),
+    (
+        id: "graviton-lens", name: "Graviton lens", category: "assembling", seconds: 40.0,
+        inputs: [(item: "field-coil", count: 2), (item: "ion-thruster", count: 1), (item: "quantum-chip", count: 2)],
+        outputs: [(item: "graviton-lens", count: 1)],
+    ),
+    (
+        id: "singularity-pack", name: "Singularity pack", category: "assembling", seconds: 60.0,
+        inputs: [(item: "singularity-core", count: 1), (item: "graviton-lens", count: 1)],
+        outputs: [(item: "singularity-pack", count: 4)],
+    ),
+    (
+        id: "counterweight", name: "Counterweight", category: "assembling", seconds: 90.0,
+        inputs: [(item: "singularity-core", count: 2), (item: "tether-segment", count: 6), (item: "graviton-lens", count: 1)],
+        outputs: [(item: "counterweight", count: 1)],
+    ),
+    // Alternates for the new tiers (T55's rule: each changes a ratio).
+    (
+        id: "tar-graphene", name: "Tar graphene", category: "chemistry", seconds: 5.0,
+        inputs: [(item: "tar", count: 30), (item: "coal", count: 1)],
+        outputs: [(item: "graphene", count: 1)],
+    ),
+    (
+        id: "woven-nanotube", name: "Woven nanotube", category: "assembling", seconds: 8.0,
+        inputs: [(item: "graphene", count: 3), (item: "magnet", count: 1)],
+        outputs: [(item: "nanotube", count: 2)],
+    ),
+    (
+        id: "photonic-chip", name: "Photonic chip", category: "chemistry", seconds: 14.0,
+        inputs: [(item: "processor", count: 3), (item: "superconductor", count: 2), (item: "coolant", count: 20)],
+        outputs: [(item: "quantum-chip", count: 1)],
+    ),
+    (
+        id: "magnetic-coil", name: "Magnetic field coil", category: "assembling", seconds: 24.0,
+        inputs: [(item: "exotic-matter", count: 1), (item: "magnet", count: 8), (item: "aluminium-plate", count: 4)],
+        outputs: [(item: "field-coil", count: 1)],
+    ),
 ]

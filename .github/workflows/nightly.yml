@@ -1,9 +1,13 @@
 name: Nightly playthrough
 
 # T60, the phase 4 exit: a bot plays a new game from raw ore to the
-# finished megaproject, headless, through player commands only. It fails if
-# any research, building or stage can't be reached within 48 hours of game
-# time. The log of what it built and when is kept as an artifact.
+# finished megaproject, headless, through player commands only. A full
+# playthrough is meant to take about 100 hours of game time: it fails if
+# the bot can't finish within 120 hours, or wins in under 80.
+#
+# Playing 100 hours takes the bot about seven hours, longer than one job
+# may run, so it plays in legs: each saves a checkpoint after 300 minutes
+# and the next goes on from it. Each leg keeps its log as an artifact.
 
 on:
   schedule:
@@ -14,20 +18,108 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  playthrough:
-    name: Bot plays to the megaproject
+  leg1:
+    name: Bot plays, leg 1
     runs-on: ubuntu-latest
-    timeout-minutes: 120
+    timeout-minutes: 350
+    outputs:
+      paused: ${{ steps.play.outputs.paused }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release -p mofact-bot
       - name: Play
-        run: ./target/release/mofact-bot data 48 | tee playthrough.log
+        id: play
         shell: bash
+        run: |
+          set +e
+          ./target/release/mofact-bot data 120 --checkpoint bot.checkpoint --minutes 300 | tee playthrough-1.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" = 3 ]; then
+            echo "paused=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          exit "$code"
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: playthrough-log
-          path: playthrough.log
+          name: playthrough-log-1
+          path: playthrough-1.log
+      - uses: actions/upload-artifact@v4
+        if: steps.play.outputs.paused == 'true'
+        with:
+          name: checkpoint-1
+          path: bot.checkpoint
+          retention-days: 2
+
+  leg2:
+    name: Bot plays, leg 2
+    needs: leg1
+    if: needs.leg1.outputs.paused == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    outputs:
+      paused: ${{ steps.play.outputs.paused }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p mofact-bot
+      - uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-1
+      - name: Play
+        id: play
+        shell: bash
+        run: |
+          set +e
+          ./target/release/mofact-bot data 120 --checkpoint bot.checkpoint --minutes 300 | tee playthrough-2.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" = 3 ]; then
+            echo "paused=true" >> "$GITHUB_OUTPUT"; exit 0
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playthrough-log-2
+          path: playthrough-2.log
+      - uses: actions/upload-artifact@v4
+        if: steps.play.outputs.paused == 'true'
+        with:
+          name: checkpoint-2
+          path: bot.checkpoint
+          retention-days: 2
+
+  leg3:
+    name: Bot plays, leg 3
+    needs: leg2
+    if: needs.leg2.outputs.paused == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    outputs:
+      paused: ${{ steps.play.outputs.paused }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release -p mofact-bot
+      - uses: actions/download-artifact@v4
+        with:
+          name: checkpoint-2
+      - name: Play
+        id: play
+        shell: bash
+        run: |
+          set +e
+          ./target/release/mofact-bot data 120 --checkpoint bot.checkpoint --minutes 300 | tee playthrough-3.log
+          code=${PIPESTATUS[0]}
+          if [ "$code" = 3 ]; then
+            echo 'FAIL still playing after the last leg'; exit 1
+          fi
+          exit "$code"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: playthrough-log-3
+          path: playthrough-3.log

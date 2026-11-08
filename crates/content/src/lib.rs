@@ -434,12 +434,12 @@ mod tests {
         let c = load_dir(&repo_data()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(
             (
-                c.items.len(), // with the three far ores (T42)
+                c.items.len(), // with the three far ores (T42) and tiers 9 to 12
                 c.recipes.len(),
                 c.buildings.len(),
                 c.research.len() // with three repeatable (S2)
             ),
-            (53, 64, 37, 36)
+            (69, 84, 37, 47)
         );
         let circuit = c
             .recipes

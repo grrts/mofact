@@ -15,7 +15,9 @@ Run it again whenever ja.txt or zh-Hans.txt gains a character; the test
     python3 tools/fonts/subset.py NotoSansJP[wght].ttf NotoSansSC[wght].ttf
 
 The variable fonts come from https://github.com/google/fonts (ofl/notosansjp,
-ofl/notosanssc), under the SIL Open Font License.
+ofl/notosanssc), under the SIL Open Font License. Where GitHub can't be
+reached, the Google Fonts CSS API serves the same faces at weight 600 cut to
+a `text=` list of characters, which works as a source too.
 """
 
 import pathlib

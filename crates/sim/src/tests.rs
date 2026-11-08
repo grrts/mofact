@@ -1740,15 +1740,15 @@ fn the_skyhook_takes_its_stages_in_order_and_keeps_them_through_a_save() {
     let view = sim_mega(&sim);
     assert_eq!(
         (view.stage, view.stages, view.name.as_str()),
-        (0, 4, "Anchor")
+        (0, 5, "Anchor")
     );
     // A later stage's item is refused while the anchor is going in.
     assert!(!sim.feed(sky, &item("climber")));
-    for _ in 0..400 {
+    for _ in 0..2000 {
         assert!(sim.feed(sky, &item("steel")));
     }
     assert!(!sim.feed(sky, &item("steel")), "the anchor has its steel");
-    for _ in 0..99 {
+    for _ in 0..299 {
         assert!(sim.feed(sky, &item("tether-segment")));
     }
     assert_eq!(sim_mega(&sim).stage, 0);
@@ -1766,26 +1766,29 @@ fn the_skyhook_takes_its_stages_in_order_and_keeps_them_through_a_save() {
     assert!(view
         .needs
         .iter()
-        .any(|(i, have, need)| i.as_str() == "superconductor" && *have == 7 && *need == 200));
+        .any(|(i, have, need)| i.as_str() == "superconductor" && *have == 7 && *need == 1000));
 
     let mut sim = loaded;
-    for _ in 0..300 {
+    for _ in 0..1000 {
         sim.feed(sky, &item("tether-segment"));
     }
-    for _ in 0..193 {
+    for _ in 0..993 {
         sim.feed(sky, &item("superconductor"));
     }
-    for _ in 0..20 {
+    for _ in 0..60 {
         sim.feed(sky, &item("climber"));
     }
-    assert!(!sim_mega(&sim).done());
-    for _ in 0..5 {
+    for _ in 0..15 {
         assert!(sim.feed(sky, &item("orbital-beacon")));
+    }
+    assert!(!sim_mega(&sim).done());
+    for _ in 0..30 {
+        assert!(sim.feed(sky, &item("counterweight")));
     }
     let view = sim_mega(&sim);
     assert!(view.done(), "{view:?}");
     assert!(
-        !sim.feed(sky, &item("orbital-beacon")),
+        !sim.feed(sky, &item("counterweight")),
         "a built skyhook takes nothing"
     );
 }
@@ -1832,7 +1835,7 @@ fn a_row_of_labs_pools_more_pack_types_than_a_lab_has_sides() {
         place(&mut sim, "wind-turbine", x, 2, Dir::East, None);
     }
     let pick = Command::SetResearch {
-        research: Some("skyhook".into()),
+        research: Some("nanotech".into()),
     };
     assert!(matches!(sim.apply(&pick), CommandResult::Applied { .. }));
     // Five pack types reach the first lab and two the last: no lab is

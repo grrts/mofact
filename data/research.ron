@@ -89,7 +89,7 @@
     (
         id: "silicon-processing", name: "Silicon processing", tier: 4, requires: ["chemistry"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
-        units: 60, seconds: 25.0,
+        units: 120, seconds: 25.0,
         recipes: ["silicon", "processor", "slag-brick"],
     ),
     (
@@ -101,7 +101,7 @@
     (
         id: "precision-engineering", name: "Precision engineering", tier: 4, requires: ["silicon-processing"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1)],
-        units: 75, seconds: 30.0,
+        units: 150, seconds: 30.0,
         recipes: ["robot-frame", "low-density-structure", "precision-pack"],
     ),
     (
@@ -114,26 +114,26 @@
     (
         id: "titanium-smelting", name: "Titanium smelting", tier: 5, requires: ["precision-engineering"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
-        units: 75, seconds: 30.0,
+        units: 150, seconds: 30.0,
         recipes: ["titanium-plate"],
     ),
     (
         id: "aluminium-processing", name: "Aluminium processing", tier: 5, requires: ["precision-engineering"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
-        units: 75, seconds: 30.0,
+        units: 150, seconds: 30.0,
         recipes: ["alumina", "aluminium-plate", "red-mud-recovery"],
     ),
     (
         id: "rare-earth-processing", name: "Rare earth processing", tier: 5, requires: ["precision-engineering"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
-        units: 75, seconds: 30.0,
+        units: 150, seconds: 30.0,
         recipes: ["rare-earth-oxide", "magnet"],
     ),
     (
         id: "electric-engines", name: "Electric engines", tier: 5,
         requires: ["titanium-smelting", "aluminium-processing", "rare-earth-processing"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1)],
-        units: 100, seconds: 30.0,
+        units: 200, seconds: 30.0,
         recipes: ["electric-engine", "aerospace-pack"],
     ),
     (
@@ -177,33 +177,101 @@
     (
         id: "superconductors", name: "Superconductors", tier: 6, requires: ["electric-engines"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1)],
-        units: 100, seconds: 40.0,
+        units: 400, seconds: 40.0,
         recipes: ["superconductor", "ai-core"],
     ),
     (
         id: "drones", name: "Drones", tier: 6, requires: ["superconductors"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1)],
-        units: 120, seconds: 40.0,
+        units: 450, seconds: 40.0,
         recipes: ["drone", "orbital-pack"],
         buildings: ["drone-port", "provider-chest", "requester-chest"],
     ),
     (
         id: "fusion", name: "Fusion", tier: 7, requires: ["drones"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1)],
-        units: 150, seconds: 45.0,
+        units: 550, seconds: 45.0,
         recipes: ["fusion-cell", "ion-thruster"],
     ),
     (
         id: "satellites", name: "Satellites", tier: 7, requires: ["fusion"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1)],
-        units: 150, seconds: 45.0,
+        units: 550, seconds: 45.0,
         recipes: ["satellite", "stellar-pack"],
     ),
+    // Tiers 9 to 12: nanotech, quantum, exotic matter and the
+    // singularity, each with its own pack, before the skyhook opens.
     (
-        id: "skyhook", name: "The skyhook", tier: 8, requires: ["satellites"],
+        id: "nanotech", name: "Nanotech", tier: 8, requires: ["satellites"],
         cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1)],
-        units: 200, seconds: 60.0,
-        recipes: ["tether-segment", "climber", "orbital-beacon"],
+        units: 650, seconds: 60.0,
+        recipes: ["graphene", "nanotube"],
+    ),
+    (
+        id: "nanobots", name: "Nanobots", tier: 8, requires: ["nanotech"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1)],
+        units: 700, seconds: 60.0,
+        recipes: ["nanobot", "nano-pack"],
+    ),
+    (
+        id: "alternate-nanotech", name: "Alternate nanotech", tier: 9, requires: ["nanobots"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1)],
+        units: 700, seconds: 60.0,
+        recipes: ["tar-graphene", "woven-nanotube"],
+    ),
+    (
+        id: "cryogenics", name: "Cryogenics", tier: 9, requires: ["nanobots"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1)],
+        units: 750, seconds: 60.0,
+        recipes: ["coolant", "quantum-chip"],
+    ),
+    (
+        id: "quantum-computing", name: "Quantum computing", tier: 9, requires: ["cryogenics", "alternate-nanotech"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1)],
+        units: 800, seconds: 60.0,
+        recipes: ["quantum-core", "quantum-pack"],
+    ),
+    (
+        id: "alternate-quantum", name: "Photonics", tier: 10, requires: ["quantum-computing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1)],
+        units: 800, seconds: 60.0,
+        recipes: ["photonic-chip"],
+    ),
+    (
+        id: "plasma-physics", name: "Plasma physics", tier: 10, requires: ["quantum-computing"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1)],
+        units: 850, seconds: 60.0,
+        recipes: ["plasma", "exotic-matter"],
+    ),
+    (
+        id: "field-theory", name: "Field theory", tier: 10, requires: ["plasma-physics", "alternate-quantum"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1)],
+        units: 900, seconds: 60.0,
+        recipes: ["field-coil", "exotic-pack"],
+    ),
+    (
+        id: "alternate-fields", name: "Magnetic fields", tier: 11, requires: ["field-theory"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1), (item: "exotic-pack", count: 1)],
+        units: 900, seconds: 60.0,
+        recipes: ["magnetic-coil"],
+    ),
+    (
+        id: "singularity", name: "Singularity", tier: 11, requires: ["field-theory"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1), (item: "exotic-pack", count: 1)],
+        units: 950, seconds: 60.0,
+        recipes: ["singularity-core", "graviton-lens"],
+    ),
+    (
+        id: "event-horizon", name: "Event horizon", tier: 11, requires: ["singularity", "alternate-fields"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1), (item: "exotic-pack", count: 1)],
+        units: 1000, seconds: 60.0,
+        recipes: ["singularity-pack"],
+    ),
+    (
+        id: "skyhook", name: "The skyhook", tier: 12, requires: ["event-horizon"],
+        cost: [(item: "survey-pack", count: 1), (item: "engineering-pack", count: 1), (item: "chemistry-pack", count: 1), (item: "precision-pack", count: 1), (item: "aerospace-pack", count: 1), (item: "orbital-pack", count: 1), (item: "stellar-pack", count: 1), (item: "nano-pack", count: 1), (item: "quantum-pack", count: 1), (item: "exotic-pack", count: 1), (item: "singularity-pack", count: 1)],
+        units: 1100, seconds: 60.0,
+        recipes: ["tether-segment", "climber", "orbital-beacon", "counterweight"],
         buildings: ["skyhook"],
     ),
     // Repeatable research (S2): it never runs out. Each level is a bonus

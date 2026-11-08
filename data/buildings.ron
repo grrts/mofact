@@ -110,10 +110,11 @@
     // climbs out of sight. Finishing it wins the game.
     (id: "skyhook", name: "Skyhook", size: (3, 3),
         role: Megaproject(stages: [
-            (name: "Anchor", needs: [(item: "tether-segment", count: 100), (item: "steel", count: 400)]),
-            (name: "Tether", needs: [(item: "tether-segment", count: 300), (item: "superconductor", count: 200)]),
-            (name: "Climbers", needs: [(item: "climber", count: 20)]),
-            (name: "Beacon", needs: [(item: "orbital-beacon", count: 5)]),
+            (name: "Anchor", needs: [(item: "tether-segment", count: 300), (item: "steel", count: 2000)]),
+            (name: "Tether", needs: [(item: "tether-segment", count: 1000), (item: "superconductor", count: 1000)]),
+            (name: "Climbers", needs: [(item: "climber", count: 60)]),
+            (name: "Beacon", needs: [(item: "orbital-beacon", count: 15)]),
+            (name: "Counterweight", needs: [(item: "counterweight", count: 30)]),
         ]),
         cost: [(item: "steel", count: 200), (item: "titanium-plate", count: 100), (item: "ai-core", count: 10)]),
 ]

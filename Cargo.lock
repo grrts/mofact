@@ -648,6 +648,8 @@ dependencies = [
  "mofact-core",
  "mofact-headless",
  "mofact-sim",
+ "ron",
+ "serde",
 ]
 
 [[package]]

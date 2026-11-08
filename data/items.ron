@@ -70,4 +70,25 @@
     (id: "tether-segment", name: "Tether segment", kind: Solid, shape: Wire, color: "tether", tier: 8),
     (id: "climber",      name: "Climber",      kind: Solid, shape: Frame,   color: "climber",    tier: 8),
     (id: "orbital-beacon", name: "Orbital beacon", kind: Solid, shape: Satellite, color: "beacon", tier: 8),
+    // Tier 9, "nanotech": carbon from oil, rolled into tubes and built
+    // into nanobots.
+    (id: "graphene",     name: "Graphene",     kind: Solid, shape: Plate,   color: "graphene",   tier: 9),
+    (id: "nanotube",     name: "Nanotube",     kind: Solid, shape: Wire,    color: "nanotube",   tier: 9),
+    (id: "nanobot",      name: "Nanobot",      kind: Solid, shape: Frame,   color: "nanobot",    tier: 9),
+    (id: "nano-pack",    name: "Nano pack",    kind: Solid, shape: Pack,    color: "pack-nano",  tier: 9),
+    // Tier 10, "quantum": chips cooled near absolute zero.
+    (id: "coolant",      name: "Cryo coolant", kind: Fluid, shape: Droplet, color: "coolant",    tier: 10),
+    (id: "quantum-chip", name: "Quantum chip", kind: Solid, shape: Chip,    color: "quantum-chip", tier: 10),
+    (id: "quantum-core", name: "Quantum core", kind: Solid, shape: Cell,    color: "quantum-core", tier: 10),
+    (id: "quantum-pack", name: "Quantum pack", kind: Solid, shape: Pack,    color: "pack-quantum", tier: 10),
+    // Tier 11, "exotic matter": fusion plasma, and what it leaves behind.
+    (id: "plasma",       name: "Plasma",       kind: Fluid, shape: Droplet, color: "plasma",     tier: 11),
+    (id: "exotic-matter", name: "Exotic matter", kind: Solid, shape: Powder, color: "exotic-matter", tier: 11),
+    (id: "field-coil",   name: "Field coil",   kind: Solid, shape: Magnet,  color: "field-coil", tier: 11),
+    (id: "exotic-pack",  name: "Exotic pack",  kind: Solid, shape: Pack,    color: "pack-exotic", tier: 11),
+    // Tier 12, "singularity": the last tier, and the skyhook's counterweight.
+    (id: "singularity-core", name: "Singularity core", kind: Solid, shape: Cell, color: "singularity", tier: 12),
+    (id: "graviton-lens", name: "Graviton lens", kind: Solid, shape: Satellite, color: "graviton-lens", tier: 12),
+    (id: "singularity-pack", name: "Singularity pack", kind: Solid, shape: Pack, color: "pack-singularity", tier: 12),
+    (id: "counterweight", name: "Counterweight", kind: Solid, shape: Frame,  color: "counterweight", tier: 12),
 ]

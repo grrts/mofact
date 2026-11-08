@@ -17,6 +17,7 @@ mod clock;
 mod drones;
 pub mod entities;
 mod fluids;
+mod hash;
 mod history;
 mod jobs;
 mod local;
@@ -187,7 +188,7 @@ pub struct Sim {
     /// Parallel to entity slots; `None` for removed entities.
     states: Vec<Option<State>>,
     /// Ore under drills and placed by hand, and how much each tile has left.
-    ore: HashMap<TilePos, (Item, u32)>,
+    ore: HashMap<TilePos, (Item, u32), hash::Fast>,
     /// Tiles mined out, sorted: generated ore there is gone for good.
     depleted: std::sync::Arc<Vec<TilePos>>,
     /// The generated map, when the game has one: ore a drill is placed on

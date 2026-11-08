@@ -13,6 +13,8 @@ mofact-content.workspace = true
 mofact-sim.workspace = true
 mofact-headless.workspace = true
 mofact-balance = { path = "../balance" }
+serde.workspace = true
+ron.workspace = true
 
 [lints]
 workspace = true
