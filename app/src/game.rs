@@ -718,6 +718,7 @@ impl Game {
             &camera,
             target.size(),
             scale,
+            self.scene.low_power,
         );
         let panels = self.hud.panels();
         let nudge = coach_marks(
@@ -1336,10 +1337,17 @@ fn coach_marks(
     }
 }
 
-/// Power made visible on the map: wires between poles in reach of each
+/// Power made visible on the map: cables between poles in reach of each
 /// other and from each pole to what it powers (as the sim joins them: the
 /// first pole whose supply square covers it), and a "No power" tag on
 /// anything that needs power and has none.
+///
+/// Cables hang between connection points: the insulator on top of each pole
+/// (in its art) and a socket near the top-right corner of every building
+/// that draws or makes power, drawn here. Each cable sags in the middle and,
+/// up close, has a highlight along its top and a shadow on the ground that
+/// comes nearer the cable where it hangs lowest. In low-power mode, or zoomed
+/// far out, a cable is a single run of dots.
 fn power_marks(
     o: &mut Overlay,
     content: &Content,
@@ -1347,19 +1355,37 @@ fn power_marks(
     camera: &Camera,
     (sw, sh): (u32, u32),
     scale: f32,
+    low_power: bool,
 ) {
     use mofact_core::content::BuildingRole as R;
     let ppt = camera.pixels_per_tile;
     let def = |e: &mofact_core::snapshot::EntityView| {
         content.buildings.iter().find(|b| b.id == e.building)
     };
-    // The middle of an entity on screen, a little up for a pole's top.
-    let mid = |e: &mofact_core::snapshot::EntityView, lift: f32| {
-        let (w, h) = def(e).map_or((1, 1), |d| d.size);
+    // A point in tiles on screen.
+    let at = |x: f32, y: f32| {
         [
-            (e.pos.x as f32 + f32::from(w) / 2.0 - camera.center[0]) * ppt + sw as f32 / 2.0,
-            (e.pos.y as f32 + f32::from(h) / 2.0 - lift - camera.center[1]) * ppt + sh as f32 / 2.0,
+            (x - camera.center[0]) * ppt + sw as f32 / 2.0,
+            (y - camera.center[1]) * ppt + sh as f32 / 2.0,
         ]
+    };
+    let size = |e: &mofact_core::snapshot::EntityView| def(e).map_or((1, 1), |d| d.size);
+    // The middle of an entity on screen: where a pole's insulator is.
+    let mid = |e: &mofact_core::snapshot::EntityView| {
+        let (w, h) = size(e);
+        at(
+            e.pos.x as f32 + f32::from(w) / 2.0,
+            e.pos.y as f32 + f32::from(h) / 2.0,
+        )
+    };
+    // A building's socket, in from its top-right corner.
+    let inset = 0.24;
+    let socket = |e: &mofact_core::snapshot::EntityView| {
+        let (w, _) = size(e);
+        at(
+            e.pos.x as f32 + f32::from(w) - inset,
+            e.pos.y as f32 + inset,
+        )
     };
     let poles: Vec<_> = snap
         .entities
@@ -1369,32 +1395,23 @@ fn power_marks(
             _ => None,
         })
         .collect();
-    let thick = (2.0 * scale).max(ppt * 0.06);
-    let wire = |o: &mut Overlay, a: [f32; 2], b: [f32; 2], ink: [u8; 4]| {
-        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
-        let len = dx.hypot(dy);
-        // Off screen both ends: nothing to draw.
-        let out = |p: [f32; 2]| p[0] < 0.0 || p[1] < 0.0 || p[0] > sw as f32 || p[1] > sh as f32;
-        if out(a) && out(b) && len < (sw + sh) as f32 {
-            return;
-        }
-        let steps = (len / (thick * 0.6)).ceil().max(1.0) as usize;
-        for k in 0..=steps {
-            let f = k as f32 / steps as f32;
-            let p = [a[0] + dx * f - thick / 2.0, a[1] + dy * f - thick / 2.0];
-            o.panel(p, [thick, thick], thick / 2.0, ink);
-        }
-    };
-    let ink = [0x24, 0x1c, 0x16, 0xe0];
-    let lift = 0.25;
+    // Up close: shading, shadows and sockets. Far out, or saving power: plain.
+    let fine = !low_power && ppt >= 10.0 * scale;
+    let thick = (2.0 * scale).max(ppt * 0.07);
+    // Each cable: its two ends, how far its middle hangs, and its thickness.
+    let mut cables: Vec<([f32; 2], [f32; 2], f32, f32)> = Vec::new();
     for (i, (a, wa, _)) in poles.iter().enumerate() {
         for (b, wb, _) in &poles[i + 1..] {
             let reach = i32::from((*wa).min(*wb));
             if (a.pos.x - b.pos.x).abs().max((a.pos.y - b.pos.y).abs()) <= reach {
-                wire(o, mid(a, lift), mid(b, lift), ink);
+                let (pa, pb) = (mid(a), mid(b));
+                let len = (pb[0] - pa[0]).hypot(pb[1] - pa[1]);
+                cables.push((pa, pb, len * 0.1, thick));
             }
         }
     }
+    let mut sockets = Vec::new();
+    let mut unpowered = Vec::new();
     for e in &snap.entities {
         let Some(d) = def(e) else { continue };
         let powered = d.power > 0.0 || matches!(d.role, R::Generator { .. } | R::Engine { .. });
@@ -1409,29 +1426,133 @@ fn power_marks(
                 && e.pos.y <= p.pos.y + s
                 && e.pos.y + h > p.pos.y - s
         });
+        let end = socket(e);
+        if fine {
+            sockets.push(end);
+        }
         if let Some((p, _, _)) = covering {
-            wire(o, mid(p, lift), mid(e, 0.0), ink);
+            let start = mid(p);
+            let len = (end[0] - start[0]).hypot(end[1] - start[1]);
+            cables.push((start, end, len * 0.12, thick * 0.8));
         }
         if e.state == mofact_core::snapshot::MachineState::NoPower && ppt >= 14.0 * scale {
-            let px = 11.0 * scale;
-            let text = tr("state.no_power");
-            let (pad, ch) = (6.0 * scale, 18.0 * scale);
-            let tw = o.measure(text, px) + 2.0 * pad;
-            let c = mid(e, 0.0);
-            let top = c[1] - f32::from(d.size.1) * ppt / 2.0 - ch - 2.0 * scale;
+            unpowered.push((mid(e), d.size.1));
+        }
+    }
+    let on_screen = |lo: [f32; 2], hi: [f32; 2]| {
+        hi[0] >= 0.0 && hi[1] >= 0.0 && lo[0] <= sw as f32 && lo[1] <= sh as f32
+    };
+    // The ground shadow of a cable at its ends: as high as a pole is.
+    let lift = [ppt * 0.08, ppt * 0.11];
+    // A cable's centre line, sampled: `f` from 0 to 1 along it, and how much
+    // it hangs there from 0 at the ends to 1 in the middle.
+    let samples = |(a, b, sag, t): ([f32; 2], [f32; 2], f32, f32), step: f32| {
+        let lo = [a[0].min(b[0]) - t - lift[0], a[1].min(b[1]) - t - lift[1]];
+        let hi = [
+            a[0].max(b[0]) + t + lift[0],
+            a[1].max(b[1]) + sag + t + lift[1],
+        ];
+        let len = (b[0] - a[0]).hypot(b[1] - a[1]) + sag;
+        let n = if on_screen(lo, hi) {
+            (len / step).ceil().clamp(1.0, 600.0) as usize
+        } else {
+            0
+        };
+        (0..=n).filter(move |_| n > 0).map(move |k| {
+            let f = k as f32 / n as f32;
+            let bow = 4.0 * f * (1.0 - f);
+            (
+                [
+                    a[0] + (b[0] - a[0]) * f,
+                    a[1] + (b[1] - a[1]) * f + sag * bow,
+                ],
+                bow,
+            )
+        })
+    };
+    let dot = |o: &mut Overlay, p: [f32; 2], d: f32, ink: [u8; 4]| {
+        if p[0] > -d && p[1] > -d && p[0] < sw as f32 + d && p[1] < sh as f32 + d {
+            o.dot(p, d, ink);
+        }
+    };
+    if fine {
+        // Shadows first, under everything: straight along the ground below
+        // the cable, and nearer it where it hangs low. The dots overlap
+        // about twice, so each is half as dark.
+        for &c in &cables {
+            for (p, bow) in samples(c, c.3 * 0.5) {
+                let k = 1.0 - 0.55 * bow;
+                let ground = [p[0] + lift[0] * k, p[1] - c.2 * bow + lift[1] * k];
+                dot(o, ground, c.3 * 1.2, [0, 0, 0, 0x2c]);
+            }
+        }
+        // Sockets: a dark plate with a porcelain insulator on it.
+        let u = (ppt * 0.2).max(4.0 * scale);
+        for &s in &sockets {
+            if !on_screen([s[0] - u, s[1] - u], [s[0] + u, s[1] + u]) {
+                continue;
+            }
             o.panel(
-                [c[0] - tw / 2.0, top],
-                [tw, ch],
-                ch / 2.0,
-                [0xff, 0x5d, 0x5d, 0xf0],
+                [s[0] - u * 0.55, s[1] - u * 0.55],
+                [u * 1.1, u * 1.1],
+                u * 0.25,
+                [0x1b, 0x20, 0x26, 0xff],
             );
-            o.text(
-                text,
-                [c[0] - tw / 2.0 + pad, top + (ch + o.cap_height(px)) / 2.0],
-                px,
-                [0x1b, 0x1f, 0x24, 0xff],
+            o.dot(
+                [s[0] + u * 0.06, s[1] + u * 0.08],
+                u * 0.8,
+                [0x00, 0x00, 0x00, 0x60],
+            );
+            o.dot(s, u * 0.72, [0x9c, 0x94, 0x86, 0xff]);
+            o.dot(s, u * 0.52, [0xe2, 0xdc, 0xcf, 0xff]);
+            o.dot(
+                [s[0] - u * 0.1, s[1] - u * 0.1],
+                u * 0.16,
+                [0xff, 0xff, 0xff, 0xff],
             );
         }
+    }
+    // The cables: dark rubber, and up close a lit stripe along the top.
+    let rubber = [0x17, 0x19, 0x1c, 0xff];
+    let shine = [0x6c, 0x74, 0x7e, 0xff];
+    for &c in &cables {
+        let t = c.3;
+        for (p, _) in samples(c, t * 0.5) {
+            dot(o, p, t, rubber);
+        }
+        if fine && t >= 2.5 {
+            for (p, _) in samples(c, t * 0.2) {
+                dot(o, [p[0] - t * 0.12, p[1] - t * 0.2], t * 0.4, shine);
+            }
+        }
+    }
+    // The insulator caps the cables are tied to, over their ends.
+    if fine {
+        for &(a, b, _, t) in &cables {
+            for p in [a, b] {
+                dot(o, p, t * 1.5, [0x9c, 0x94, 0x86, 0xff]);
+                dot(o, p, t * 1.1, [0xe2, 0xdc, 0xcf, 0xff]);
+            }
+        }
+    }
+    for (c, rows) in unpowered {
+        let px = 11.0 * scale;
+        let text = tr("state.no_power");
+        let (pad, ch) = (6.0 * scale, 18.0 * scale);
+        let tw = o.measure(text, px) + 2.0 * pad;
+        let top = c[1] - f32::from(rows) * ppt / 2.0 - ch - 2.0 * scale;
+        o.panel(
+            [c[0] - tw / 2.0, top],
+            [tw, ch],
+            ch / 2.0,
+            [0xff, 0x5d, 0x5d, 0xf0],
+        );
+        o.text(
+            text,
+            [c[0] - tw / 2.0 + pad, top + (ch + o.cap_height(px)) / 2.0],
+            px,
+            [0x1b, 0x1f, 0x24, 0xff],
+        );
     }
 }
 
