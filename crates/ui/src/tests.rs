@@ -1796,3 +1796,94 @@ fn no_words_are_written_into_the_code() {
     }
     assert!(found.is_empty(), "use tr(\"key\"):\n{}", found.join("\n"));
 }
+
+#[test]
+fn the_start_menu_plays_on_starts_a_new_game_and_comes_back_from_its_sheets() {
+    let mut f = Fixture::new();
+    let screen = (390, 844);
+    f.hud.open_title();
+    f.draw(screen, 1.0, &Tool::Hand);
+    // It covers everything: no toolbar, and a tap on the world goes nowhere.
+    assert!(f.hud.hits.iter().all(|(_, h)| !matches!(h, Hit::Tool(_))));
+    assert!(f.hud.covers([5.0, 5.0]));
+    // The full game is offered only in the demo.
+    assert!(f.hud.hits.iter().all(|(_, h)| *h != Hit::TitleBuy));
+
+    // New game opens the form in the first empty slot.
+    let (_, actions) = f.tap(centre(f.find(&Hit::TitleNew)));
+    assert_eq!(actions, vec![Action::MenuOpened]);
+    assert!(!f.hud.title_open() && f.hud.menu_open());
+    assert_eq!(f.hud.new_game.as_ref().map(|g| g.slot), Some(2));
+    f.draw(screen, 1.0, &Tool::Hand);
+    // Back out of the form, then close the menu: the start menu is back.
+    f.tap(centre(f.find(&Hit::CancelNew)));
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::Menu)));
+    assert!(f.hud.title_open() && !f.hud.menu_open());
+
+    // Load lists the slots; loading one plays it.
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::TitleLoad)));
+    f.draw(screen, 1.0, &Tool::Hand);
+    let (_, actions) = f.tap(centre(f.find(&Hit::SlotLoad(1))));
+    assert_eq!(actions, vec![Action::LoadSlot(1)]);
+    assert!(!f.hud.title_open() && !f.hud.menu_open());
+    // Closing the menu now just closes it.
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::Menu)));
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::Menu)));
+    assert!(!f.hud.title_open() && !f.hud.menu_open());
+
+    // In the demo, the full game's sheet opens from it and closes back to it.
+    f.store.demo = Some(4);
+    f.hud.open_title();
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::TitleBuy)));
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.find(&Hit::Buy);
+    f.find(&Hit::Restore);
+    f.tap(centre(f.find(&Hit::Close)));
+    assert!(f.hud.title_open());
+
+    // Continue plays on.
+    f.draw(screen, 1.0, &Tool::Hand);
+    let (_, actions) = f.tap(centre(f.find(&Hit::TitleContinue)));
+    assert!(actions.is_empty());
+    assert!(!f.hud.title_open());
+}
+
+#[test]
+fn the_start_menu_fits_a_small_phone_held_either_way_in_every_language() {
+    for lang in i18n::Lang::ALL {
+        i18n::set_lang(lang);
+        for (size, scale) in [((640, 1136), 2.0), ((1136, 640), 2.0), ((2048, 2732), 2.0)] {
+            let mut f = Fixture::new();
+            f.store.demo = Some(4);
+            f.hud.open_title();
+            f.draw(size, scale, &Tool::Hand);
+            let buttons: Vec<Rect> = f
+                .hud
+                .hits
+                .iter()
+                .filter(|(_, h)| *h != Hit::Block)
+                .map(|(r, _)| *r)
+                .collect();
+            assert_eq!(buttons.len(), 5);
+            for r in &buttons {
+                assert!(
+                    r[0] >= 0.0
+                        && r[1] >= 0.0
+                        && r[0] + r[2] <= size.0 as f32
+                        && r[1] + r[3] <= size.1 as f32,
+                    "{lang:?} {size:?}: {r:?} off screen"
+                );
+                assert!(
+                    r[3] >= FINGER * scale - 0.5,
+                    "{lang:?} {size:?}: {r:?} too small"
+                );
+            }
+        }
+    }
+    i18n::set_lang(i18n::Lang::En);
+}

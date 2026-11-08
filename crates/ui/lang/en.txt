@@ -240,3 +240,7 @@ toast.blueprint_saved = Saved as {0}
 toast.library_full = The library is full: delete a blueprint first.
 toast.paste_blocked = Something is in the way: slide it onto clear ground.
 toast.planned = Drones will build it as the stock comes in
+title.continue = Continue
+title.load = Load game
+title.settings = Settings
+title.tagline = Build a factory that runs itself

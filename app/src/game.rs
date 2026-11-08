@@ -138,7 +138,12 @@ impl Game {
             overlay: Overlay::new(&look),
             look,
             scene: Scene::default(),
-            hud: Hud::new(),
+            // The game opens on the start menu, over the factory it loaded.
+            hud: {
+                let mut hud = Hud::new();
+                hud.open_title();
+                hud
+            },
             hotkeys: mofact_ui::hotkeys(&content),
             built: {
                 let mut built = Built::new(&content);
@@ -152,7 +157,8 @@ impl Game {
             before_map: None,
             drawn: None,
             touched: Instant::now(),
-            requests: Vec::new(),
+            // List the slots at once, for the start menu's new game.
+            requests: vec![Request::Refresh],
             slots: Vec::new(),
             purchase: None,
             store: StoreView::default(),
@@ -774,6 +780,13 @@ impl Game {
     /// own (see [`mofact_ui::hotkeys`]).
     pub fn key(&mut self, name: &str) {
         self.touched = Instant::now();
+        // On the start menu, Enter or Escape plays on; other keys wait.
+        if self.hud.title_open() {
+            if matches!(name, "enter" | "return" | "escape" | " " | "space") {
+                self.hud.close_title();
+            }
+            return;
+        }
         let tool = match name {
             "1" | "escape" => Tool::Hand,
             "2" => Tool::Belt,
