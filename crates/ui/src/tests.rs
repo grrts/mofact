@@ -9,6 +9,7 @@ fn content() -> Content {
 
 fn snapshot() -> Snapshot {
     let entity = |id, building: &str, x| EntityView {
+        request: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, 0),
@@ -39,6 +40,10 @@ fn snapshot() -> Snapshot {
         pins: Default::default(),
         trains: vec![train()],
         mega: None,
+        explored: Default::default(),
+        drones: Vec::new(),
+        ghosts: Vec::new(),
+        marked: Vec::new(),
     }
 }
 
@@ -73,6 +78,8 @@ struct Fixture {
     slots: Vec<SlotView>,
     store: StoreView,
     crash: bool,
+    selection: usize,
+    blueprints: Vec<mofact_input::Blueprint>,
 }
 
 impl Fixture {
@@ -103,6 +110,8 @@ impl Fixture {
             ],
             store: StoreView::default(),
             crash: false,
+            selection: 0,
+            blueprints: Vec::new(),
         }
     }
 
@@ -123,6 +132,8 @@ impl Fixture {
             slots: &self.slots,
             store: &self.store,
             crash: self.crash,
+            selection: self.selection,
+            blueprints: &self.blueprints,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -529,6 +540,7 @@ fn the_more_slot_opens_every_other_building() {
 fn a_pole_sheet_shows_its_grid() {
     let mut f = Fixture::new();
     f.snapshot.entities.push(EntityView {
+        request: None,
         id: EntityId(9),
         building: "pole".into(),
         pos: TilePos::new(9, 0),
@@ -711,6 +723,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
     use mofact_core::snapshot::GridView;
     let mut f = Fixture::new();
     let at = |id, building: &str, x, y, state| EntityView {
+        request: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, y),
@@ -854,6 +867,7 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
         Tool::Belt,
         Tool::Place("assembler".into()),
         Tool::Remove,
+        Tool::Select,
     ];
     for (size, scale) in SCREENS {
         for tool in &tools {
@@ -871,6 +885,9 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                 "menu-delete",
                 "new-game",
                 "unlock",
+                "selection",
+                "library",
+                "requester",
             ] {
                 let mut f = Fixture::new();
                 f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
@@ -900,6 +917,23 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                     "train-pick" => {
                         f.hud.select(Some(EntityId(10)));
                         f.hud.picking = Some(EntityId(10));
+                    }
+                    "selection" => f.selection = 12,
+                    "requester" => {
+                        let mut chest = f.snapshot.entities[2].clone();
+                        chest.id = EntityId(7);
+                        chest.building = "requester-chest".into();
+                        chest.pos = TilePos::new(8, 0);
+                        chest.request = Some(("iron-plate".into(), 100));
+                        f.snapshot.entities.push(chest);
+                        f.hud.select(Some(EntityId(7)));
+                    }
+                    "library" => {
+                        f.hud.library = true;
+                        f.blueprints = vec![mofact_input::Blueprint::capture(
+                            mofact_input::blueprint::next_name(&[], tr("blueprint.name")),
+                            [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
+                        )];
                     }
                     _ => {}
                 }
@@ -1288,9 +1322,9 @@ fn every_character_has_a_glyph() {
 }
 
 #[test]
-fn nearly_every_content_name_is_translated() {
-    // New content shows in English until it is translated; this catches a
-    // language falling far behind, not each new name.
+fn every_content_name_is_translated() {
+    // New content would show in English until translated: translate it in
+    // the same pull request, in every crates/ui/lang file.
     let keys = i18n::content_keys(&content());
     for lang in i18n::Lang::ALL.into_iter().skip(1) {
         let t = i18n::table(lang);
@@ -1299,7 +1333,7 @@ fn nearly_every_content_name_is_translated() {
             .filter(|(k, _)| t.contains_key(k.as_str()))
             .count();
         assert!(
-            done * 10 >= keys.len() * 9,
+            done == keys.len(),
             "{}: only {done} of {} content names translated",
             lang.code(),
             keys.len()
@@ -1479,4 +1513,286 @@ fn a_tap_on_the_tool_tip_builds_nothing_under_it() {
     assert!(f.tap(at).0, "the card takes the tap");
     // Out on the map the tap is the game's.
     assert!(!f.tap([size.0 as f32 / 2.0, size.1 as f32 * 0.6]).0);
+}
+
+#[test]
+fn a_build_sheet_too_big_for_the_screen_pages_through_every_building() {
+    let mut f = Fixture::new();
+    // A phone held sideways: the sheet has room for one row.
+    let size = (2532, 1170);
+    f.draw(size, 3.0, &Tool::Hand);
+    let more = f.find(&Hit::Tool(MORE));
+    f.tap(centre(more));
+    let mut seen = std::collections::HashSet::new();
+    let mut pages = 0;
+    loop {
+        f.draw(size, 3.0, &Tool::Hand);
+        pages += 1;
+        for (_, h) in &f.hud.hits {
+            if let Hit::Build(b) = h {
+                seen.insert(b.clone());
+            }
+        }
+        let Some(next) = f.hud.hits.iter().find(|(_, h)| *h == Hit::Page(true)) else {
+            break;
+        };
+        let next = centre(next.0);
+        assert_eq!(f.tap(next), (true, vec![]));
+        assert!(pages < 50, "the pages never end");
+    }
+    assert!(pages > 1, "it needed more than one page");
+    // Every building open now can be picked from some page.
+    for b in ["lab", "pole", "wind-turbine", "radar"] {
+        assert!(seen.contains(&BuildingId::from(b)), "{b} on no page");
+    }
+    // And back to the first.
+    for _ in 1..pages {
+        let back = centre(f.find(&Hit::Page(false)));
+        f.tap(back);
+        f.draw(size, 3.0, &Tool::Hand);
+    }
+    f.find(&Hit::Build("lab".into()));
+    assert!(!f.hud.hits.iter().any(|(_, h)| *h == Hit::Page(false)));
+    assert!(f.overlay.has_glyph('‹') && f.overlay.has_glyph('›'));
+}
+
+#[test]
+fn the_research_sheet_pages_too() {
+    let mut f = Fixture::new();
+    let size = (2532, 1170);
+    f.hud.research = true;
+    f.draw(size, 3.0, &Tool::Hand);
+    let next = centre(f.find(&Hit::Page(true)));
+    let first: Vec<_> = f
+        .hud
+        .hits
+        .iter()
+        .filter(|(_, h)| matches!(h, Hit::Study(_)))
+        .cloned()
+        .collect();
+    f.tap(next);
+    f.draw(size, 3.0, &Tool::Hand);
+    let second: Vec<_> = f
+        .hud
+        .hits
+        .iter()
+        .filter(|(_, h)| matches!(h, Hit::Study(_)))
+        .cloned()
+        .collect();
+    assert_ne!(first, second, "the next page shows other research");
+    f.find(&Hit::Page(false));
+}
+
+#[test]
+fn the_select_tool_offers_what_to_do_with_a_selection_and_the_library() {
+    let mut f = Fixture::new();
+    let size = (1170, 2532);
+    let select = centre({
+        f.draw(size, 3.0, &Tool::Hand);
+        f.find(&Hit::Tool(SELECT))
+    });
+    assert_eq!(f.tap(select).1, vec![Action::Tool(Tool::Select)]);
+    f.draw(size, 3.0, &Tool::Select);
+    assert!(
+        f.hud.hits.iter().all(|(_, h)| *h != Hit::Copy),
+        "nothing selected yet"
+    );
+    f.selection = 3;
+    f.draw(size, 3.0, &Tool::Select);
+    for (hit, action) in [
+        (Hit::Copy, Action::Copy),
+        (Hit::Cut, Action::Cut),
+        (Hit::Erase, Action::DeleteSelection),
+        (Hit::Keep, Action::SaveBlueprint),
+    ] {
+        let at = centre(f.find(&hit));
+        assert_eq!(f.tap(at), (true, vec![action]));
+    }
+    // A blueprint in hand: turn it, or build it.
+    f.draw(size, 3.0, &Tool::Paste);
+    assert_eq!(f.tap(centre(f.find(&Hit::Rotate))).1, vec![Action::Rotate]);
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Place))).1,
+        vec![Action::PlacePaste]
+    );
+    assert_eq!(
+        f.hud.current,
+        Some(SELECT),
+        "pasting lights the Select slot"
+    );
+
+    // The library: empty, then with a blueprint to take or delete.
+    f.tap(centre(f.find(&Hit::Library)));
+    f.draw(size, 3.0, &Tool::Paste);
+    assert!(f.hud.hits.iter().all(|(_, h)| !matches!(h, Hit::Pick(_))));
+    f.blueprints = vec![mofact_input::Blueprint::capture(
+        "Blueprint 1",
+        [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
+    )];
+    f.draw(size, 3.0, &Tool::Paste);
+    let forget = centre(f.find(&Hit::Forget(0)));
+    assert_eq!(f.tap(forget).1, vec![], "the first tap asks");
+    f.draw(size, 3.0, &Tool::Paste);
+    assert_eq!(f.tap(forget).1, vec![Action::ForgetBlueprint(0)]);
+    f.draw(size, 3.0, &Tool::Paste);
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Pick(0)))).1,
+        vec![Action::Paste(0)]
+    );
+    f.draw(size, 3.0, &Tool::Paste);
+    assert!(
+        f.hud.hits.iter().all(|(_, h)| !matches!(h, Hit::Pick(_))),
+        "picking one closes the library"
+    );
+}
+
+#[test]
+fn a_requester_chest_sheet_picks_what_drones_bring_and_how_many() {
+    let mut f = Fixture::new();
+    let mut chest = f.snapshot.entities[2].clone();
+    chest.id = EntityId(7);
+    chest.building = "requester-chest".into();
+    chest.pos = TilePos::new(8, 0);
+    f.snapshot.entities.push(chest);
+    f.hud.select(Some(EntityId(7)));
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    // Nothing asked for yet: pick one of the items in stock.
+    let iron = Hit::SetRequest(EntityId(7), Some(("iron-plate".into(), 50)));
+    assert_eq!(
+        f.tap(centre(f.find(&iron))).1,
+        vec![Action::Send(Command::SetRequest {
+            entity: EntityId(7),
+            request: Some(("iron-plate".into(), 50))
+        })]
+    );
+    assert!(
+        f.hud
+            .hits
+            .iter()
+            .all(|(_, h)| *h != Hit::SetRequest(EntityId(7), Some(("iron-plate".into(), 200)))),
+        "no counts until it asks for something"
+    );
+    // Asking for iron: the counts show, and none turns it off.
+    f.snapshot.entities[3].request = Some(("iron-plate".into(), 50));
+    f.draw((1280, 720), 1.0, &Tool::Hand);
+    let more = Hit::SetRequest(EntityId(7), Some(("iron-plate".into(), 200)));
+    f.find(&more);
+    f.find(&Hit::SetRequest(EntityId(7), None));
+}
+
+#[test]
+fn a_long_blueprint_library_pages_on_a_sideways_phone() {
+    let mut f = Fixture::new();
+    let size = (2532, 1170);
+    f.blueprints = (0..12)
+        .map(|k| {
+            mofact_input::Blueprint::capture(
+                format!("Blueprint {}", k + 1),
+                [("assembler".into(), TilePos::new(0, 0), 1, Dir::East, None)],
+            )
+        })
+        .collect();
+    f.hud.library = true;
+    let mut picks = std::collections::HashSet::new();
+    for _ in 0..20 {
+        f.draw(size, 3.0, &Tool::Paste);
+        for (_, h) in &f.hud.hits {
+            if let Hit::Pick(i) = h {
+                picks.insert(*i);
+            }
+        }
+        let Some(next) = f.hud.hits.iter().find(|(_, h)| *h == Hit::Page(true)) else {
+            break;
+        };
+        let next = centre(next.0);
+        f.tap(next);
+    }
+    assert_eq!(picks.len(), 12, "every blueprint on some page: {picks:?}");
+    // Each page's rows take the blueprint they show.
+    let last = centre(f.find(&Hit::Pick(11)));
+    assert_eq!(f.tap(last).1, vec![Action::Paste(11)]);
+}
+
+/// Words in `text` that look like English left in by mistake: three or
+/// more Latin letters in a row, other than units, names and the seed.
+fn english_in(text: &str) -> Vec<String> {
+    const FINE: [&str; 8] = ["kW", "fps", "Mofact", "AI", "OK", "Auto", "English", "min"];
+    text.split(|c: char| !c.is_ascii_alphabetic())
+        .filter(|w| w.len() >= 3 && !FINE.contains(w))
+        .map(String::from)
+        .collect()
+}
+
+#[test]
+fn japanese_and_chinese_screens_show_no_english() {
+    // Every word on screen in Japanese and Chinese goes through the
+    // string tables: a hardcoded English label shows up here as Latin
+    // letters, in any HUD state, on any screen.
+    let mut found = Vec::new();
+    for lang in [i18n::Lang::Ja, i18n::Lang::ZhHans] {
+        every_state(|f, size, scale, tool, state| {
+            i18n::set_lang(lang);
+            f.content = i18n::localize(&f.content);
+            // The slots' words come from the app, in the player's language.
+            for s in &mut f.slots {
+                if s.used {
+                    s.title = trf("slot.title", &[&tr("preset.lakes"), &42]);
+                    s.detail = trf("slot.detail", &[&tr("slot.just_started"), &14]);
+                }
+            }
+            // So are blueprints' names, as the player saved them.
+            for b in &mut f.blueprints {
+                b.name = mofact_input::blueprint::next_name(&[], tr("blueprint.name"));
+            }
+            f.overlay.keep_words = true;
+            f.draw(size, scale, tool);
+            for w in &f.overlay.words {
+                for e in english_in(w) {
+                    let line = format!("{}: {e:?} in {w:?} ({state}, {tool:?})", lang.code());
+                    if !found.contains(&line) {
+                        found.push(line);
+                    }
+                }
+            }
+            i18n::set_lang(i18n::Lang::En);
+        });
+    }
+    assert!(found.is_empty(), "English on screen:\n{}", found.join("\n"));
+}
+
+#[test]
+fn no_words_are_written_into_the_code() {
+    // Toasts and labels take their words from the string tables. A literal
+    // like `toast("Saved")` would stay English in every language.
+    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../..");
+    let mut found = Vec::new();
+    for dir in ["crates/ui/src", "app/src", "crates/input/src"] {
+        for entry in std::fs::read_dir(root.join(dir)).expect("source folder") {
+            let path = entry.expect("file").path();
+            let name = path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string();
+            if !name.ends_with(".rs") || name == "tests.rs" {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("source");
+            // Only the code before its tests.
+            let code = text.split("#[cfg(test)]").next().unwrap_or_default();
+            for (n, line) in code.lines().enumerate() {
+                for call in ["toast(\"", ".text(\"", "button(\""] {
+                    let Some(at) = line.find(call) else { continue };
+                    let word: String = line[at + call.len()..]
+                        .chars()
+                        .take_while(|c| *c != '"')
+                        .collect();
+                    if word.chars().filter(char::is_ascii_alphabetic).count() >= 2 {
+                        found.push(format!("{dir}/{name}:{}: {}", n + 1, line.trim()));
+                    }
+                }
+            }
+        }
+    }
+    assert!(found.is_empty(), "use tr(\"key\"):\n{}", found.join("\n"));
 }

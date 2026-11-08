@@ -2347,3 +2347,217 @@ pub fn skyhook(c: &mut Canvas, z: f32, fine: bool, tiles: f32) {
         }
     }
 }
+
+/// A radar (S3), two tiles a side: a bolted plate, a turntable, and a
+/// dish on it looking out to the north-east, with its feed horn and a
+/// lamp that shows it is charting.
+pub fn radar(c: &mut Canvas, z: f32, fine: bool) {
+    radar_turned(c, z, fine, -PI / 4.0);
+}
+
+/// A radar with its dish turned `angle` radians clockwise from facing up
+/// (the feed horn points that way): the frames of its sweep.
+pub fn radar_turned(c: &mut Canvas, z: f32, fine: bool, angle: f32) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.08 + sh,
+            s * 0.08 + sh * 1.3,
+            s * 0.84,
+            s * 0.84,
+            s * 0.1,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.08, s * 0.08, s * 0.84, s * 0.84, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.11, s * 0.11, s * 0.78, s * 0.78, s * 0.08),
+        pal::MACHINE,
+    );
+    // The plate's lit top edge, as the other machines have.
+    fill(
+        c,
+        rr(s * 0.14, s * 0.12, s * 0.72, s * 0.05, s * 0.02),
+        shade(pal::MACHINE, 0.12),
+    );
+    if fine {
+        for (bx, by) in [(0.17, 0.17), (0.83, 0.17), (0.17, 0.83), (0.83, 0.83)] {
+            bolt(c, bx * s, by * s, s * 0.018);
+        }
+    }
+    let (cx, cy) = (s * 0.5, s * 0.52);
+    // The turntable, and the mast's shadow on it.
+    c.fill_circle(cx, cy, s * 0.24, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.21, shade(pal::MACHINE, -0.12));
+    if fine {
+        c.stroke_circle(
+            cx,
+            cy,
+            s * 0.17,
+            shade(pal::MACHINE, 0.1),
+            (s * 0.01).max(1.0),
+        );
+    }
+    c.save();
+    c.translate(cx, cy);
+    c.rotate(angle);
+    // The dish: a deep bowl, its rim lit and its inside in shade. Its
+    // shadow falls down and right on the ground whichever way it faces.
+    let (sx, sy) = (sh * 0.6, sh * 0.9);
+    let (sin, cos) = angle.sin_cos();
+    fill(
+        c,
+        ellipse(sx * cos + sy * sin, -sx * sin + sy * cos, s * 0.3, s * 0.17),
+        pal::SHADOW,
+    );
+    fill(c, ellipse(0.0, 0.0, s * 0.3, s * 0.17), pal::MACHINE_EDGE);
+    fill(c, ellipse(0.0, s * 0.01, s * 0.27, s * 0.145), pal::PIPE);
+    fill(
+        c,
+        ellipse(0.0, s * 0.03, s * 0.21, s * 0.1),
+        shade(pal::PIPE, -0.25),
+    );
+    if fine {
+        // Ribs across the bowl.
+        for k in [-1.0f32, 0.0, 1.0] {
+            let x = k * s * 0.1;
+            c.line(
+                &[(x, -s * 0.11), (x * 1.15, s * 0.12)],
+                shade(pal::PIPE, 0.15),
+                (s * 0.008).max(1.0),
+            );
+        }
+    }
+    // The feed arm out of the bowl, and the horn at its end.
+    c.line(
+        &[(0.0, s * 0.03), (0.0, -s * 0.2)],
+        pal::MACHINE_EDGE,
+        s * 0.035,
+    );
+    c.fill_circle(0.0, -s * 0.21, s * 0.04, pal::MACHINE_EDGE);
+    c.fill_circle(0.0, -s * 0.21, s * 0.025, pal::ACCENT);
+    c.restore();
+    // The lamp on the plate.
+    c.fill_circle(s * 0.78, s * 0.78, s * 0.035, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.78, s * 0.78, s * 0.022, pal::GLASS);
+}
+
+/// A drone port (T49), two tiles a side: a bolted plate with a landing
+/// pad ringed in the accent colour, and the lamp of its charger.
+pub fn drone_port(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.06 + sh,
+            s * 0.06 + sh * 1.3,
+            s * 0.88,
+            s * 0.88,
+            s * 0.1,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.06, s * 0.06, s * 0.88, s * 0.88, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.09, s * 0.09, s * 0.82, s * 0.82, s * 0.08),
+        pal::MACHINE,
+    );
+    fill(
+        c,
+        rr(s * 0.12, s * 0.1, s * 0.76, s * 0.05, s * 0.02),
+        shade(pal::MACHINE, 0.12),
+    );
+    if fine {
+        for (bx, by) in [(0.15, 0.15), (0.85, 0.15), (0.15, 0.85), (0.85, 0.85)] {
+            bolt(c, bx * s, by * s, s * 0.018);
+        }
+    }
+    let (cx, cy) = (s * 0.5, s * 0.5);
+    c.fill_circle(cx, cy, s * 0.3, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.27, pal::PAD);
+    c.stroke_circle(cx, cy, s * 0.24, pal::ACCENT, (s * 0.02).max(1.0));
+    // The pad's H, as on a helipad.
+    let w = s * 0.045;
+    fill(
+        c,
+        rect(cx - s * 0.1, cy - s * 0.11, w, s * 0.22),
+        pal::ACCENT,
+    );
+    fill(
+        c,
+        rect(cx + s * 0.1 - w, cy - s * 0.11, w, s * 0.22),
+        pal::ACCENT,
+    );
+    fill(c, rect(cx - s * 0.1, cy - w / 2.0, s * 0.2, w), pal::ACCENT);
+    c.fill_circle(s * 0.8, s * 0.8, s * 0.035, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.8, s * 0.8, s * 0.022, pal::TIER[0]);
+}
+
+/// A logistic chest (T49), one tile: a steel box with a lid and a band
+/// of `trim`. A requester's box is cut to a diamond, so it is told from a
+/// provider by its shape as well as its colour.
+pub fn logistic_chest(c: &mut Canvas, z: f32, fine: bool, trim: Rgba, requester: bool) {
+    if requester {
+        let s = z;
+        let sh = z * 0.08;
+        let pts = |k: f32| {
+            [
+                (s * 0.5, s * (0.5 - k)),
+                (s * (0.5 + k), s * 0.5),
+                (s * 0.5, s * (0.5 + k)),
+                (s * (0.5 - k), s * 0.5),
+            ]
+        };
+        let shift = |p: [(f32, f32); 4]| p.map(|(x, y)| (x + sh, y + sh * 1.3));
+        shadow(c, poly(&shift(pts(0.42)), 0.0, 0.0, 1.0));
+        fill(c, poly(&pts(0.42), 0.0, 0.0, 1.0), pal::MACHINE_EDGE);
+        fill(c, poly(&pts(0.37), 0.0, 0.0, 1.0), pal::MACHINE_HI);
+        fill(c, poly(&pts(0.22), 0.0, 0.0, 1.0), trim);
+        c.fill_circle(s * 0.5, s * 0.5, s * 0.08, pal::MACHINE_EDGE);
+        return;
+    }
+    let s = z;
+    let sh = z * 0.08;
+    shadow(
+        c,
+        rr(
+            s * 0.12 + sh,
+            s * 0.14 + sh * 1.3,
+            s * 0.76,
+            s * 0.72,
+            s * 0.08,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.12, s * 0.14, s * 0.76, s * 0.72, s * 0.08),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.16, s * 0.18, s * 0.68, s * 0.64, s * 0.06),
+        pal::MACHINE_HI,
+    );
+    fill(c, rect(s * 0.16, s * 0.42, s * 0.68, s * 0.14), trim);
+    fill(
+        c,
+        rr(s * 0.42, s * 0.4, s * 0.16, s * 0.18, s * 0.03),
+        pal::MACHINE_EDGE,
+    );
+    if fine {
+        for (bx, by) in [(0.22, 0.24), (0.78, 0.24), (0.22, 0.76), (0.78, 0.76)] {
+            bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+}

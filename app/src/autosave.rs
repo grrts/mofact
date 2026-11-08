@@ -189,6 +189,18 @@ impl Files {
         }
     }
 
+    /// The blueprint library (T51), as text. Missing means an empty library.
+    pub fn blueprints(&self) -> String {
+        std::fs::read_to_string(self.first.with_file_name("blueprints.ron")).unwrap_or_default()
+    }
+
+    pub fn set_blueprints(&self, text: &str) -> Result<(), String> {
+        write(
+            &self.first.with_file_name("blueprints.ron"),
+            text.as_bytes(),
+        )
+    }
+
     pub fn set_settings(&self, settings: Settings) -> Result<(), String> {
         let text = settings.text();
         write(&self.first.with_file_name("settings.txt"), text.as_bytes())

@@ -5,6 +5,15 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Blueprints:** a Select tool drags a box round buildings to copy, cut,
+  delete or save them; a blueprint in hand slides with a finger, turns, and
+  builds with one tap, and the library keeps up to 24 on the device.
+- **Drones:** after the Drones research, a powered drone port keeps four
+  drones that fly 50 tiles across, and ports whose squares meet make one
+  network. Drones fill requester chests from provider chests or the hub,
+  charging at ports on long trips, and a paste where ports reach is planned
+  as ghosts that drones build as the stock comes in.
+
 ## 0.1.0
 
 The first playable build of the whole game, from the first plates to the

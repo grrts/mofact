@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 14;
+pub const VERSION: u16 = 16;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -70,6 +70,101 @@ struct World {
     pins: Vec<TilePos>,
     /// The map's seed and preset (S4); none in saves from before them,
     /// which were all seed 42, standard.
+    world: Option<(u64, u8)>,
+    /// The land explored (S3); none in saves from before the fog of war,
+    /// which open with the land round their factory explored.
+    explored: Option<Vec<mofact_core::geom::FogCell>>,
+    /// Drones, ghosts and what is marked for them (T49, T50).
+    fleet: SavedFleet,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct SavedFleet {
+    drones: Vec<SavedDrone>,
+    ghosts: Vec<SavedGhost>,
+    marked: Vec<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedDrone {
+    home: u32,
+    at: (i64, i64),
+    battery: i64,
+    job: SavedJob,
+    charging: Option<u32>,
+}
+
+#[derive(Serialize, Deserialize)]
+enum SavedJob {
+    Rest,
+    Carry {
+        from: u32,
+        to: u32,
+        item: ItemId,
+        n: u32,
+        picked: bool,
+    },
+    Build {
+        at: TilePos,
+    },
+    Take {
+        entity: u32,
+    },
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedGhost {
+    building: BuildingId,
+    pos: TilePos,
+    dir: Dir,
+    recipe: Option<RecipeId>,
+    coming: bool,
+}
+
+/// Version 15: the same, before drones.
+#[derive(Deserialize)]
+struct WorldV15 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    /// Entities by slot, so ids stay the same across a save and load.
+    entities: Vec<(u32, Saved)>,
+    /// Units done per research, and whether it is finished.
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    /// The goal the player is on, by id; none once all are met.
+    goal: Option<String>,
+    /// Tiles whose tree or boulder was cleared.
+    cleared: Vec<TilePos>,
+    /// How much ore each held tile has left, and the tiles mined out.
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+    /// The player's pins on the world map.
+    pins: Vec<TilePos>,
+    /// The map's seed and preset (S4); none in saves from before them,
+    /// which were all seed 42, standard.
+    world: Option<(u64, u8)>,
+    /// The land explored (S3); none in saves from before the fog of war,
+    /// which open with the land round their factory explored.
+    explored: Option<Vec<mofact_core::geom::FogCell>>,
+}
+
+/// Versions 13 and 14: the same, before the fog of war.
+#[derive(Deserialize)]
+struct WorldV14 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+    pins: Vec<TilePos>,
     world: Option<(u64, u8)>,
 }
 
@@ -219,6 +314,20 @@ enum SavedState {
         stage: u32,
         have: Vec<(ItemId, u32)>,
     },
+    /// A radar's next sweep and the ring it is charting (S3).
+    Radar {
+        prog: u32,
+        ring: i32,
+        done: bool,
+    },
+    /// A drone port (T49); its drones are saved with the fleet.
+    Port,
+    /// A provider or requester chest.
+    Chest {
+        items: Vec<(ItemId, u32)>,
+        request: Option<(ItemId, u32)>,
+        incoming: u32,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -269,6 +378,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
+                fleet: SavedFleet::default(),
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -291,6 +402,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
+                fleet: SavedFleet::default(),
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -311,6 +424,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
+                fleet: SavedFleet::default(),
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -331,6 +446,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: Vec::new(),
                 pins: Vec::new(),
                 world: None,
+                explored: None,
+                fleet: SavedFleet::default(),
             })
         }
         // Version 12 adds pins on the world map.
@@ -350,6 +467,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: v11.depleted,
                 pins: Vec::new(),
                 world: None,
+                explored: None,
+                fleet: SavedFleet::default(),
             })
         }
         // Version 13 saves the map's seed and preset.
@@ -369,10 +488,54 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 depleted: v.depleted,
                 pins: v.pins,
                 world: None,
+                explored: None,
+                fleet: SavedFleet::default(),
             })
         }
-        // Version 14 adds the megaproject: a new variant only.
-        13 | 14 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 14 adds the megaproject: a new variant only. Version 15
+        // saves the land explored, and adds radars: a new variant.
+        13 | 14 => {
+            let v: WorldV14 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: v.world,
+                explored: None,
+                fleet: SavedFleet::default(),
+            })
+        }
+        // Version 16 adds drones, ghosts and marks, ports and chests.
+        15 => {
+            let v: WorldV15 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: v.world,
+                explored: v.explored,
+                fleet: SavedFleet::default(),
+            })
+        }
+        16 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -515,6 +678,17 @@ impl Sim {
                                 .collect(),
                         }
                     }
+                    State::Radar { prog, ring, done } => SavedState::Radar {
+                        prog: *prog,
+                        ring: *ring,
+                        done: *done,
+                    },
+                    State::Port { .. } => SavedState::Port,
+                    State::Chest(c) => SavedState::Chest {
+                        items: c.items.iter().map(|&(i, n)| (item(i), n)).collect(),
+                        request: c.request.map(|(i, n)| (item(i), n)),
+                        incoming: c.incoming,
+                    },
                     State::Train(tr) => SavedState::Train(SavedTrain {
                         cargo: tr.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
                         schedule: tr.schedule.clone(),
@@ -577,6 +751,8 @@ impl Sim {
             depleted: self.depleted.to_vec(),
             pins: self.pins.to_vec(),
             world: self.world.map(|w| (w.seed, w.preset as u8)),
+            explored: Some(self.explored.to_vec()),
+            fleet: self.save_fleet(),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -772,6 +948,33 @@ impl Sim {
                     }
                     State::Mega { stage, have: held }
                 }
+                (SavedState::Radar { prog, ring, done }, Role::Radar { reach, every }) => {
+                    State::Radar {
+                        prog: prog.min(*every),
+                        ring: ring.clamp(0, reach + 1),
+                        done,
+                    }
+                }
+                (SavedState::Port, Role::Port { .. }) => State::Port { charging: false },
+                (
+                    SavedState::Chest {
+                        items,
+                        request,
+                        incoming,
+                    },
+                    Role::Chest { requester, .. },
+                ) => State::Chest(crate::drones::Chest {
+                    items: items
+                        .iter()
+                        .filter_map(|(i, n)| Some((item(i, &mut warnings)?, *n)))
+                        .collect(),
+                    request: request
+                        .as_ref()
+                        .filter(|_| *requester)
+                        .and_then(|(i, n)| Some((item(i, &mut warnings)?, *n))),
+                    incoming,
+                    wait: 0,
+                }),
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
                     cargo: tr
                         .cargo
@@ -836,6 +1039,22 @@ impl Sim {
                 }
             }
         }
+        // The land explored, and round every building whatever the save
+        // says; a save from before the fog of war opens with a wider ring
+        // round its factory explored, as its player had seen it.
+        let mut explored = world.explored.clone().unwrap_or_default();
+        explored.sort();
+        explored.dedup();
+        sim.explored = std::sync::Arc::new(explored);
+        let wide = world.explored.is_none();
+        let all: Vec<Entity> = sim.entities.iter().map(|(_, e)| *e).collect();
+        for e in &all {
+            sim.reveal_around(e);
+            if wide {
+                sim.reveal_wide(e);
+            }
+        }
+        sim.load_fleet(world.fleet, &mut warnings);
         sim.rebuild_grids();
         sim.rebuild_blocks();
         sim.rails.trains.sort();
@@ -848,5 +1067,138 @@ impl Sim {
             }
         };
         Ok((sim, warnings))
+    }
+}
+
+impl Sim {
+    fn save_fleet(&self) -> SavedFleet {
+        use crate::drones::Job;
+        let t = &self.tables;
+        SavedFleet {
+            drones: self
+                .fleet
+                .drones
+                .iter()
+                .map(|d| SavedDrone {
+                    home: d.home.0,
+                    at: d.at,
+                    battery: d.battery,
+                    job: match &d.job {
+                        Job::Rest => SavedJob::Rest,
+                        Job::Carry {
+                            from,
+                            to,
+                            item,
+                            n,
+                            picked,
+                        } => SavedJob::Carry {
+                            from: from.0,
+                            to: to.0,
+                            item: t.items[*item as usize].clone(),
+                            n: *n,
+                            picked: *picked,
+                        },
+                        Job::Build { at } => SavedJob::Build { at: *at },
+                        Job::Take { entity } => SavedJob::Take { entity: entity.0 },
+                    },
+                    charging: d.charging.map(|p| p.0),
+                })
+                .collect(),
+            ghosts: self
+                .fleet
+                .ghosts
+                .iter()
+                .map(|g| SavedGhost {
+                    building: t.buildings[g.kind as usize].id.clone(),
+                    pos: g.pos,
+                    dir: g.dir,
+                    recipe: g.recipe.map(|r| t.recipes[r as usize].id.clone()),
+                    coming: g.coming,
+                })
+                .collect(),
+            marked: self.fleet.marked.iter().map(|m| m.0).collect(),
+        }
+    }
+
+    /// Drones whose port is gone, and ghosts of buildings the content no
+    /// longer has, are dropped with a warning.
+    fn load_fleet(&mut self, f: SavedFleet, warnings: &mut Vec<String>) {
+        use crate::drones::{Drone, Ghost, Job};
+        use mofact_core::ids::EntityId;
+        let is_port = |sim: &Sim, id: u32| {
+            sim.entities.get(EntityId(id)).is_some_and(|e| {
+                matches!(
+                    sim.tables.buildings[e.kind as usize].role,
+                    Role::Port { .. }
+                )
+            })
+        };
+        for g in f.ghosts {
+            let Some(kind) = self.tables.building(&g.building) else {
+                warnings.push(format!("ghost of `{}` dropped", g.building));
+                continue;
+            };
+            self.fleet.ghosts.push(Ghost {
+                kind,
+                pos: g.pos,
+                dir: g.dir,
+                recipe: g.recipe.and_then(|r| self.tables.recipe(&r)),
+                coming: g.coming,
+            });
+        }
+        for d in f.drones {
+            if !is_port(self, d.home) {
+                warnings.push("a drone without a port was dropped".into());
+                continue;
+            }
+            let job = match d.job {
+                SavedJob::Rest => Job::Rest,
+                SavedJob::Carry {
+                    from,
+                    to,
+                    item,
+                    n,
+                    picked,
+                } => match self.tables.item(&item) {
+                    Some(item) => Job::Carry {
+                        from: EntityId(from),
+                        to: EntityId(to),
+                        item,
+                        n,
+                        picked,
+                    },
+                    None => Job::Rest,
+                },
+                SavedJob::Build { at } => Job::Build { at },
+                SavedJob::Take { entity } => Job::Take {
+                    entity: EntityId(entity),
+                },
+            };
+            self.fleet.drones.push(Drone {
+                home: EntityId(d.home),
+                at: d.at,
+                battery: d.battery.clamp(0, crate::drones::BATTERY),
+                job,
+                charging: d.charging.filter(|&p| is_port(self, p)).map(EntityId),
+            });
+        }
+        // A ghost no drone is bringing is waiting again.
+        for g in &mut self.fleet.ghosts {
+            if g.coming
+                && !self
+                    .fleet
+                    .drones
+                    .iter()
+                    .any(|d| d.job == (Job::Build { at: g.pos }))
+            {
+                g.coming = false;
+            }
+        }
+        self.fleet.marked = f
+            .marked
+            .into_iter()
+            .map(EntityId)
+            .filter(|&m| self.entities.get(m).is_some())
+            .collect();
     }
 }

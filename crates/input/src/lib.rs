@@ -9,9 +9,11 @@
 //! Pointer events are plain data, so a session can be recorded and replayed:
 //! the replay tests below drive the same code the app does.
 
+pub mod blueprint;
 pub mod build;
 
-pub use build::{Builder, Ghost, Ground, Occupant, Tool};
+pub use blueprint::Blueprint;
+pub use build::{Builder, Ghost, Ground, Occupant, Paste, Tool};
 pub use mofact_core as core;
 
 use mofact_core::command::Command;

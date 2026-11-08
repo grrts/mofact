@@ -360,3 +360,98 @@ fn a_signal_put_on_a_rail_takes_its_place_and_undo_puts_the_rail_back() {
     assert!(history.redo(&mut sim));
     assert_eq!(at(&sim).as_str(), "rail-signal");
 }
+
+/// Oil by train (S5): a well pipes crude oil into the side of one stop, and
+/// a tank train takes it to a tank piped to the front of the other.
+fn oil_line() -> (Sim, EntityId, EntityId) {
+    let mut sim = railway();
+    for r in [
+        "steel-working",
+        "motors",
+        "fluid-handling",
+        "oil-processing",
+    ] {
+        sim.complete_research(&ResearchId::from(r));
+    }
+    for (i, n) in [("gear", 500), ("wire", 500)] {
+        sim.add_stock(&item(i), n);
+    }
+    for x in 10..=61 {
+        let what = if x == 10 || x == 61 {
+            "train-stop"
+        } else {
+            "rail"
+        };
+        place(&mut sim, what, x, 3, Dir::North);
+    }
+    place(&mut sim, "pipe", 10, 4, Dir::East);
+    place(&mut sim, "oil-well", 10, 5, Dir::East);
+    place(&mut sim, "pole", 10, 7, Dir::East);
+    for x in [9, 11, 13] {
+        place(&mut sim, "wind-turbine", x, 7, Dir::East);
+    }
+    place(&mut sim, "pipe", 61, 2, Dir::East);
+    let tank = place(&mut sim, "tank", 60, 0, Dir::East);
+    let train = place(&mut sim, "tank-train", 12, 3, Dir::West);
+    schedule(&mut sim, train, &[(10, 3, true), (61, 3, false)]);
+    (sim, train, tank)
+}
+
+fn oil_in(sim: &Sim, tank: EntityId) -> u32 {
+    sim.inventory(tank)
+        .iter()
+        .filter(|(i, _)| *i == item("crude-oil"))
+        .map(|c| c.1)
+        .sum()
+}
+
+#[test]
+fn a_tank_train_takes_oil_from_a_well_to_a_far_tank() {
+    let (mut sim, _, tank) = oil_line();
+    // Fill up at the well: 2500 units, then the trip east.
+    let mut most = 0;
+    for _ in 0..30 {
+        run(&mut sim, 1);
+        let t = &sim.snapshot().trains[0];
+        assert_eq!(t.capacity, 2500, "a tank's capacity is in units");
+        most = most.max(t.cargo.iter().map(|c| c.1).sum());
+        assert!(t.cargo.iter().all(|c| c.0 == item("crude-oil")));
+    }
+    assert!(most > 1000, "it filled from the well: {most}");
+    run(&mut sim, 60);
+    let oil = oil_in(&sim, tank);
+    assert!(oil > 1000, "{oil} oil reached the tank");
+    // Over a save it carries on just the same.
+    let (mut loaded, warnings) = Sim::load(&content(), &sim.save()).expect("loads");
+    assert!(warnings.is_empty(), "{warnings:?}");
+    for _ in 0..20 * mofact_core::TICKS_PER_SECOND {
+        sim.step();
+        loaded.step();
+    }
+    assert_eq!(loaded.snapshot().trains, sim.snapshot().trains);
+    assert_eq!(oil_in(&loaded, tank), oil_in(&sim, tank));
+}
+
+#[test]
+fn a_tank_train_takes_no_items_and_an_item_train_no_fluid() {
+    let (mut sim, train, _) = oil_line();
+    // A belt into the loading stop too: the tank train ignores what it brings.
+    place(&mut sim, "belt", 9, 3, Dir::East);
+    sim.add_stock(&item("iron-plate"), 10);
+    run(&mut sim, 20);
+    let t = sim.snapshot();
+    let t = t.trains.iter().find(|t| t.id == train).unwrap();
+    assert!(
+        t.cargo.iter().all(|c| c.0 == item("crude-oil")),
+        "{:?}",
+        t.cargo
+    );
+    // An item train at a stop with only pipes beside it loads nothing.
+    let mut sim = oil_line().0;
+    let tank_train = sim.snapshot().trains[0].id;
+    sim.apply(&Command::Remove { entity: tank_train });
+    let loco = place(&mut sim, "locomotive", 12, 3, Dir::West);
+    schedule(&mut sim, loco, &[(10, 3, true), (61, 3, false)]);
+    run(&mut sim, 20);
+    assert!(sim.snapshot().trains[0].cargo.is_empty());
+}

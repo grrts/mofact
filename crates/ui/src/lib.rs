@@ -52,18 +52,21 @@ pub const LONG_PRESS: Duration = Duration::from_millis(450);
 
 /// The toolbar, left to right (top to bottom in landscape): the label's
 /// string key and the building it places.
-const TOOLS: [(&str, Option<&str>); 7] = [
+const TOOLS: [(&str, Option<&str>); 8] = [
     ("tool.move", None),
     ("tool.belt", Some("belt")),
     ("tool.drill", Some("drill")),
     ("tool.furnace", Some("furnace")),
     ("tool.assembler", Some("assembler")),
     ("tool.more", None),
+    ("tool.select", None),
     ("tool.remove", None),
 ];
 /// The slot that opens the build sheet with every other building, and
 /// shows the one in hand when it is one of those.
 const MORE: usize = 5;
+/// The select tool (T51), which also stands for a blueprint in hand.
+const SELECT: usize = 6;
 /// The last tool, Remove.
 const REMOVE: usize = TOOLS.len() - 1;
 
@@ -71,6 +74,7 @@ fn tool_at(i: usize) -> Tool {
     match i {
         0 => Tool::Hand,
         1 => Tool::Belt,
+        SELECT => Tool::Select,
         REMOVE => Tool::Remove,
         _ => Tool::Place(TOOLS[i].1.unwrap_or_default().into()),
     }
@@ -87,6 +91,7 @@ fn tool_index(tool: &Tool) -> Option<usize> {
         Tool::Hand => Some(0),
         Tool::Belt => Some(1),
         Tool::Remove => Some(REMOVE),
+        Tool::Select | Tool::Paste => Some(SELECT),
         Tool::Place(b) => TOOLS
             .iter()
             .position(|(_, id)| *id == Some(b.as_str()))
@@ -123,6 +128,10 @@ pub struct View<'a> {
     pub store: &'a StoreView,
     /// Whether a crash report from last time is waiting to be sent.
     pub crash: bool,
+    /// How many buildings the select tool has selected (T51).
+    pub selection: usize,
+    /// The blueprint library.
+    pub blueprints: &'a [mofact_input::Blueprint],
 }
 
 /// Whether this is the demo, and how buying the full game is going.
@@ -279,16 +288,34 @@ pub enum Action {
     Restore,
     /// Copy last time's crash report, to paste into an email or a bug.
     CopyCrash,
+    /// Take a copy of the selection in hand, to paste (T51).
+    Copy,
+    /// Take the selection in hand to move it: building it moves the originals.
+    Cut,
+    /// Remove everything selected, as one undo step.
+    DeleteSelection,
+    /// Keep the selection in the blueprint library.
+    SaveBlueprint,
+    /// Build the blueprint in hand where it is.
+    PlacePaste,
+    /// Take the library's blueprint at this place in it in hand.
+    Paste(usize),
+    /// Delete the library's blueprint at this place in it.
+    ForgetBlueprint(usize),
 }
 
 /// A control on screen, and what tapping it does.
 #[derive(Clone, Debug, PartialEq)]
 enum Hit {
     Tool(usize),
+    /// The stock's "+N" pill: show every item, or one row again.
+    StockMore,
     Rotate,
     Recipe(Option<RecipeId>),
     Belt(BuildingId),
     SetRecipe(EntityId, Option<RecipeId>),
+    /// What a requester chest asks drones for (T49).
+    SetRequest(EntityId, Option<(mofact_core::ids::ItemId, u32)>),
     Turn(EntityId, Dir),
     Remove(EntityId),
     /// The research button: opens or closes the research sheet.
@@ -306,6 +333,8 @@ enum Hit {
     Item(ItemId),
     /// The ratio calculator's rate buttons: up or down a step.
     Rate(bool),
+    /// A sheet's page arrows: back or on a page.
+    Page(bool),
     Close,
     /// Undo and redo buttons.
     Undo,
@@ -352,6 +381,18 @@ enum Hit {
     Preset(u8),
     CancelNew,
     StartNew,
+    /// The selection's and blueprint's buttons (T51).
+    Copy,
+    Cut,
+    Erase,
+    Keep,
+    Place,
+    /// Open or close the blueprint library.
+    Library,
+    /// A blueprint in the library: take it in hand, or delete it (a
+    /// second tap deletes).
+    Pick(usize),
+    Forget(usize),
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -426,6 +467,8 @@ pub struct Hud {
     muted: bool,
     /// Whether the camera is out on the world map.
     map: bool,
+    /// Whether the stock shows every item rather than one row.
+    stock_open: bool,
     /// Whether low-power mode is on.
     low_power: bool,
     /// Whether colour-blind mode is on (T58).
@@ -455,8 +498,15 @@ pub struct Hud {
     unlock: bool,
     /// Whether the build sheet is open.
     more: bool,
+    /// The page the build or research sheet shows, when it has more rows
+    /// than fit on the screen (a phone held sideways fits one row).
+    page: usize,
     /// Whether the problems list is open.
     problems: bool,
+    /// Whether the blueprint library is open, and the blueprint asked to
+    /// be deleted (a second tap deletes it).
+    library: bool,
+    confirm_forget: Option<usize>,
     /// Whether the goal card shows how to meet it, and the goal it last showed.
     hint: bool,
     goal_seen: Option<u16>,
@@ -464,7 +514,7 @@ pub struct Hud {
     found: Vec<Problem>,
     /// What [`Hud::found`] was worked out from: the time in quarter seconds,
     /// how much is built, and a digest of every machine's state.
-    found_for: Option<(u64, usize, u64, usize)>,
+    found_for: Option<(u64, usize, u64, usize, i18n::Lang)>,
     /// The line last jumped to and which of its places, so another tap
     /// on it goes to the next one.
     jumped: Option<(problems::Trouble, Option<BuildingId>, usize)>,
@@ -711,6 +761,16 @@ impl Hud {
             .or(under.map(|at| &self.hits[at].1))
     }
 
+    /// The screen rectangles (x, y, width, height) its controls and cards
+    /// took last frame, so the map can keep its own labels out from under them.
+    pub fn panels(&self) -> Vec<[f32; 4]> {
+        self.hits
+            .iter()
+            .filter(|(_, h)| *h != Hit::Block)
+            .map(|(r, _)| *r)
+            .collect()
+    }
+
     /// Whether `p` is over a control or panel.
     pub fn covers(&self, p: [f32; 2]) -> bool {
         self.hit(p).is_some()
@@ -782,6 +842,7 @@ impl Hud {
         match hit {
             Hit::Tool(MORE) => {
                 self.more = !self.more;
+                self.page = 0;
                 self.research = false;
                 self.problems = false;
                 self.selected = None;
@@ -797,6 +858,7 @@ impl Hud {
                     self.selected = None;
                 }
                 self.more = false;
+                self.library = false;
                 vec![Action::Tool(tool_at(i))]
             }
             Hit::Done => vec![Action::Tool(Tool::Hand)],
@@ -811,6 +873,9 @@ impl Hud {
             Hit::Rotate => vec![Action::Rotate],
             Hit::Recipe(r) => vec![Action::Recipe(r)],
             Hit::Belt(b) => vec![Action::Belt(b)],
+            Hit::SetRequest(entity, request) => {
+                vec![Action::Send(Command::SetRequest { entity, request })]
+            }
             Hit::SetRecipe(entity, recipe) => {
                 vec![Action::Send(Command::SetRecipe { entity, recipe })]
             }
@@ -824,6 +889,7 @@ impl Hud {
             }
             Hit::Research => {
                 self.research = !self.research;
+                self.page = 0;
                 self.more = false;
                 self.problems = false;
                 self.selected = None;
@@ -856,6 +922,7 @@ impl Hud {
                 Vec::new()
             }
             Hit::Close => {
+                self.library = false;
                 self.selected = None;
                 self.research = false;
                 self.unlock = false;
@@ -863,6 +930,19 @@ impl Hud {
                 self.more = false;
                 self.radial = None;
                 self.browse = None;
+                Vec::new()
+            }
+            Hit::Page(on) => {
+                // Drawing the sheet keeps the page in range.
+                self.page = if on {
+                    self.page + 1
+                } else {
+                    self.page.saturating_sub(1)
+                };
+                Vec::new()
+            }
+            Hit::StockMore => {
+                self.stock_open = !self.stock_open;
                 Vec::new()
             }
             Hit::Goal => {
@@ -1034,6 +1114,30 @@ impl Hud {
                 };
                 Vec::new()
             }
+            Hit::Copy => vec![Action::Copy],
+            Hit::Cut => vec![Action::Cut],
+            Hit::Erase => vec![Action::DeleteSelection],
+            Hit::Keep => vec![Action::SaveBlueprint],
+            Hit::Place => vec![Action::PlacePaste],
+            Hit::Library => {
+                self.library = !self.library;
+                self.page = 0;
+                self.confirm_forget = None;
+                Vec::new()
+            }
+            Hit::Pick(i) => {
+                self.library = false;
+                vec![Action::Paste(i)]
+            }
+            Hit::Forget(i) => {
+                if self.confirm_forget == Some(i) {
+                    self.confirm_forget = None;
+                    vec![Action::ForgetBlueprint(i)]
+                } else {
+                    self.confirm_forget = Some(i);
+                    Vec::new()
+                }
+            }
             Hit::Block => Vec::new(),
         }
     }
@@ -1105,7 +1209,6 @@ impl Hud {
 
         // The top of the screen stays small on a phone: the stock, one row
         // of status chips (research, problems), the goal card, then a tip.
-        let top = self.stock(view, o, [ml, mt]);
         // The sound button keeps the top-right corner, clear of the thumb.
         let right = corner[0] - 36.0 * u;
         self.sound_button(o, [right, mt]);
@@ -1115,6 +1218,8 @@ impl Hud {
         let right = right - gap - 36.0 * u;
         self.map_button(o, [right, mt]);
         let right = right - gap;
+        // The stock keeps to one row beside the buttons, with a "+N" pill for the rest.
+        let top = self.stock(view, o, [ml, mt], right);
         // Looking for problems walks the whole factory: on a big one, do
         // it four times a second, or at once when a machine's state or the
         // number of things built changes (T65).
@@ -1127,6 +1232,8 @@ impl Hud {
                 .map(|e| e.state as u64 + 1)
                 .fold(0u64, |h, s| h.wrapping_mul(31).wrapping_add(s)),
             snap.grids.len(),
+            // Its words are in the language they were found in.
+            i18n::lang(),
         );
         if self.found_for != Some(key) {
             self.found_for = Some(key);
@@ -1139,7 +1246,7 @@ impl Hud {
         let stock_end = self
             .hits
             .iter()
-            .filter(|(_, h)| matches!(h, Hit::Item(_)))
+            .filter(|(_, h)| matches!(h, Hit::Item(_) | Hit::StockMore))
             .map(|(r, _)| r[0] + r[2])
             .fold(ml, f32::max);
         let beside = stock_end + 8.0 * u;
@@ -1187,6 +1294,7 @@ impl Hud {
             && !self.unlock
             && !self.more
             && !self.problems
+            && !self.library
             && self.browse.is_none()
             && !hand_with_goal
             && !self.map
@@ -1239,6 +1347,14 @@ impl Hud {
             self.problems_sheet(view, o, [corner[0] - width, corner[1]], width, room);
             return;
         }
+        if !matches!(view.tool, Tool::Select | Tool::Paste) {
+            self.library = false;
+        }
+        if self.library {
+            let room = corner[1] - tip_y;
+            self.library_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
+        }
 
         if let Some(e) = selected {
             // A machine with a long list of recipes takes a wider sheet
@@ -1264,7 +1380,8 @@ impl Hud {
         };
         let mut right = corner[0];
         let left = self.undo_buttons(view, o, [ml, corner[1]]);
-        if placing.is_some() || *view.tool == Tool::Belt {
+        let pasting = *view.tool == Tool::Paste;
+        if placing.is_some() || *view.tool == Tool::Belt || pasting {
             let d = 60.0 * u;
             let r = [right - d, corner[1] - d, d, d];
             o.panel([r[0], r[1]], [d, d], d / 2.0, PANEL);
@@ -1311,6 +1428,117 @@ impl Hud {
                 self.pills(o, tiers, [left, corner[1]], right - left, true);
             }
         }
+        // The selection's buttons, and the library's (T51).
+        if *view.tool == Tool::Select || pasting {
+            let mut row: Vec<Pill> = Vec::new();
+            if pasting {
+                row.push((tr("button.place"), None, true, Hit::Place));
+            } else if view.selection > 0 {
+                row.push((tr("button.copy"), None, false, Hit::Copy));
+                row.push((tr("button.cut"), None, false, Hit::Cut));
+                row.push((tr("button.delete"), None, false, Hit::Erase));
+                row.push((tr("button.save"), None, false, Hit::Keep));
+            }
+            row.push((tr("button.blueprints"), None, false, Hit::Library));
+            self.pills(o, row, [left, corner[1]], right - left, true);
+        }
+    }
+
+    /// The blueprint library, bottom-left at `at`, at most `room` tall:
+    /// a row per blueprint with a sketch of it. A tap takes one in hand.
+    fn library_sheet(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32, room: f32) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let gap = 8.0 * u;
+        let title = 30.0 * u;
+        let row = 64.0 * u;
+        let list = view.blueprints;
+        let fits = ((room - 2.0 * pad - title + gap) / (row + gap))
+            .floor()
+            .max(1.0) as usize;
+        let rows = list.len().clamp(1, fits);
+        // What doesn't fit goes on further pages.
+        let pages = list.len().div_ceil(rows).max(1);
+        self.page = self.page.min(pages - 1);
+        let height = pad + title + rows as f32 * (row + gap) - gap + pad;
+        let r = [at[0], at[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let (left, top) = (r[0] + pad, r[1] + pad);
+        let px = 20.0 * u;
+        o.text(
+            tr("blueprint.title"),
+            [left, top + o.cap_height(px) + 4.0 * u],
+            px,
+            TEXT,
+        );
+        let close = 32.0 * u;
+        let c = [r[0] + r[2] - pad - close, top - 2.0 * u, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::Close));
+        self.pager(o, c, pages);
+        let inner = width - 2.0 * pad;
+        if list.is_empty() {
+            let lines = wrap(o, tr("blueprint.empty"), 14.0 * u, inner);
+            for (k, l) in lines.iter().enumerate().take(3) {
+                let y = top + title + 20.0 * u + k as f32 * 20.0 * u;
+                o.text(l, [left, y], 14.0 * u, MUTED);
+            }
+            return;
+        }
+        let first = self.page * rows;
+        for (i, bp) in list.iter().enumerate().skip(first).take(rows) {
+            let y = top + title + (i - first) as f32 * (row + gap);
+            let b = [left, y, inner, row];
+            o.panel([b[0], b[1]], [b[2], b[3]], 10.0 * u, RAISED);
+            self.hits.push((b, Hit::Pick(i)));
+            // A sketch: each building's icon where it stands.
+            let sk = row - 12.0 * u;
+            let (sx, sy) = (b[0] + 6.0 * u, b[1] + 6.0 * u);
+            o.panel([sx, sy], [sk, sk], 6.0 * u, PANEL);
+            let span = bp.size.0.max(bp.size.1).max(1) as f32;
+            let tile = (sk - 4.0 * u) / span;
+            let (ox, oy) = (
+                sx + (sk - tile * bp.size.0 as f32) / 2.0,
+                sy + (sk - tile * bp.size.1 as f32) / 2.0,
+            );
+            for p in &bp.pieces {
+                let at = [ox + p.at.0 as f32 * tile, oy + p.at.1 as f32 * tile];
+                let s = tile * f32::from(p.size);
+                match view.look.building(&p.building) {
+                    Some((sprite, t)) if s >= 6.0 => o.icon(sprite, at, s, t),
+                    Some((_, t)) => o.panel(at, [s, s], 0.0, t),
+                    None => o.panel(at, [s, s], 0.0, MUTED),
+                }
+            }
+            let tx = sx + sk + 10.0 * u;
+            let tw = b[0] + b[2] - tx - 48.0 * u;
+            let npx = fit(o, &bp.name, 15.0 * u, tw);
+            o.text(&bp.name, [tx, b[1] + 26.0 * u], npx, TEXT);
+            let detail = trf(
+                "blueprint.detail",
+                &[&bp.size.0, &bp.size.1, &bp.pieces.len()],
+            );
+            let dpx = fit(o, &detail, 12.0 * u, tw);
+            o.text(&detail, [tx, b[1] + 46.0 * u], dpx, MUTED);
+            // Delete, with a second tap to be sure.
+            let d = 36.0 * u;
+            let x = [b[0] + b[2] - d - 8.0 * u, b[1] + (row - d) / 2.0, d, d];
+            let asked = self.confirm_forget == Some(i);
+            let fill = if asked { palette::STARVE } else { PANEL };
+            o.panel([x[0], x[1]], [d, d], d / 2.0, fill);
+            let ink = if asked { TEXT } else { palette::STARVE };
+            let xw = o.measure("×", 20.0 * u);
+            o.text("×", [x[0] + (d - xw) / 2.0, x[1] + d * 0.72], 20.0 * u, ink);
+            self.hits.push((x, Hit::Forget(i)));
+        }
     }
 
     /// The tip for the tool in hand. With a tool other than Move it names
@@ -1329,7 +1557,11 @@ impl Hud {
                 .map_or(tr("tip.build"), |d| d.name.as_str()),
             _ => tr(TOOLS[slot].0),
         };
-        let text = trf("tip.named", &[&name, &tip(view.tool)]);
+        let what = match view.tool {
+            Tool::Select if view.selection > 0 => trf("tip.selected", &[&view.selection]),
+            _ => tip(view.tool).to_string(),
+        };
+        let text = trf("tip.named", &[&name, &what]);
         let ink = if *view.tool == Tool::Remove {
             palette::STARVE
         } else {
@@ -1522,25 +1754,80 @@ impl Hud {
     }
 
     /// The player's stock along the top. Returns the bottom edge.
-    fn stock(&mut self, view: &View, o: &mut Overlay, at: [f32; 2]) -> f32 {
+    fn stock(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], right: f32) -> f32 {
         let u = self.unit;
         let h = 30.0 * u;
         let px = 14.0 * u;
         let s = 18.0 * u;
-        let mut x = at[0];
-        for (item, count) in view.snapshot.stock.iter().filter(|(_, n)| *n > 0) {
-            let text = count.to_string();
-            let w = 8.0 * u + s + 5.0 * u + o.measure(&text, px) + 10.0 * u;
-            o.panel([x, at[1]], [w, h], 8.0 * u, PANEL);
-            if let Some((sprite, t)) = view.look.item(item) {
-                o.icon(sprite, [x + 8.0 * u, at[1] + (h - s) / 2.0], s, t);
+        let items: Vec<_> = view.snapshot.stock.iter().filter(|(_, n)| *n > 0).collect();
+        let width =
+            |o: &Overlay, text: &str| 8.0 * u + s + 5.0 * u + o.measure(text, px) + 10.0 * u;
+        // One row, with a "+N" pill for the rest; open, every item on as
+        // many rows as it takes.
+        let more_w = |o: &Overlay, n: usize| width(o, &format!("+{n}")) - s - 5.0 * u;
+        let mut shown = items.len();
+        if !self.stock_open {
+            let mut x = at[0];
+            for (k, (_, count)) in items.iter().enumerate() {
+                let w = width(o, &count.to_string());
+                let rest = items.len() - k - 1;
+                let need = if rest > 0 {
+                    more_w(o, rest) + 6.0 * u
+                } else {
+                    0.0
+                };
+                if k > 0 && x + w + need > right {
+                    shown = k;
+                    break;
+                }
+                x += w + 6.0 * u;
             }
-            let base = at[1] + (h + o.cap_height(px)) / 2.0;
+        }
+        let mut x = at[0];
+        let mut y = at[1];
+        for (item, count) in &items[..shown] {
+            let text = count.to_string();
+            let w = width(o, &text);
+            if x > at[0] && x + w > right {
+                x = at[0];
+                y += h + 6.0 * u;
+            }
+            o.panel([x, y], [w, h], 8.0 * u, PANEL);
+            if let Some((sprite, t)) = view.look.item(item) {
+                o.icon(sprite, [x + 8.0 * u, y + (h - s) / 2.0], s, t);
+            }
+            let base = y + (h + o.cap_height(px)) / 2.0;
             o.text(&text, [x + 8.0 * u + s + 5.0 * u, base], px, TEXT);
-            self.hits.push(([x, at[1], w, h], Hit::Item(item.clone())));
+            self.hits.push(([x, y, w, h], Hit::Item(item.clone())));
             x += w + 6.0 * u;
         }
-        at[1] + h
+        let hidden = items.len() - shown;
+        if hidden > 0 || self.stock_open && items.len() > 1 {
+            let text = if self.stock_open {
+                tr("stock.less").to_string()
+            } else {
+                format!("+{hidden}")
+            };
+            let w = more_w(o, 0).max(o.measure(&text, px) + 18.0 * u);
+            if x > at[0] && x + w > right {
+                x = at[0];
+                y += h + 6.0 * u;
+            }
+            o.panel([x, y], [w, h], 8.0 * u, RAISED);
+            let base = y + (h + o.cap_height(px)) / 2.0;
+            o.text(
+                &text,
+                [x + (w - o.measure(&text, px)) / 2.0, base],
+                px,
+                MUTED,
+            );
+            // A finger-sized target, taller than the pill.
+            self.hits.push((
+                [x, y - 7.0 * u, w.max(44.0 * u), h + 14.0 * u],
+                Hit::StockMore,
+            ));
+        }
+        y + h
     }
 
     /// A round button that opens the game menu: three bars.
@@ -2662,7 +2949,11 @@ impl Hud {
             .floor()
             .max(1.0) as usize;
         let rows = list.len().div_ceil(cols).clamp(1, fits);
-        let shown = &list[..list.len().min(rows * cols)];
+        // What doesn't fit goes on further pages.
+        let per = rows * cols;
+        let pages = list.len().div_ceil(per).max(1);
+        self.page = self.page.min(pages - 1);
+        let shown = &list[self.page * per..list.len().min((self.page + 1) * per)];
         let height = pad + title + rows as f32 * (ch + gap) - gap + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
@@ -2687,6 +2978,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
+        self.pager(o, c, pages);
 
         let holding = match view.tool {
             Tool::Place(b) => Some(b),
@@ -2747,6 +3039,49 @@ impl Hud {
         }
     }
 
+    /// A sheet's page arrows and "2/3", left of its close button `c`, when
+    /// it has more than one page.
+    fn pager(&mut self, o: &mut Overlay, c: [f32; 4], pages: usize) {
+        if pages < 2 {
+            return;
+        }
+        let u = self.unit;
+        let size = c[3];
+        let gap = 8.0 * u;
+        let px = 15.0 * u;
+        let label = format!("{}/{}", self.page + 1, pages);
+        let lw = o.measure(&label, px);
+        let next = [c[0] - gap - size, c[1], size, size];
+        let lx = next[0] - gap - lw;
+        let back = [lx - gap - size, c[1], size, size];
+        o.text(
+            &label,
+            [lx, c[1] + size * 0.5 + o.cap_height(px) / 2.0],
+            px,
+            MUTED,
+        );
+        for (b, on, glyph) in [(back, false, "‹"), (next, true, "›")] {
+            let live = if on {
+                self.page + 1 < pages
+            } else {
+                self.page > 0
+            };
+            o.panel([b[0], b[1]], [size, size], size / 2.0, RAISED);
+            let gpx = 24.0 * u;
+            let gw = o.measure(glyph, gpx);
+            let ink = if live { TEXT } else { MUTED };
+            o.text(
+                glyph,
+                [b[0] + (size - gw) / 2.0, b[1] + size * 0.74],
+                gpx,
+                ink,
+            );
+            if live {
+                self.hits.push((b, Hit::Page(on)));
+            }
+        }
+    }
+
     /// The research sheet, bottom-left at `at`, at most `room` tall: one row
     /// per research with its cost and state. Tapping one that is ready
     /// sets the labs on it; tapping the current one stops them.
@@ -2778,8 +3113,16 @@ impl Hud {
                 2
             }
         });
-        shown.truncate(fits);
-        let height = pad + title + shown.len() as f32 * row - 6.0 * u + pad;
+        // What doesn't fit goes on further pages, every page as tall.
+        let pages = shown.len().div_ceil(fits).max(1);
+        self.page = self.page.min(pages - 1);
+        let rows = shown.len().min(fits);
+        let shown: Vec<&ResearchDef> = shown
+            .into_iter()
+            .skip(self.page * fits)
+            .take(fits)
+            .collect();
+        let height = pad + title + rows as f32 * row - 6.0 * u + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
@@ -2804,6 +3147,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
+        self.pager(o, c, pages);
         y += title;
 
         for d in shown {
@@ -3140,6 +3484,78 @@ impl Hud {
         rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
     }
 
+    /// A requester chest's pills (T49): nothing, or one of the solid items
+    /// in stock (most first), and then how many to keep. Returns the rows.
+    #[allow(clippy::too_many_arguments)]
+    fn request_picker(
+        &mut self,
+        o: &mut Overlay,
+        view: &View,
+        e: &EntityView,
+        at: [f32; 2],
+        width: f32,
+        draw: bool,
+    ) -> usize {
+        let current = e.request.clone();
+        let count = current.as_ref().map_or(REQUEST_COUNTS[1], |r| r.1);
+        let solid = |i: &mofact_core::ids::ItemId| {
+            view.content
+                .items
+                .iter()
+                .any(|d| &d.id == i && d.kind == mofact_core::content::ItemKind::Solid)
+        };
+        let mut items: Vec<(&mofact_core::ids::ItemId, u32)> = view
+            .snapshot
+            .stock
+            .iter()
+            .filter(|(i, n)| *n > 0 && solid(i))
+            .map(|(i, n)| (i, *n))
+            .collect();
+        items.sort_by_key(|p| std::cmp::Reverse(p.1));
+        items.truncate(REQUEST_ITEMS);
+        if let Some((i, _)) = &current {
+            if !items.iter().any(|(j, _)| *j == i) {
+                items.push((i, 0));
+            }
+        }
+        let none = (
+            tr("request.none"),
+            None,
+            current.is_none(),
+            Hit::SetRequest(e.id, None),
+        );
+        let list: Vec<Pill> = std::iter::once(none)
+            .chain(items.iter().map(|(i, _)| {
+                let on = current.as_ref().is_some_and(|c| &c.0 == *i);
+                (
+                    "",
+                    view.look.item(i),
+                    on,
+                    Hit::SetRequest(e.id, Some(((*i).clone(), count))),
+                )
+            }))
+            .collect();
+        let mut rows = 0;
+        if let Some((item, n)) = &current {
+            let labels: Vec<String> = REQUEST_COUNTS.iter().map(|c| c.to_string()).collect();
+            let counts: Vec<Pill> = REQUEST_COUNTS
+                .iter()
+                .zip(&labels)
+                .map(|(c, label)| {
+                    (
+                        label.as_str(),
+                        None,
+                        c == n,
+                        Hit::SetRequest(e.id, Some((item.clone(), *c))),
+                    )
+                })
+                .collect();
+            rows = self.pills(o, counts, at, width, draw);
+        }
+        let pitch = 46.0 * self.unit;
+        rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
+    }
+
     /// The inspect sheet for `e`, bottom-left at `at`.
     fn sheet(&mut self, view: &View, o: &mut Overlay, e: &EntityView, at: [f32; 2], width: f32) {
         let u = self.unit;
@@ -3211,6 +3627,12 @@ impl Hud {
                 false,
             ) as f32
         });
+        let requester = def.is_some_and(|d| matches!(d.role, BuildingRole::RequesterChest { .. }));
+        let pill_rows = if requester {
+            self.request_picker(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
+        } else {
+            pill_rows
+        };
         let height = pad
             + 30.0 * u // title
             + if belt { 0.0 } else { row + 8.0 * u + 6.0 * u } // recipe line and progress
@@ -3333,6 +3755,15 @@ impl Hud {
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
+            } else if e.state == MachineState::NoPower {
+                // Say how to fix it, not just that it's wrong.
+                let text = if grid.is_none() {
+                    tr("inspect.no_grid")
+                } else {
+                    tr("inspect.no_turbine")
+                };
+                let px = fit(o, text, px, r[2] - 2.0 * pad);
+                o.text(text, [x, base], px, palette::STARVE);
             } else if let Some(rd) = recipe {
                 // Each item opens the recipe browser.
                 let stacks =
@@ -3365,9 +3796,9 @@ impl Hud {
                 let px = fit(o, text, px, r[2] - 2.0 * pad);
                 o.text(text, [x, base], px, MUTED);
             } else {
-                let text = tr("inspect.drill");
-                let px = fit(o, text, px, r[2] - 2.0 * pad);
-                o.text(text, [x, base], px, MUTED);
+                let text = about(view, def, e);
+                let px = fit(o, &text, px, r[2] - 2.0 * pad);
+                o.text(&text, [x, base], px, MUTED);
             }
             y += row + 4.0 * u;
             let bw = r[2] - 2.0 * pad;
@@ -3402,6 +3833,19 @@ impl Hud {
                 rs,
                 e.recipe.as_ref(),
                 set,
+                [left, y + band - 6.0 * u],
+                r[2] - 2.0 * pad,
+                true,
+            );
+            y += band;
+        }
+
+        if requester {
+            let band = pill_rows * 46.0 * u;
+            self.request_picker(
+                o,
+                view,
+                e,
                 [left, y + band - 6.0 * u],
                 r[2] - 2.0 * pad,
                 true,
@@ -3467,6 +3911,57 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
 /// A pill: its label, icon, whether it is the one chosen, and what a tap does.
 type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
 
+/// The items a requester chest's sheet offers, and the counts.
+const REQUEST_ITEMS: usize = 11;
+const REQUEST_COUNTS: [u32; 4] = [10, 50, 100, 200];
+
+/// One line on what a building does, for the inspect sheet, when it has no
+/// recipe, fluid or power figures to show instead.
+fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
+    let name = |id: &mofact_core::ids::ItemId| {
+        view.content
+            .items
+            .iter()
+            .find(|i| &i.id == id)
+            .map_or(id.as_str().to_owned(), |i| i18n::in_sentence(&i.name))
+    };
+    match def.map(|d| &d.role) {
+        Some(BuildingRole::Miner { .. }) => match &e.ore {
+            Some(ore) => trf("inspect.mines", &[&name(ore)]),
+            None => tr("inspect.drill").into(),
+        },
+        Some(BuildingRole::Lab { .. }) => {
+            let research = &view.snapshot.research;
+            match research
+                .current
+                .as_ref()
+                .and_then(|c| view.content.research.iter().find(|r| &r.id == c))
+            {
+                Some(r) => trf(
+                    "inspect.lab",
+                    &[&r.name, &research.progress.0, &research.progress.1],
+                ),
+                None => tr("inspect.lab_idle").into(),
+            }
+        }
+        Some(BuildingRole::Splitter) => tr("inspect.splitter").into(),
+        Some(BuildingRole::Underground { reach, .. }) => trf("inspect.underground", &[reach]),
+        Some(BuildingRole::Rail) => tr("inspect.rail").into(),
+        Some(BuildingRole::RailSignal) => tr("inspect.signal").into(),
+        Some(BuildingRole::TrainStop) => tr("inspect.train_stop").into(),
+        Some(BuildingRole::Locomotive { .. }) => tr("inspect.locomotive").into(),
+        Some(BuildingRole::DronePort { drones, reach }) => {
+            trf("inspect.port", &[drones, &(u32::from(*reach) * 2)])
+        }
+        Some(BuildingRole::ProviderChest { .. }) => tr("inspect.provider").into(),
+        Some(BuildingRole::RequesterChest { .. }) => match &e.request {
+            Some((item, n)) => trf("inspect.requests", &[n, &name(item)]),
+            None => tr("inspect.requester").into(),
+        },
+        _ => String::new(),
+    }
+}
+
 /// A machine state's label and colour, in `look`'s colours (T58).
 fn state(s: MachineState, look: &Look) -> (&'static str, Rgba) {
     use palette::Status;
@@ -3485,6 +3980,8 @@ fn tip(tool: &Tool) -> &'static str {
         Tool::Hand => "tip.hand",
         Tool::Belt => "tip.belt",
         Tool::Remove => "tip.remove",
+        Tool::Select => "tip.select",
+        Tool::Paste => "tip.paste",
         Tool::Place(b) => match b.as_str() {
             "drill" => "tip.drill",
             "furnace" => "tip.furnace",
@@ -3496,7 +3993,12 @@ fn tip(tool: &Tool) -> &'static str {
             "rail-signal" => "tip.rail_signal",
             "train-stop" => "tip.train_stop",
             "locomotive" => "tip.locomotive",
+            "tank-train" => "tip.tank_train",
             "wind-turbine" => "tip.wind_turbine",
+            "radar" => "tip.radar",
+            "drone-port" => "tip.drone_port",
+            "provider-chest" => "tip.provider_chest",
+            "requester-chest" => "tip.requester_chest",
             _ => "tip.place",
         },
     })

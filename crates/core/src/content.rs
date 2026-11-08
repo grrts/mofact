@@ -156,14 +156,45 @@ pub enum BuildingRole {
     TrainStop,
     /// A train: runs at `tiles_per_second` along rails and carries up to
     /// `capacity` items between the stops on its schedule.
+    ///
+    /// A `tank` train (S5) carries `capacity` units of one fluid instead:
+    /// it fills at a stop from the pipes beside it, and empties into a
+    /// pipe out of the side the stop faces.
     Locomotive {
         tiles_per_second: f32,
+        capacity: u32,
+        #[serde(default)]
+        tank: bool,
+    },
+    /// A drone port (T49, T50): home to `drones` drones, which fly
+    /// straight lines over the square `reach` tiles round it. Ports whose
+    /// squares meet make one network. Drones carry items from provider
+    /// chests (and the hub) to requester chests, build ghosts and take down
+    /// what is marked, and charge here on the port's power.
+    DronePort {
+        drones: u8,
+        reach: u8,
+    },
+    /// A chest drones take from: belts fill it, up to `capacity` items.
+    ProviderChest {
+        capacity: u32,
+    },
+    /// A chest drones fill with the item it asks for, up to the count it
+    /// asks for and at most `capacity`; it hands them out of its arrow.
+    RequesterChest {
         capacity: u32,
     },
     /// The game's last build (T54): takes the items of each stage in turn
     /// from belts, and when the last stage is in, the factory has won.
     Megaproject {
         stages: Vec<Stage>,
+    },
+    /// Charts the land (S3): while powered, it lifts the fog from the
+    /// nearest unexplored patch every `seconds_per_patch`, out to `reach`
+    /// tiles away.
+    Radar {
+        reach: u32,
+        seconds_per_patch: f32,
     },
 }
 

@@ -75,8 +75,20 @@ enum Art {
     Hub,
     Pole,
     Turbine,
+    /// The turbine with its blades turned to frame `0` of [`ROTOR_FRAMES`].
+    TurbineSpin(u8),
     /// A generator bigger than a tile: a solar panel.
     Solar,
+    /// A radar (S3).
+    Radar,
+    /// The radar with its dish turned to frame `0` of [`RADAR_FRAMES`].
+    RadarSpin(u8),
+    /// A drone port (T49).
+    DronePort,
+    /// A logistic chest; `requester` tells its band's colour.
+    Chest {
+        requester: bool,
+    },
     Splitter,
     Underground {
         exit: bool,
@@ -177,6 +189,8 @@ enum Art {
     /// A stop's platform, facing east and turned.
     Platform,
     Locomotive,
+    /// A tank train (S5).
+    TankTrain,
     /// The megaproject's anchor.
     Skyhook,
     /// 0 a dot, 1 a ring, 2 a bar.
@@ -217,6 +231,9 @@ enum Kind {
     Stop,
     Train,
     Mega,
+    Radar,
+    Port,
+    Chest,
 }
 
 impl Kind {
@@ -517,6 +534,11 @@ impl Look {
                 BuildingRole::TrainStop => (Kind::Stop, Vec::new()),
                 BuildingRole::Locomotive { .. } => (Kind::Train, Vec::new()),
                 BuildingRole::Megaproject { .. } => (Kind::Mega, Vec::new()),
+                BuildingRole::Radar { .. } => (Kind::Radar, Vec::new()),
+                BuildingRole::DronePort { .. } => (Kind::Port, Vec::new()),
+                BuildingRole::ProviderChest { .. } | BuildingRole::RequesterChest { .. } => {
+                    (Kind::Chest, Vec::new())
+                }
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -596,12 +618,19 @@ impl Look {
                 Kind::Hub => push(&mut look, id.to_owned(), b.size, Art::Hub),
                 Kind::Pole => push(&mut look, id.to_owned(), b.size, Art::Pole),
                 Kind::Generator => {
-                    let art = if b.size.0 > 1 {
-                        Art::Solar
+                    if b.size.0 > 1 {
+                        push(&mut look, id.to_owned(), b.size, Art::Solar);
                     } else {
-                        Art::Turbine
-                    };
-                    push(&mut look, id.to_owned(), b.size, art);
+                        push(&mut look, id.to_owned(), b.size, Art::Turbine);
+                        for k in 0..ROTOR_FRAMES {
+                            push(
+                                &mut look,
+                                format!("{id}:spin:{k}"),
+                                b.size,
+                                Art::TurbineSpin(k),
+                            );
+                        }
+                    }
                 }
                 Kind::Splitter => push(&mut look, id.to_owned(), b.size, Art::Splitter),
                 Kind::Underground | Kind::UndergroundPipe => {
@@ -644,8 +673,30 @@ impl Look {
                         push(&mut look, format!("{id}:platform"), b.size, Art::Platform);
                     }
                 }
-                Kind::Train => push(&mut look, id.to_owned(), b.size, Art::Locomotive),
+                Kind::Train => {
+                    let art = match b.role {
+                        BuildingRole::Locomotive { tank: true, .. } => Art::TankTrain,
+                        _ => Art::Locomotive,
+                    };
+                    push(&mut look, id.to_owned(), b.size, art)
+                }
                 Kind::Mega => push(&mut look, id.to_owned(), b.size, Art::Skyhook),
+                Kind::Radar => {
+                    push(&mut look, id.to_owned(), b.size, Art::Radar);
+                    for k in 0..RADAR_FRAMES {
+                        push(
+                            &mut look,
+                            format!("{id}:spin:{k}"),
+                            b.size,
+                            Art::RadarSpin(k),
+                        );
+                    }
+                }
+                Kind::Port => push(&mut look, id.to_owned(), b.size, Art::DronePort),
+                Kind::Chest => {
+                    let requester = matches!(b.role, BuildingRole::RequesterChest { .. });
+                    push(&mut look, id.to_owned(), b.size, Art::Chest { requester });
+                }
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -982,6 +1033,28 @@ impl Look {
         self.sprites.get(at).map(|s| s.name.as_str())
     }
 
+    /// For a wind turbine on a grid, its sprite with the blades turned for
+    /// `t` seconds, and for a working radar its dish turned; `None` for
+    /// anything that doesn't spin.
+    pub fn spinning(&self, building: &BuildingId, t: f64, working: bool) -> Option<&str> {
+        let b = self.buildings.get(building)?;
+        let (frame, frames) = match b.kind {
+            Kind::Generator if b.size.0 == 1 => (
+                ((t / ROTOR_SECONDS).fract() * f64::from(ROTOR_FRAMES)) as usize,
+                ROTOR_FRAMES,
+            ),
+            // There and back: 0, 1 .. last .. 1, 0.
+            Kind::Radar if working => {
+                let last = usize::from(RADAR_FRAMES) - 1;
+                let k = ((t / RADAR_SECONDS).fract() * 2.0 * last as f64) as usize;
+                (if k > last { 2 * last - k } else { k }, RADAR_FRAMES)
+            }
+            _ => return None,
+        };
+        let at = b.base + 1 + frame.min(usize::from(frames) - 1);
+        self.sprites.get(at).map(|s| s.name.as_str())
+    }
+
     /// The white sprite that shows the fluid inside `building`, drawn over
     /// it and turned with it, and whether it shrinks as it empties (a tank's
     /// window) rather than fading (a pipe's channel).
@@ -1029,7 +1102,7 @@ impl Look {
             // A pipe or rail on its own, as an icon or a ghost, runs east to west.
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
-            Kind::Train | Kind::Mega => b.base,
+            Kind::Train | Kind::Mega | Kind::Radar | Kind::Port | Kind::Chest => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
@@ -1158,11 +1231,25 @@ impl Look {
     }
 }
 
-/// Each band's atlas is this many tiles on a side, padding included: 3,564
-/// pixels at the closest zoom, inside the 4,096 every target GPU takes. Machines
-/// have a sprite per recipe, state and direction, so this grows with content;
-/// when tier 3-4 fills it, turn machine bodies on the GPU instead.
-pub const ATLAS_TILES: u32 = 27;
+/// Each band's atlas is this many tiles on a side, padding included: 4,092
+/// pixels at the closest zoom, the most that fits inside the 4,096 every
+/// target GPU takes (a GPU that takes less drops that band). Machines have a
+/// sprite per recipe, state and direction, so this grows with content; 27
+/// filled up with drones and the radar, and 31 is the last step. When it
+/// fills again, turn machine bodies on the GPU instead.
+pub const ATLAS_TILES: u32 = 31;
+
+/// Frames of a wind turbine's blades over a third of a turn, and the
+/// seconds that third takes.
+const ROTOR_FRAMES: u8 = 12;
+const ROTOR_SECONDS: f64 = 1.4;
+/// Frames of a radar dish's scan from one side to the other, the seconds a
+/// scan there and back takes, and how far it swings each way (radians).
+/// The atlas has room for only a few 2x2 frames, so it swings rather than
+/// turning all the way round.
+const RADAR_FRAMES: u8 = 4;
+const RADAR_SECONDS: f64 = 4.0;
+const RADAR_SWING: f32 = 0.6;
 
 /// The side of the atlas for the band of `px` pixels a tile. Each sprite
 /// carries its padding, which is most of a tile's room in the smallest band,
@@ -1210,7 +1297,28 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Hub => draw::hub(&mut c, z, fine, 0.0),
         Art::Pole => draw::pole(&mut c, z, fine),
         Art::Turbine => draw::turbine(&mut c, z, fine, 0.3),
+        // Three blades repeat every third of a turn; `turbine` turns them
+        // by twice its `t` in radians.
+        Art::TurbineSpin(k) => {
+            let turn = f32::from(k) / f32::from(ROTOR_FRAMES) * std::f32::consts::TAU / 3.0;
+            draw::turbine(&mut c, z, fine, 0.3 + turn / 2.0)
+        }
         Art::Solar => draw::solar(&mut c, z, fine),
+        Art::Radar => draw::radar(&mut c, z, fine),
+        Art::RadarSpin(k) => {
+            let along = f32::from(k) / f32::from(RADAR_FRAMES - 1) * 2.0 - 1.0;
+            let angle = -std::f32::consts::FRAC_PI_4 + along * RADAR_SWING;
+            draw::radar_turned(&mut c, z, fine, angle)
+        }
+        Art::DronePort => draw::drone_port(&mut c, z, fine),
+        Art::Chest { requester } => {
+            let trim = if requester {
+                mofact_artkit::palette::GLASS
+            } else {
+                mofact_artkit::palette::ACCENT
+            };
+            draw::logistic_chest(&mut c, z, fine, trim, requester)
+        }
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
         Art::Notch => draw::notch_east(&mut c, z),
@@ -1288,6 +1396,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::StopIcon => rail::stop_icon(&mut c, z, fine),
         Art::Platform => rail::platform(&mut c, z, fine),
         Art::Locomotive => rail::locomotive(&mut c, z, fine),
+        Art::TankTrain => rail::tank_train(&mut c, z, fine),
         Art::Skyhook => draw::skyhook(&mut c, z, fine, tiles),
         Art::Fx(0) => draw::fx_dot(&mut c, w as f32),
         Art::Fx(1) => draw::fx_ring(&mut c, w as f32),
@@ -1507,6 +1616,11 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn the_closest_band_still_fits_a_4096_texture() {
+        assert!(atlas_size(*BANDS.last().unwrap()) <= 4096);
+    }
+
+    #[test]
     fn every_band_fits_every_sprite() {
         let look = Look::new(&content());
         for px in BANDS {
@@ -1516,5 +1630,20 @@ pub(crate) mod tests {
                 assert!(atlas.get(&s.name).is_some(), "{} at {px}", s.name);
             }
         }
+    }
+
+    #[test]
+    fn a_working_radar_scans_there_and_back_and_an_idle_one_rests() {
+        let look = Look::new(&content());
+        let radar = BuildingId::from("radar");
+        assert_eq!(look.spinning(&radar, 1.0, false), None);
+        let at = |t: f64| look.spinning(&radar, t, true).unwrap().to_owned();
+        assert_eq!(at(0.0), "radar:spin:0");
+        assert_eq!(
+            at(RADAR_SECONDS / 2.0),
+            format!("radar:spin:{}", RADAR_FRAMES - 1)
+        );
+        assert_eq!(at(RADAR_SECONDS * 0.99), "radar:spin:1", "and back");
+        assert_eq!(at(RADAR_SECONDS), "radar:spin:0");
     }
 }

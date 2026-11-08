@@ -1490,6 +1490,57 @@ fn version_11_saves_from_before_pins_still_load() {
     assert!(sim.snapshot().pins.is_empty());
 }
 
+#[test]
+fn only_drills_need_ore() {
+    // Every other building goes on open ground with no ore under it.
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    for i in &content.items {
+        sim.add_stock(&i.id, 10_000);
+    }
+    for r in &content.research {
+        sim.complete_research(&r.id);
+    }
+    sim.set_world(42);
+    let gen = mofact_world::WorldGen::new(42, sim.tables.ores.len() as u8);
+    let mut x = 0;
+    for b in &content.buildings {
+        // Open ground near the start, big enough for it, with no ore on it.
+        let (w, h) = (i32::from(b.size.0), i32::from(b.size.1));
+        let pos = loop {
+            x += 1;
+            let at = TilePos::new(mofact_world::START.x - 12, mofact_world::START.y + 6 + x);
+            let tiles: Vec<TilePos> = (0..h)
+                .flat_map(|dy| (0..w).map(move |dx| TilePos::new(at.x + dx, at.y + dy)))
+                .collect();
+            if tiles.iter().all(|t| {
+                mofact_world::ore_at(&gen, *t).is_none()
+                    && mofact_world::obstacle(&gen, *t).is_none()
+                    && sim.entity_at(*t).is_none()
+            }) {
+                break at;
+            }
+        };
+        x += h;
+        let got = sim.apply(&Command::Place {
+            building: b.id.clone(),
+            pos,
+            dir: Dir::East,
+            recipe: None,
+        });
+        if matches!(b.role, mofact_core::content::BuildingRole::Miner { .. }) {
+            assert_eq!(got, CommandResult::Refused(CommandError::NoOre), "{}", b.id);
+        } else {
+            assert_ne!(
+                got,
+                CommandResult::Refused(CommandError::NoOre),
+                "{} needs no ore",
+                b.id
+            );
+        }
+    }
+}
+
 /// A titanium furnace facing east: titanium ore from the west, coal from
 /// the north, titanium out of the front to the hub. Its iron ore by-product
 /// leaves by its right side, where nothing is yet.
@@ -1922,4 +1973,305 @@ fn repeatable_research_never_runs_out_and_each_level_speeds_drills() {
     assert!(warnings.is_empty(), "{warnings:?}");
     assert_eq!(loaded.snapshot().research, sim.snapshot().research);
     assert_eq!(ticks(&loaded), three);
+}
+
+/// Content whose radar reaches four cells, so a test can watch it finish.
+fn short_radar() -> Content {
+    let mut c = content();
+    let radar = c
+        .buildings
+        .iter_mut()
+        .find(|b| b.id == BuildingId::from("radar"))
+        .unwrap();
+    radar.role = mofact_core::content::BuildingRole::Radar {
+        reach: 4 * mofact_core::FOG_CELL as u32,
+        seconds_per_patch: 1.0,
+    };
+    c
+}
+
+fn cell(x: i32, y: i32) -> mofact_core::geom::FogCell {
+    mofact_core::geom::FogCell::new(x, y)
+}
+
+/// Cells a disc of `r` cells round (0, 0) holds.
+fn disc(r: i32) -> usize {
+    (-r..=r)
+        .flat_map(|y| (-r..=r).map(move |x| x * x + y * y))
+        .filter(|d| *d <= r * r + r)
+        .count()
+}
+
+#[test]
+fn a_new_game_sees_the_land_round_its_hub() {
+    let mut sim = Sim::with_content(&content());
+    assert!(sim.snapshot().explored.is_empty());
+    place(&mut sim, "hub", 0, 0, Dir::East, None);
+    let snap = sim.snapshot();
+    assert_eq!(snap.explored.len(), disc(REVEAL_HUB));
+    assert!(sim.explored(cell(5, 0)) && sim.explored(cell(-4, 3)));
+    assert!(!sim.explored(cell(6, 0)) && !sim.explored(cell(4, 4)));
+    assert!(snap.explored.windows(2).all(|w| w[0] < w[1]), "sorted");
+}
+
+#[test]
+fn a_powered_radar_charts_the_nearest_land_first_and_stops_at_its_reach() {
+    let c = short_radar();
+    let mut sim = Sim::with_content(&c);
+    for (i, n) in [
+        ("iron-plate", 100),
+        ("gear", 50),
+        ("wire", 50),
+        ("circuit", 20),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    place(&mut sim, "pole", 0, 0, Dir::East, None);
+    place(&mut sim, "wind-turbine", 1, 0, Dir::East, None);
+    let radar = place(&mut sim, "radar", 0, 1, Dir::East, None);
+    // It sees round itself as soon as it stands.
+    assert_eq!(sim.snapshot().explored.len(), disc(REVEAL_RADAR));
+    run(&mut sim, 2);
+    // The nearest hidden cells are 2 and 3 cells off on the two axes.
+    let found: Vec<_> = sim
+        .snapshot()
+        .explored
+        .iter()
+        .copied()
+        .filter(|c| c.x * c.x + c.y * c.y > REVEAL_RADAR * REVEAL_RADAR + REVEAL_RADAR)
+        .collect();
+    assert!(!found.is_empty(), "nothing charted in two seconds");
+    assert!(
+        found.iter().all(|c| c.x * c.x + c.y * c.y == 13),
+        "{found:?}"
+    );
+    run(&mut sim, 60);
+    let snap = sim.snapshot();
+    assert_eq!(snap.explored.len(), disc(4));
+    assert!(!sim.explored(cell(5, 0)));
+    let view = snap.entities.iter().find(|e| e.id == radar).unwrap();
+    assert_eq!(view.state, MachineState::Idle, "done, so it rests");
+    // The fog it lifted stays lifted over a save, and it doesn't start again.
+    let (loaded, _) = Sim::load(&c, &sim.save()).unwrap();
+    assert_eq!(loaded.snapshot().explored, snap.explored);
+    let view = loaded.snapshot();
+    let view = view.entities.iter().find(|e| e.id == radar).unwrap();
+    assert_eq!(view.state, MachineState::Idle);
+}
+
+#[test]
+fn an_unpowered_radar_charts_nothing() {
+    let mut sim = Sim::with_content(&short_radar());
+    for (i, n) in [("iron-plate", 100), ("gear", 50), ("circuit", 20)] {
+        sim.add_stock(&item(i), n);
+    }
+    place(&mut sim, "radar", 0, 1, Dir::East, None);
+    run(&mut sim, 10);
+    assert_eq!(sim.snapshot().explored.len(), disc(REVEAL_RADAR));
+}
+
+/// A sim with drones researched and plenty to build ports with.
+fn drone_sim() -> Sim {
+    let mut sim = Sim::with_content(&content());
+    sim.complete_research(&"drones".into());
+    for (i, n) in [
+        ("iron-plate", 5000),
+        ("copper-plate", 5000),
+        ("gear", 500),
+        ("wire", 500),
+        ("circuit", 500),
+        ("steel", 500),
+        ("advanced-circuit", 200),
+        ("drone", 40),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    sim
+}
+
+/// A powered drone port with its corner at `x`, 0.
+fn port(sim: &mut Sim, x: i32) -> EntityId {
+    let p = place(sim, "drone-port", x, 0, Dir::East, None);
+    place(sim, "pole", x, 2, Dir::East, None);
+    place(sim, "wind-turbine", x + 1, 2, Dir::East, None);
+    p
+}
+
+#[test]
+fn a_port_brings_its_drones_and_they_go_with_it() {
+    let mut sim = drone_sim();
+    let p = port(&mut sim, 0);
+    assert_eq!(sim.port_drones(p), 4);
+    assert!(
+        sim.snapshot().drones.is_empty(),
+        "resting drones aren't drawn"
+    );
+    assert_eq!(sim.stock(&item("drone")), 36);
+    sim.apply(&Command::Remove { entity: p });
+    assert_eq!(sim.port_drones(p), 0);
+    assert_eq!(
+        sim.stock(&item("drone")),
+        40,
+        "removing gives the drones back"
+    );
+}
+
+/// Logistic drones (T49): five ports in a row make one network 200 tiles
+/// long, and its drones fill a requester chest at the far end from the hub.
+#[test]
+fn a_requester_two_hundred_tiles_out_is_kept_stocked_by_a_chain_of_ports() {
+    let mut sim = drone_sim();
+    place(&mut sim, "hub", -5, 0, Dir::East, None);
+    for x in [0, 50, 100, 150, 200] {
+        port(&mut sim, x);
+    }
+    let chest = place(&mut sim, "requester-chest", 205, 0, Dir::East, None);
+    let ask = Command::SetRequest {
+        entity: chest,
+        request: Some((item("gear"), 40)),
+    };
+    assert!(matches!(sim.apply(&ask), CommandResult::Applied { .. }));
+    let gears = sim.stock(&item("gear"));
+    run(&mut sim, 10);
+    let flying = sim.snapshot().drones;
+    assert!(!flying.is_empty() && flying.iter().all(|d| d.cargo == Some(item("gear"))));
+    // Their batteries fly 120 tiles, so they charge at ports on the way.
+    run(&mut sim, 110);
+    assert_eq!(sim.inventory(chest), vec![(item("gear"), 40)]);
+    assert_eq!(sim.stock(&item("gear")), gears - 40);
+    // It asks for no more than it wants.
+    run(&mut sim, 30);
+    assert_eq!(sim.inventory(chest), vec![(item("gear"), 40)]);
+    // Out of reach of every port, a chest gets nothing.
+    let far = place(&mut sim, "requester-chest", 400, 0, Dir::East, None);
+    sim.apply(&Command::SetRequest {
+        entity: far,
+        request: Some((item("gear"), 10)),
+    });
+    run(&mut sim, 60);
+    assert!(sim.inventory(far).is_empty());
+}
+
+/// Construction drones (T50): a planned block of 50 assemblers is built
+/// with no more taps, from the hub's stock, and pays the same as by hand.
+#[test]
+fn construction_drones_build_a_fifty_machine_plan_with_no_taps() {
+    let mut sim = drone_sim();
+    place(&mut sim, "hub", -5, 0, Dir::East, None);
+    port(&mut sim, 0);
+    let plates = sim.stock(&item("iron-plate"));
+    let mut planned = 0;
+    for k in 0..50 {
+        let (x, y) = (-20 + (k % 10) * 4, 6 + (k / 10) * 4);
+        let plan = Command::Plan {
+            building: "assembler".into(),
+            pos: TilePos::new(x, y),
+            dir: Dir::East,
+            recipe: Some("gear".into()),
+        };
+        assert!(
+            matches!(sim.apply(&plan), CommandResult::Applied { .. }),
+            "{x},{y}"
+        );
+        planned += 1;
+    }
+    assert_eq!(sim.snapshot().ghosts.len(), planned);
+    // Nothing is spent until a drone sets off with it.
+    assert_eq!(sim.stock(&item("iron-plate")), plates);
+    run(&mut sim, 240);
+    let snap = sim.snapshot();
+    assert!(snap.ghosts.is_empty(), "{} ghosts left", snap.ghosts.len());
+    let built: Vec<_> = snap
+        .entities
+        .iter()
+        .filter(|e| e.building == BuildingId::from("assembler"))
+        .collect();
+    assert_eq!(built.len(), 50);
+    assert!(built
+        .iter()
+        .all(|e| e.recipe == Some(RecipeId::from("gear"))));
+    let cost = content()
+        .buildings
+        .iter()
+        .find(|b| b.id == BuildingId::from("assembler"))
+        .unwrap()
+        .cost
+        .iter()
+        .find(|c| c.item == item("iron-plate"))
+        .unwrap()
+        .count;
+    assert_eq!(sim.stock(&item("iron-plate")), plates - 50 * cost);
+}
+
+#[test]
+fn marked_buildings_are_taken_down_and_a_ghost_can_be_called_off() {
+    let mut sim = drone_sim();
+    place(&mut sim, "hub", -5, 0, Dir::East, None);
+    port(&mut sim, 0);
+    let belt = place(&mut sim, "belt", 10, 10, Dir::East, None);
+    let plates = sim.stock(&item("iron-plate"));
+    assert!(matches!(
+        sim.apply(&Command::Mark {
+            entity: belt,
+            on: true
+        }),
+        CommandResult::Applied { .. }
+    ));
+    assert_eq!(sim.snapshot().marked, vec![belt]);
+    let plan = Command::Plan {
+        building: "belt".into(),
+        pos: TilePos::new(12, 12),
+        dir: Dir::East,
+        recipe: None,
+    };
+    sim.apply(&plan);
+    sim.apply(&Command::Unplan {
+        pos: TilePos::new(12, 12),
+    });
+    run(&mut sim, 20);
+    let snap = sim.snapshot();
+    assert!(snap.entities.iter().all(|e| e.id != belt), "taken down");
+    assert!(snap.marked.is_empty() && snap.ghosts.is_empty());
+    assert!(snap.entities.iter().all(|e| e.pos != TilePos::new(12, 12)));
+    assert_eq!(
+        sim.stock(&item("iron-plate")),
+        plates + 1,
+        "the belt comes back"
+    );
+}
+
+/// Drones in flight, their loads, ghosts and requests all survive a save,
+/// and the loaded game plays on exactly like the original.
+#[test]
+fn drones_mid_flight_save_and_play_on_the_same() {
+    let mut sim = drone_sim();
+    place(&mut sim, "hub", -5, 0, Dir::East, None);
+    port(&mut sim, 0);
+    port(&mut sim, 50);
+    let chest = place(&mut sim, "requester-chest", 60, 0, Dir::East, None);
+    sim.apply(&Command::SetRequest {
+        entity: chest,
+        request: Some((item("circuit"), 30)),
+    });
+    for k in 0..8 {
+        sim.apply(&Command::Plan {
+            building: "assembler".into(),
+            pos: TilePos::new(10 + k * 3, 10),
+            dir: Dir::South,
+            recipe: None,
+        });
+    }
+    run(&mut sim, 3);
+    assert!(
+        sim.snapshot().drones.iter().any(|d| d.at != d.to),
+        "some in flight"
+    );
+    let bytes = sim.save();
+    let (mut back, warnings) = Sim::load(&content(), &bytes).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(back.save(), bytes);
+    run(&mut sim, 60);
+    run(&mut back, 60);
+    assert_eq!(back.save(), sim.save());
+    assert_eq!(sim.inventory(chest), vec![(item("circuit"), 30)]);
 }

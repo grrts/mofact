@@ -14,6 +14,7 @@
 pub use mofact_core as core;
 
 mod clock;
+mod drones;
 pub mod entities;
 mod fluids;
 mod hash;
@@ -62,6 +63,11 @@ const LAB_CAP: u32 = 4;
 /// Three seconds: longer than a new game's furnace waits for its first ore
 /// (about two), so a fresh factory never opens on a red mark.
 const STARVED_AFTER: u32 = 3 * mofact_core::TICKS_PER_SECOND;
+/// Fog cells round a building that it lifts the fog from (S3): the hub
+/// clears the land a new game starts on, a radar a wider ring at once.
+const REVEAL: i32 = 1;
+const REVEAL_HUB: i32 = 5;
+const REVEAL_RADAR: i32 = 3;
 
 #[derive(Clone, Debug)]
 enum State {
@@ -115,6 +121,19 @@ enum State {
     Mega {
         stage: u32,
         have: Vec<u32>,
+    },
+    /// A radar (S3): ticks towards its next sweep, and the ring of cells
+    /// round it it is charting; past its reach it has nothing left to do.
+    /// A drone port, and whether a drone charges there this tick (T49).
+    Port {
+        charging: bool,
+    },
+    /// A provider or requester chest (T49).
+    Chest(drones::Chest),
+    Radar {
+        prog: u32,
+        ring: i32,
+        done: bool,
     },
 }
 
@@ -179,12 +198,16 @@ pub struct Sim {
     cleared: std::sync::Arc<Vec<TilePos>>,
     /// The player's pins on the world map, sorted.
     pins: std::sync::Arc<Vec<TilePos>>,
+    /// The land explored (S3), sorted; the rest is under the fog of war.
+    explored: std::sync::Arc<Vec<mofact_core::geom::FogCell>>,
     stock: Vec<u32>,
     delivered: Vec<u64>,
     research: Research,
     grids: Grids,
     fluids: Fluids,
     rails: rails::Rails,
+    /// Drones, ghosts and what is marked for them (T49, T50).
+    fleet: drones::Fleet,
     /// The goal the player is on: an index into the content's goals, which
     /// is their count once all are met.
     goal: u16,
@@ -449,6 +472,7 @@ impl Sim {
                 v
             }
             Some(State::Miner { out: Some(i), .. }) => vec![(name(*i), 1)],
+            Some(State::Chest(c)) => c.items.iter().map(|&(i, n)| (name(i), n)).collect(),
             // A pipe shows its whole segment: that's what flows through it.
             Some(State::Pipe | State::PipeTunnel(_)) => {
                 let seg = self.fluids.of.get(id.0 as usize).copied().flatten();
@@ -570,6 +594,7 @@ impl Sim {
                     t.heading = *dir;
                 }
                 let id = self.entities.insert(entity).expect("footprint checked");
+                self.reveal_around(&entity);
                 self.states.resize(id.0 as usize + 1, None);
                 self.states[id.0 as usize] = Some(state);
                 self.pair(id);
@@ -594,6 +619,11 @@ impl Sim {
                 if train {
                     self.rails.trains.push(id);
                 }
+                let size = self.tables.buildings[kind as usize].size;
+                if let Role::Port { drones, .. } = self.tables.buildings[kind as usize].role {
+                    self.port_built(id, &entity, drones);
+                }
+                self.clear_ghosts(*pos, size);
                 Ok((vec![Command::Remove { entity: id }], Some(id)))
             }
             Command::Remove { entity } => {
@@ -623,6 +653,7 @@ impl Sim {
                     recipe: recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
                 }];
                 let track = b.role.is_track();
+                let port = matches!(b.role, Role::Port { .. });
                 if let Some(State::Train(t)) = &self.states[entity.0 as usize] {
                     // Its cargo comes back too; undo gives back the train and its schedule.
                     for &(i, n) in &t.cargo {
@@ -638,9 +669,25 @@ impl Sim {
                     self.undock(at, *entity);
                     self.rails.trains.retain(|x| x != entity);
                 }
+                // A chest's contents go back to the stock; undo asks for the same again.
+                if let Some(State::Chest(c)) = &self.states[entity.0 as usize] {
+                    for &(i, n) in &c.items {
+                        self.stock[i as usize] += n;
+                    }
+                    if let Some((i, n)) = c.request {
+                        undo.push(Command::SetRequest {
+                            entity: *entity,
+                            request: Some((self.tables.items[i as usize].clone(), n)),
+                        });
+                    }
+                }
                 self.unpair(*entity);
                 self.entities.remove(*entity);
                 self.states[entity.0 as usize] = None;
+                self.fleet.marked.retain(|m| m != entity);
+                if port {
+                    self.port_removed(*entity);
+                }
                 self.regrid(e.kind);
                 // Splitting a segment never mixes fluids.
                 let _ = self.refluid(e.kind);
@@ -790,6 +837,104 @@ impl Sim {
                 };
                 Ok((vec![undo], None))
             }
+            Command::SetRequest { entity, request } => {
+                let e = *self
+                    .entities
+                    .get(*entity)
+                    .ok_or(CommandError::NoSuchEntity)?;
+                let Role::Chest {
+                    capacity,
+                    requester: true,
+                } = self.tables.buildings[e.kind as usize].role
+                else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let new = match request {
+                    Some((item, n)) => Some((
+                        self.tables.item(item).ok_or(CommandError::UnknownContent)?,
+                        (*n).clamp(1, capacity),
+                    )),
+                    None => None,
+                };
+                let Some(Some(State::Chest(c))) = self.states.get_mut(entity.0 as usize) else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let old = std::mem::replace(&mut c.request, new);
+                // What it held of something else goes back to the stock.
+                let keep = new.map(|(i, _)| i);
+                let mut back = Vec::new();
+                c.items.retain(|&(i, n)| {
+                    let stay = Some(i) == keep;
+                    if !stay {
+                        back.push((i, n));
+                    }
+                    stay
+                });
+                for (i, n) in back {
+                    self.stock[i as usize] += n;
+                }
+                Ok((
+                    vec![Command::SetRequest {
+                        entity: *entity,
+                        request: old.map(|(i, n)| (self.tables.items[i as usize].clone(), n)),
+                    }],
+                    None,
+                ))
+            }
+            Command::Plan {
+                building,
+                pos,
+                dir,
+                recipe,
+            } => {
+                let kind = self
+                    .tables
+                    .building(building)
+                    .ok_or(CommandError::UnknownContent)?;
+                let recipe = match recipe {
+                    Some(r) => Some(self.crafter_recipe(kind, r)?),
+                    None => None,
+                };
+                self.plan(kind, *pos, *dir, recipe)?;
+                Ok((vec![Command::Unplan { pos: *pos }], None))
+            }
+            Command::Unplan { pos } => {
+                let g = self.unplan(*pos).ok_or(CommandError::NoSuchEntity)?;
+                Ok((
+                    vec![Command::Plan {
+                        building: self.tables.buildings[g.kind as usize].id.clone(),
+                        pos: g.pos,
+                        dir: g.dir,
+                        recipe: g.recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
+                    }],
+                    None,
+                ))
+            }
+            Command::Mark { entity, on } => {
+                let e = *self
+                    .entities
+                    .get(*entity)
+                    .ok_or(CommandError::NoSuchEntity)?;
+                if matches!(self.tables.buildings[e.kind as usize].role, Role::Hub) {
+                    return Err(CommandError::Locked);
+                }
+                let marked = self.fleet.marked.contains(entity);
+                if marked == *on {
+                    return Err(CommandError::Blocked);
+                }
+                if *on {
+                    self.fleet.marked.push(*entity);
+                } else {
+                    self.fleet.marked.retain(|m| m != entity);
+                }
+                Ok((
+                    vec![Command::Mark {
+                        entity: *entity,
+                        on: !*on,
+                    }],
+                    None,
+                ))
+            }
             Command::SetSchedule { entity, stops } => {
                 if self.entities.get(*entity).is_none() {
                     return Err(CommandError::NoSuchEntity);
@@ -893,7 +1038,94 @@ impl Sim {
             Role::Rail { .. } => State::Rail,
             Role::Stop => State::Stop { docked: None },
             Role::Train { .. } => State::Train(rails::Train::default()),
+            Role::Port { .. } => State::Port { charging: false },
+            Role::Chest { .. } => State::Chest(drones::Chest::default()),
+            Role::Radar { .. } => State::Radar {
+                prog: 0,
+                ring: 0,
+                done: false,
+            },
         }
+    }
+
+    /// Whether the fog has lifted from `cell` (S3).
+    pub fn explored(&self, cell: mofact_core::geom::FogCell) -> bool {
+        self.explored.binary_search(&cell).is_ok()
+    }
+
+    /// Lift the fog from `cell`; false if it was already explored.
+    fn reveal(&mut self, cell: mofact_core::geom::FogCell) -> bool {
+        let Err(at) = self.explored.binary_search(&cell) else {
+            return false;
+        };
+        std::sync::Arc::make_mut(&mut self.explored).insert(at, cell);
+        true
+    }
+
+    /// Lift the fog round a building: a few hundred tiles round the hub,
+    /// so a new game opens on cleared land, and a cell round anything else.
+    pub(crate) fn reveal_around(&mut self, e: &Entity) {
+        let radius = match self.tables.buildings[e.kind as usize].role {
+            Role::Hub => REVEAL_HUB,
+            Role::Radar { .. } => REVEAL_RADAR,
+            _ => REVEAL,
+        };
+        let (w, h) = (i32::from(e.size.0), i32::from(e.size.1));
+        let mid = TilePos::new(e.pos.x + w / 2, e.pos.y + h / 2).fog();
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                if dx * dx + dy * dy <= radius * radius + radius {
+                    self.reveal(mofact_core::geom::FogCell::new(mid.x + dx, mid.y + dy));
+                }
+            }
+        }
+    }
+
+    /// Lift the fog a few cells round a building from a save made before
+    /// the fog of war, whose player had seen the land round their factory.
+    pub(crate) fn reveal_wide(&mut self, e: &Entity) {
+        let mid = e.pos.fog();
+        let r = REVEAL_RADAR;
+        for dy in -r..=r {
+            for dx in -r..=r {
+                if dx * dx + dy * dy <= r * r + r {
+                    self.reveal(mofact_core::geom::FogCell::new(mid.x + dx, mid.y + dy));
+                }
+            }
+        }
+    }
+
+    /// A radar's sweep: lift the fog from the nearest cell round it still
+    /// hidden, working out ring by ring. Returns false once nothing within
+    /// `reach` is left.
+    fn sweep(&mut self, e: &Entity, ring: &mut i32, reach: i32) -> bool {
+        let (w, h) = (i32::from(e.size.0), i32::from(e.size.1));
+        let mid = TilePos::new(e.pos.x + w / 2, e.pos.y + h / 2).fog();
+        while *ring <= reach {
+            let r = *ring;
+            let mut best: Option<(i32, mofact_core::geom::FogCell)> = None;
+            for dy in -r..=r {
+                for dx in -r..=r {
+                    // Only the ring's edge, inside the round reach.
+                    let d = dx * dx + dy * dy;
+                    if dx.abs().max(dy.abs()) != r || d > reach * reach + reach {
+                        continue;
+                    }
+                    let cell = mofact_core::geom::FogCell::new(mid.x + dx, mid.y + dy);
+                    if !self.explored(cell) && best.is_none_or(|(bd, bc)| (d, cell) < (bd, bc)) {
+                        best = Some((d, cell));
+                    }
+                }
+            }
+            match best {
+                Some((_, cell)) => {
+                    self.reveal(cell);
+                    return true;
+                }
+                None => *ring += 1,
+            }
+        }
+        false
     }
 
     /// An underground belt or pipe end.
@@ -1025,6 +1257,8 @@ impl Sim {
             State::Crafter(c) => c.working,
             State::Lab(lab) => lab.unit.is_some(),
             State::Pump | State::Well => true,
+            State::Radar { done, .. } => !done,
+            State::Port { charging } => *charging,
             _ => false,
         }
     }
@@ -1084,19 +1318,40 @@ impl Sim {
                 .entities
                 .get(EntityId(i as u32))
                 .expect("state implies entity");
-            if let (State::Train(t), Role::Train { per_tick, capacity }) =
-                (&mut state, &self.tables.buildings[e.kind as usize].role)
+            if let (
+                State::Train(t),
+                Role::Train {
+                    per_tick,
+                    capacity,
+                    tank,
+                },
+            ) = (&mut state, &self.tables.buildings[e.kind as usize].role)
             {
-                let (speed, capacity) = (*per_tick, *capacity);
-                self.step_train(EntityId(i as u32), t, capacity, speed);
+                let (speed, capacity, tank) = (*per_tick, *capacity, *tank);
+                self.step_train(EntityId(i as u32), t, capacity, speed, tank);
                 self.states[i] = Some(state);
                 continue;
             }
             let go = self.tables.buildings[e.kind as usize].power == 0
                 || power::runs(self.tick, self.grids.sat(i));
+            if let (State::Radar { prog, ring, done }, Role::Radar { reach, every }) =
+                (&mut state, &self.tables.buildings[e.kind as usize].role)
+            {
+                let (reach, every) = (*reach, *every);
+                if go && !*done {
+                    *prog += 1;
+                    if *prog >= every {
+                        *prog = 0;
+                        *done = !self.sweep(&e, ring, reach);
+                    }
+                }
+                self.states[i] = Some(state);
+                continue;
+            }
             self.step_one(&e, &mut state, go);
             self.states[i] = Some(state);
         }
+        self.step_drones();
     }
 
     /// Step one entity; `go` is false when its grid can't power it this tick.
@@ -1111,7 +1366,23 @@ impl Sim {
             | State::Rail
             | State::Stop { .. }
             | State::Train(_)
-            | State::Mega { .. } => {}
+            | State::Mega { .. }
+            | State::Port { .. }
+            | State::Radar { .. } => {}
+            // A requester chest hands what drones bring out of its arrow.
+            State::Chest(c) => {
+                if c.request.is_none() || c.items.is_empty() {
+                    return;
+                }
+                c.wait += 1;
+                if c.wait >= drones::OUT_EVERY {
+                    let item = c.items[0].0;
+                    if self.push(front, item, e.dir) {
+                        c.take(item, 1);
+                        c.wait = 0;
+                    }
+                }
+            }
             State::Pump => {
                 let Role::Pump { per_tick } = self.tables.buildings[e.kind as usize].role else {
                     return;
@@ -1542,7 +1813,20 @@ impl Sim {
             | State::Engine { .. }
             | State::Rail
             | State::Stop { .. }
-            | State::Train(_) => false,
+            | State::Train(_)
+            | State::Radar { .. }
+            | State::Port { .. } => false,
+            // A provider chest takes from belts on any side.
+            State::Chest(c) => match self.tables.buildings[target.kind as usize].role {
+                Role::Chest {
+                    capacity,
+                    requester: false,
+                } if c.total() < capacity => {
+                    c.add(item, 1);
+                    true
+                }
+                _ => false,
+            },
             State::Splitter { held, .. } => {
                 // Only from behind.
                 if dir != target.dir || held.is_some() {
@@ -1654,15 +1938,17 @@ impl Sim {
             cleared: self.cleared.clone(),
             depleted: self.depleted.clone(),
             pins: self.pins.clone(),
+            explored: self.explored.clone(),
             ..Snapshot::default()
         };
         for (id, e) in self.entities.iter() {
             let b = &self.tables.buildings[e.kind as usize];
             let slot = id.0 as usize;
-            if let (Some(State::Train(t)), Role::Train { capacity, .. }) =
+            if let (Some(State::Train(t)), Role::Train { capacity, tank, .. }) =
                 (self.states[slot].as_ref(), &b.role)
             {
-                snap.trains.push(self.train_view(id, b, t, *capacity));
+                snap.trains
+                    .push(self.train_view(id, b, t, *capacity, *tank));
                 continue;
             }
             if let (Some(State::Mega { stage, have }), Role::Mega { stages, names }, None) =
@@ -1764,6 +2050,18 @@ impl Sim {
                         c.recipe.map(|r| self.tables.recipes[r as usize].id.clone()),
                     )
                 }
+                Some(State::Radar { prog, done, .. }) => {
+                    let every = match b.role {
+                        Role::Radar { every, .. } => every,
+                        _ => 1,
+                    };
+                    let st = if *done {
+                        MachineState::Idle
+                    } else {
+                        MachineState::Working
+                    };
+                    (st, *prog as f32 / every as f32, None)
+                }
                 Some(State::Mega { stage, have }) => {
                     let (n, frac) = match &b.role {
                         Role::Mega { stages, .. } => {
@@ -1807,6 +2105,9 @@ impl Sim {
                     // Progress shows how hard it is working, from 0 to 1.
                     (st, *share as f32 / power::FULL as f32, None)
                 }
+                Some(State::Port { charging: true }) => (MachineState::Working, 0.0, None),
+                Some(State::Port { .. }) => (MachineState::Idle, 0.0, None),
+                Some(State::Chest(c)) if c.items.is_empty() => (MachineState::Idle, 0.0, None),
                 _ => (MachineState::Working, 0.0, None),
             };
             // Powered machines off the grid, or on one with nothing to give, say so.
@@ -1846,6 +2147,12 @@ impl Sim {
                 links: self.links(id, e),
                 state,
                 progress,
+                request: match &self.states[slot] {
+                    Some(State::Chest(c)) => c
+                        .request
+                        .map(|(i, n)| (self.tables.items[i as usize].clone(), n)),
+                    _ => None,
+                },
             });
         }
         let mut stock: Vec<_> = self
@@ -1895,6 +2202,7 @@ impl Sim {
             have,
             need,
         });
+        self.drone_views(&mut snap);
         snap
     }
 
@@ -1904,8 +2212,11 @@ impl Sim {
         b: &tables::Building,
         t: &rails::Train,
         capacity: u32,
+        tank: bool,
     ) -> TrainView {
         let item = |i: Item| self.tables.items[i as usize].clone();
+        // A tank's milli-units show as whole units.
+        let units = |n: u32| if tank { n / FLUID as u32 } else { n };
         TrainView {
             id,
             building: b.id.clone(),
@@ -1916,8 +2227,8 @@ impl Sim {
             } else {
                 0.0
             },
-            cargo: t.cargo.iter().map(|&(i, n)| (item(i), n)).collect(),
-            capacity,
+            cargo: t.cargo.iter().map(|&(i, n)| (item(i), units(n))).collect(),
+            capacity: units(capacity),
             schedule: t.schedule.clone(),
             next: t.next,
             state: match t.phase {

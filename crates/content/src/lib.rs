@@ -229,6 +229,7 @@ pub fn check(content: &Content) -> Vec<String> {
             BuildingRole::Locomotive {
                 tiles_per_second,
                 capacity,
+                ..
             } if tiles_per_second <= 0.0 || tiles_per_second.is_nan() || capacity == 0 => {
                 problems.push(format!("{owner} is a train that carries nothing anywhere"));
             }
@@ -246,6 +247,12 @@ pub fn check(content: &Content) -> Vec<String> {
                         ));
                     }
                 }
+            }
+            BuildingRole::Radar {
+                reach,
+                seconds_per_patch,
+            } if reach == 0 || seconds_per_patch <= 0.0 || seconds_per_patch.is_nan() => {
+                problems.push(format!("{owner} is a radar that charts nothing"));
             }
             BuildingRole::Rail | BuildingRole::RailSignal | BuildingRole::TrainStop
                 if b.size != (1, 1) =>
@@ -432,7 +439,7 @@ mod tests {
                 c.buildings.len(),
                 c.research.len() // with three repeatable (S2)
             ),
-            (69, 84, 32, 47)
+            (69, 84, 37, 47)
         );
         let circuit = c
             .recipes
@@ -478,6 +485,22 @@ mod tests {
             problems.contains("building `fast-belt` is unlocked by two researches"),
             "{problems}"
         );
+    }
+
+    #[test]
+    fn a_radar_that_charts_nothing_is_reported() {
+        let mut c = load_dir(&repo_data()).unwrap();
+        let radar = c
+            .buildings
+            .iter_mut()
+            .find(|b| b.id == mofact_core::ids::BuildingId::from("radar"))
+            .unwrap();
+        radar.role = BuildingRole::Radar {
+            reach: 0,
+            seconds_per_patch: 1.0,
+        };
+        let problems = check(&c).join("\n");
+        assert!(problems.contains("radar that charts nothing"), "{problems}");
     }
 
     #[test]

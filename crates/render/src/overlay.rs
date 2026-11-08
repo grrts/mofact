@@ -30,6 +30,10 @@ pub struct Overlay {
     /// and how many glyphs found no room in the atlas, all told: for tests
     /// that check words fit their controls in every language.
     pub runs: Vec<([f32; 4], usize)>,
+    /// With `keep_words` on, the words of each run too (tests only: it
+    /// allocates every frame).
+    pub keep_words: bool,
+    pub words: Vec<String>,
     /// Each panel this frame and the instance it starts at, so a test can
     /// tell which words lie under a later panel.
     pub panels: Vec<([f32; 4], usize)>,
@@ -74,6 +78,8 @@ impl Overlay {
             atlas,
             instances: Vec::new(),
             runs: Vec::new(),
+            keep_words: false,
+            words: Vec::new(),
             panels: Vec::new(),
             dropped: 0,
             fonts: [face(FONT), face(JAPANESE), face(CHINESE)],
@@ -105,6 +111,7 @@ impl Overlay {
     pub fn clear(&mut self) {
         self.instances.clear();
         self.runs.clear();
+        self.words.clear();
         self.panels.clear();
         // Between frames no quad points at a glyph, so they can go: room
         // for the next frame's, which come back as they are drawn.
@@ -222,6 +229,9 @@ impl Overlay {
         if w > 0.0 {
             let top = y - self.cap_height(px as f32);
             self.runs.push(([pos[0].round(), top, w, px as f32], first));
+            if self.keep_words {
+                self.words.push(text.to_string());
+            }
         }
         w
     }

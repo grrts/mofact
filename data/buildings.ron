@@ -31,6 +31,22 @@
         cost: [(item: "iron-plate", count: 1), (item: "wire", count: 2)]),
     (id: "wind-turbine", name: "Wind turbine", size: (1, 1), role: Generator(kw: 60.0),
         cost: [(item: "iron-plate", count: 10), (item: "gear", count: 5), (item: "wire", count: 5)]),
+    // The fog of war (S3): a powered radar lifts the fog from the nearest
+    // hidden patch of land (32 tiles a side) every `seconds_per_patch`,
+    // out to `reach` tiles, so far ore shows on the world map.
+    (id: "radar",     name: "Radar",     size: (2, 2), role: Radar(reach: 1200, seconds_per_patch: 1.0), power: 60.0,
+        cost: [(item: "iron-plate", count: 20), (item: "gear", count: 10), (item: "circuit", count: 10)]),
+    // Drones (T49, T50): a powered port keeps `drones` drones, which fly
+    // in a square `reach` tiles out from it each way. Ports whose squares
+    // meet make one network. Drones bring requester chests what they ask
+    // for from provider chests (or the hub) in the network, build the
+    // ghosts planned there, and take away what is marked to go.
+    (id: "drone-port", name: "Drone port", size: (2, 2), role: DronePort(drones: 4, reach: 25), power: 50.0,
+        cost: [(item: "steel", count: 20), (item: "advanced-circuit", count: 10), (item: "drone", count: 4)]),
+    (id: "provider-chest", name: "Provider chest", size: (1, 1), role: ProviderChest(capacity: 400),
+        cost: [(item: "steel", count: 5), (item: "circuit", count: 3)]),
+    (id: "requester-chest", name: "Requester chest", size: (1, 1), role: RequesterChest(capacity: 400),
+        cost: [(item: "steel", count: 5), (item: "circuit", count: 3)]),
     // Fluids (T31): pipes, tanks and underground pipes join into segments
     // holding one fluid each; pumps move fluid between segments, and long
     // segments slow the flow. `capacity` and `per_second` are fluid units.
@@ -75,6 +91,10 @@
         cost: [(item: "steel", count: 5), (item: "circuit", count: 5), (item: "brick", count: 5)]),
     (id: "locomotive", name: "Locomotive", size: (1, 1), role: Locomotive(tiles_per_second: 8.0, capacity: 200),
         cost: [(item: "steel", count: 20), (item: "motor", count: 10), (item: "circuit", count: 10)]),
+    // Oil by train (S5): a tank train fills from pipes beside a stop and
+    // empties into a pipe out of the stop's arrow. `capacity` is fluid units.
+    (id: "tank-train", name: "Tank train", size: (1, 1), role: Locomotive(tiles_per_second: 8.0, capacity: 2500, tank: true),
+        cost: [(item: "steel", count: 25), (item: "motor", count: 10), (item: "circuit", count: 10), (item: "iron-plate", count: 20)]),
     // Tier 4-5 (T53, T57): a furnace that smelts with power instead of fire,
     // solar panels that need no fuel, and an assembler three times as fast.
     (id: "electric-furnace", name: "Electric furnace", size: (1, 1), role: Crafter(categories: ["smelting"], speed: 2.0), power: 180.0,

@@ -298,6 +298,15 @@ impl Scene {
             let Some(sprite) = look.linked(&e.building, e.dir, setting(e), working, e.links) else {
                 continue;
             };
+            // A turbine on a grid turns; one no pole reaches stands still.
+            let sprite = match e.grid {
+                Some(_) => {
+                    let lag = f64::from(e.id.0 % 7) * 0.13;
+                    look.spinning(&e.building, seconds + lag, working)
+                        .unwrap_or(sprite)
+                }
+                None => sprite,
+            };
             let instance = Instance {
                 pos: [x, y],
                 size: [w, h],
@@ -730,6 +739,7 @@ mod tests {
 
     fn belt(x: i32) -> EntityView {
         EntityView {
+            request: None,
             id: EntityId(x as u32),
             building: "belt".into(),
             pos: TilePos::new(x, 0),
@@ -912,6 +922,7 @@ mod tests {
         let look = Look::new(&content());
         let (atlases, mut scene) = (look.atlases(), Scene::default());
         let furnace = |state| EntityView {
+            request: None,
             id: EntityId(9),
             building: "furnace".into(),
             pos: TilePos::new(2, 0),
@@ -955,6 +966,7 @@ mod tests {
         let look = Look::new(&content());
         let (atlases, mut scene) = (look.atlases(), Scene::default());
         let pipe = |fill: Option<f32>| EntityView {
+            request: None,
             id: EntityId(3),
             building: "pipe".into(),
             pos: TilePos::new(1, 0),

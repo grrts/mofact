@@ -12,7 +12,7 @@ use crate::slots::{Request, Store};
 use crate::sound::Sound;
 use mofact_core::content::Content;
 use mofact_core::geom::TilePos;
-use mofact_input::{CameraControl, Controls, Ground, Pointer, Tool};
+use mofact_input::{Blueprint, CameraControl, Controls, Ground, Pointer, Tool};
 use mofact_render::{Camera, Frame, Gpu, Look, Overlay, Renderer, Scene, Target};
 use mofact_sim::{Sim, SimHandle};
 use mofact_ui::{tr, trf, Action, Hud, SlotView, StoreView, View};
@@ -83,6 +83,10 @@ pub struct Game {
     crash: Option<String>,
     /// Text for the platform to put on the clipboard.
     pub clipboard: Option<String>,
+    /// The blueprint library (T51), and how many times it has changed, so
+    /// the platform knows when to keep it again.
+    blueprints: Vec<Blueprint>,
+    blueprints_rev: u64,
 }
 
 impl Game {
@@ -156,6 +160,8 @@ impl Game {
             haptic: None,
             crash: None,
             clipboard: None,
+            blueprints: Vec::new(),
+            blueprints_rev: 0,
             shown: content.clone(),
             shown_lang: mofact_ui::i18n::Lang::En,
             content,
@@ -163,6 +169,101 @@ impl Game {
             controls,
             latest: (0, Instant::now()),
         }
+    }
+
+    /// The blueprint library as text, to keep on the device, and a count
+    /// that goes up each time it changes.
+    pub fn blueprints(&self) -> (String, u64) {
+        (
+            mofact_input::blueprint::library_to_text(&self.blueprints),
+            self.blueprints_rev,
+        )
+    }
+
+    /// The blueprint library kept on the device, as a platform reads it at start.
+    pub fn set_blueprints(&mut self, text: &str) {
+        self.blueprints = mofact_input::blueprint::library_from_text(text);
+    }
+
+    /// The selection as a blueprint, and where its top-left corner is.
+    fn capture(&self) -> Option<(Blueprint, TilePos)> {
+        let latest = self.sim.latest();
+        let mut picked: Vec<_> = latest
+            .entities
+            .iter()
+            .filter(|e| self.controls.builder.selection.contains(&e.id))
+            .collect();
+        picked.sort_by_key(|e| e.id);
+        let corner = TilePos::new(
+            picked.iter().map(|e| e.pos.x).min()?,
+            picked.iter().map(|e| e.pos.y).min()?,
+        );
+        let size = |e: &&mofact_core::snapshot::EntityView| {
+            self.content
+                .buildings
+                .iter()
+                .find(|b| b.id == e.building)
+                .map_or(1, |b| b.size.0.max(b.size.1))
+        };
+        let bp = Blueprint::capture(
+            mofact_input::blueprint::next_name(&self.blueprints, tr("blueprint.name")),
+            picked
+                .iter()
+                .map(|e| (e.building.clone(), e.pos, size(e), e.dir, e.recipe.clone())),
+        );
+        Some((bp, corner))
+    }
+
+    /// Whether drone ports reach the middle of every building in `commands`
+    /// (T50), so a paste can be planned for drones to build.
+    fn drones_cover(&self, commands: &[mofact_core::command::Command]) -> bool {
+        use mofact_core::command::Command;
+        use mofact_core::content::BuildingRole;
+        let latest = self.sim.latest();
+        let size = |b: &mofact_core::ids::BuildingId| {
+            self.content
+                .buildings
+                .iter()
+                .find(|d| d.id == *b)
+                .map(|d| (d.size, &d.role))
+        };
+        let ports: Vec<([f32; 2], f32)> = latest
+            .entities
+            .iter()
+            .filter_map(|e| match size(&e.building)? {
+                ((w, h), BuildingRole::DronePort { reach, .. }) => Some((
+                    [
+                        e.pos.x as f32 + f32::from(w) / 2.0,
+                        e.pos.y as f32 + f32::from(h) / 2.0,
+                    ],
+                    f32::from(*reach),
+                )),
+                _ => None,
+            })
+            .collect();
+        !ports.is_empty()
+            && commands.iter().all(|c| match c {
+                Command::Place { building, pos, .. } => {
+                    let (w, h) = size(building).map_or((1, 1), |s| s.0);
+                    let m = [
+                        pos.x as f32 + f32::from(w) / 2.0,
+                        pos.y as f32 + f32::from(h) / 2.0,
+                    ];
+                    ports
+                        .iter()
+                        .any(|(p, r)| (p[0] - m[0]).abs() <= *r && (p[1] - m[1]).abs() <= *r)
+                }
+                _ => false,
+            })
+    }
+
+    /// The tile a blueprint's corner goes on to sit in the middle of the screen.
+    fn centred(&self, bp: &Blueprint) -> TilePos {
+        let [x, y] = self.controls.camera.center;
+        TilePos::new(
+            (x - bp.size.0 as f32 / 2.0).round() as i32,
+            (y - bp.size.1 as f32 / 2.0).round() as i32,
+        )
     }
 
     /// The language the player chose (T65): the device's, or one of their own.
@@ -280,6 +381,11 @@ impl Game {
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
+                if why == E::CannotAfford {
+                    let text = self.short_of();
+                    self.hud.toast(&text);
+                    continue;
+                }
                 self.hud.toast(tr(match why {
                     E::Blocked => "error.blocked",
                     E::CannotAfford => "error.cannot_afford",
@@ -401,14 +507,148 @@ impl Game {
                 }),
             );
         }
-        let ghosts = self.controls.builder.ghosts();
-        let recipe = self.controls.builder.recipe.as_ref();
+        // What drones are yet to build (T50).
         self.scene.ghosts(
             &self.look,
             atlases,
-            ghosts.iter().map(|g| (&g.building, g.tile, g.dir, recipe)),
+            latest
+                .ghosts
+                .iter()
+                .map(|g| (&g.building, g.pos, g.dir, g.recipe.as_ref())),
+        );
+        let ghosts = self.controls.builder.ghosts();
+        self.scene.ghosts(
+            &self.look,
+            atlases,
+            ghosts
+                .iter()
+                .map(|g| (&g.building, g.tile, g.dir, g.recipe.as_ref())),
         );
         self.overlay.clear();
+        crate::fog::draw(&mut self.overlay, &camera, target.size(), &latest.explored);
+        // The select tool's box, what it has selected, and where a
+        // blueprint in hand is blocked (T51).
+        {
+            let ppt = camera.pixels_per_tile;
+            let (sw, sh) = target.size();
+            let at = |t: TilePos| {
+                [
+                    (t.x as f32 - camera.center[0]) * ppt + sw as f32 / 2.0,
+                    (t.y as f32 - camera.center[1]) * ppt + sh as f32 / 2.0,
+                ]
+            };
+            let [ar, ag, ab, _] = mofact_render::palette::ACCENT;
+            for e in latest
+                .entities
+                .iter()
+                .filter(|e| self.controls.builder.selection.contains(&e.id))
+            {
+                let s = self
+                    .content
+                    .buildings
+                    .iter()
+                    .find(|b| b.id == e.building)
+                    .map_or(1, |b| b.size.0);
+                let s = f32::from(s) * ppt;
+                self.overlay
+                    .panel(at(e.pos), [s, s], ppt * 0.12, [ar, ag, ab, 0x60]);
+            }
+            if let Some((corner, (w, h))) = self.controls.builder.selecting() {
+                self.overlay.panel(
+                    at(corner),
+                    [w as f32 * ppt, h as f32 * ppt],
+                    ppt * 0.2,
+                    [ar, ag, ab, 0x38],
+                );
+            }
+            // Ghosts waiting for drones, edged in blue; what drones are to
+            // take down, edged in red (T50).
+            let size_of = |b: &mofact_core::ids::BuildingId| {
+                self.content
+                    .buildings
+                    .iter()
+                    .find(|d| d.id == *b)
+                    .map_or((1, 1), |d| d.size)
+            };
+            let [gr, gg, gb, _] = mofact_render::palette::GLASS;
+            for g in &latest.ghosts {
+                let (w, h) = size_of(&g.building);
+                let a = if g.coming { 0x50 } else { 0x28 };
+                self.overlay.panel(
+                    at(g.pos),
+                    [f32::from(w) * ppt, f32::from(h) * ppt],
+                    ppt * 0.12,
+                    [gr, gg, gb, a],
+                );
+            }
+            for e in latest
+                .entities
+                .iter()
+                .filter(|e| latest.marked.contains(&e.id))
+            {
+                let (w, h) = size_of(&e.building);
+                self.overlay.panel(
+                    at(e.pos),
+                    [f32::from(w) * ppt, f32::from(h) * ppt],
+                    ppt * 0.12,
+                    [0xff, 0x5d, 0x5d, 0x50],
+                );
+            }
+            self.built.update(&latest);
+            for t in self.controls.builder.blocked(&self.built) {
+                self.overlay
+                    .panel(at(t), [ppt, ppt], ppt * 0.12, [0xff, 0x5d, 0x5d, 0x80]);
+            }
+        }
+        // Drones in flight (T49), over everything on the ground: a shadow,
+        // the drone, and what it carries hung under it.
+        {
+            let ppt = camera.pixels_per_tile;
+            let (sw, sh) = target.size();
+            let same = prev.drones.len() == latest.drones.len();
+            for (i, d) in latest.drones.iter().enumerate() {
+                let p = if same {
+                    let a = prev.drones[i].at;
+                    [
+                        a[0] + (d.at[0] - a[0]) * alpha,
+                        a[1] + (d.at[1] - a[1]) * alpha,
+                    ]
+                } else {
+                    d.at
+                };
+                let x = (p[0] - camera.center[0]) * ppt + sw as f32 / 2.0;
+                let y = (p[1] - camera.center[1]) * ppt + sh as f32 / 2.0;
+                let s = ppt * 0.7;
+                self.overlay.panel(
+                    [x - s * 0.3 + ppt * 0.15, y - s * 0.15 + ppt * 0.3],
+                    [s * 0.6, s * 0.3],
+                    s * 0.15,
+                    [0, 0, 0, 0x50],
+                );
+                if let Some((sprite, _)) = self.look.item(&mofact_core::ids::ItemId::from("drone"))
+                {
+                    self.overlay
+                        .icon(sprite, [x - s / 2.0, y - s / 2.0], s, [255, 255, 255, 255]);
+                }
+                let load = d
+                    .cargo
+                    .as_ref()
+                    .and_then(|c| self.look.item(c))
+                    .map(|(sprite, _)| sprite.to_owned())
+                    .or_else(|| {
+                        let b = d.building.as_ref()?;
+                        let sprite =
+                            self.look
+                                .sprite(b, mofact_core::geom::Dir::East, None, false)?;
+                        Some(sprite.to_owned())
+                    });
+                if let Some(sprite) = load {
+                    let c = s * 0.45;
+                    self.overlay
+                        .icon(&sprite, [x - c / 2.0, y + s * 0.2], c, [255, 255, 255, 255]);
+                }
+            }
+        }
         self.controls.slop = 12.0 * scale.max(0.5);
         // What a remove drag has marked, in red, before it goes.
         for id in self.controls.builder.marked() {
@@ -443,7 +683,9 @@ impl Game {
                 scale,
                 &latest,
             );
-            let patches = self.ore.patches(&camera, target.size());
+            // Patches under the fog stay unknown.
+            let mut patches = self.ore.patches(&camera, target.size());
+            patches.retain(|(p, _)| crate::fog::charted(&latest.explored, p.center));
             crate::worldmap::patches(
                 &mut self.overlay,
                 &self.look,
@@ -469,9 +711,19 @@ impl Game {
             self.overlay
                 .panel([x, y], [ppt, ppt], ppt * 0.3, [0xff, 0x5d, 0x5d, 0x70]);
         }
+        power_marks(
+            &mut self.overlay,
+            &self.content,
+            &latest,
+            &camera,
+            target.size(),
+            scale,
+        );
+        let panels = self.hud.panels();
         let nudge = coach_marks(
             &mut self.overlay,
             coach.as_ref(),
+            &panels,
             &camera,
             target.size(),
             scale,
@@ -498,6 +750,8 @@ impl Game {
             slots: &self.slots,
             store: &self.store,
             crash: self.crash.is_some(),
+            selection: builder.selection.len(),
+            blueprints: &self.blueprints,
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -554,6 +808,49 @@ impl Game {
     }
 
     /// Do what the HUD asks.
+    /// What the building in hand still needs, for a refusal that says so:
+    /// "A Lab needs 10 Brick, 5 Circuit more."
+    fn short_of(&self) -> String {
+        let id = match &self.controls.builder.tool {
+            Tool::Place(b) => b.clone(),
+            Tool::Belt => self.controls.builder.belt.clone(),
+            _ => return tr("error.cannot_afford").into(),
+        };
+        let Some(def) = self.shown.buildings.iter().find(|b| b.id == id) else {
+            return tr("error.cannot_afford").into();
+        };
+        let latest = self.sim.latest();
+        let have = |item: &mofact_core::ids::ItemId| {
+            latest
+                .stock
+                .iter()
+                .find(|(i, _)| i == item)
+                .map_or(0, |(_, n)| *n)
+        };
+        let missing: Vec<String> = def
+            .cost
+            .iter()
+            .filter(|c| have(&c.item) < c.count)
+            .map(|c| {
+                let name = self
+                    .shown
+                    .items
+                    .iter()
+                    .find(|i| i.id == c.item)
+                    .map_or(c.item.as_str(), |i| i.name.as_str());
+                trf("error.short_item", &[&(c.count - have(&c.item)), &name])
+            })
+            .collect();
+        if missing.is_empty() {
+            return tr("error.cannot_afford").into();
+        }
+        let missing: Vec<&str> = missing.iter().map(String::as_str).collect();
+        trf(
+            "error.short_of",
+            &[&def.name, &mofact_ui::i18n::join(&missing)],
+        )
+    }
+
     fn act(&mut self, action: Action) {
         match action {
             Action::Tool(tool) => self.controls.builder.set_tool(tool),
@@ -646,6 +943,92 @@ impl Game {
                 }
             }
             Action::Cancel => self.controls.builder.cancel(),
+            Action::Copy => {
+                if let Some((bp, corner)) = self.capture() {
+                    // Beside the original, or mid-screen if that is out of sight.
+                    let beside = TilePos::new(corner.x + bp.size.0 + 1, corner.y);
+                    let cam = &self.controls.camera;
+                    let mid = cam.world_at([0.0, 0.0]);
+                    let far = cam.world_at(self.target.as_ref().map_or([1.0, 1.0], |t| {
+                        let (w, h) = t.size();
+                        [w as f32, h as f32]
+                    }));
+                    let seen = (beside.x as f32) >= mid[0]
+                        && ((beside.x + bp.size.0) as f32) <= far[0]
+                        && (beside.y as f32) >= mid[1]
+                        && ((beside.y + bp.size.1) as f32) <= far[1];
+                    let at = if seen { beside } else { self.centred(&bp) };
+                    self.controls.builder.hold(bp, at, Vec::new());
+                }
+            }
+            Action::Cut => {
+                if let Some((bp, corner)) = self.capture() {
+                    let moving = self.controls.builder.selection.clone();
+                    self.controls.builder.hold(bp, corner, moving);
+                }
+            }
+            Action::DeleteSelection => {
+                let commands = self
+                    .controls
+                    .builder
+                    .selection
+                    .iter()
+                    .map(|&entity| mofact_core::command::Command::Remove { entity })
+                    .collect();
+                self.sim.send_all(commands);
+                self.controls.builder.set_tool(Tool::Select);
+            }
+            Action::SaveBlueprint => {
+                if self.blueprints.len() >= mofact_input::blueprint::LIBRARY_SIZE {
+                    self.hud.toast(tr("toast.library_full"));
+                } else if let Some((bp, _)) = self.capture() {
+                    self.hud.toast(trf("toast.blueprint_saved", &[&bp.name]));
+                    self.blueprints.insert(0, bp);
+                    self.blueprints_rev += 1;
+                }
+            }
+            Action::PlacePaste => {
+                self.built.update(&self.sim.latest());
+                if self.controls.builder.blocked(&self.built).is_empty() {
+                    let mut commands = self.controls.builder.build_paste();
+                    // Where drones reach, they build it as the stock comes
+                    // in (T50); a move is always done at once.
+                    if self.drones_cover(&commands) {
+                        self.hud.toast(tr("toast.planned"));
+                        for c in &mut commands {
+                            if let mofact_core::command::Command::Place {
+                                building,
+                                pos,
+                                dir,
+                                recipe,
+                            } = c.clone()
+                            {
+                                *c = mofact_core::command::Command::Plan {
+                                    building,
+                                    pos,
+                                    dir,
+                                    recipe,
+                                };
+                            }
+                        }
+                    }
+                    self.sim.send_all(commands);
+                } else {
+                    self.hud.toast(tr("toast.paste_blocked"));
+                }
+            }
+            Action::Paste(i) => {
+                if let Some(bp) = self.blueprints.get(i).cloned() {
+                    let at = self.centred(&bp);
+                    self.controls.builder.hold(bp, at, Vec::new());
+                }
+            }
+            Action::ForgetBlueprint(i) => {
+                if i < self.blueprints.len() {
+                    self.blueprints.remove(i);
+                    self.blueprints_rev += 1;
+                }
+            }
             // A problem from the list: look at it, with the hand, so its
             // inspect sheet (opened by the HUD) says what's wrong.
             Action::Mute(muted) => self.sound.set_muted(muted),
@@ -857,6 +1240,7 @@ pub fn ore_for(content: &Content, scenario: &mofact_headless::Scenario, seed: u6
 fn coach_marks(
     o: &mut Overlay,
     coach: Option<&Coach>,
+    panels: &[[f32; 4]],
     camera: &Camera,
     (sw, sh): (u32, u32),
     scale: f32,
@@ -870,15 +1254,46 @@ fn coach_marks(
         ]
     };
     let px = 13.0 * scale;
-    // A label centred on `mid`, its bottom edge at `y` (or top edge, `below`).
-    let label = |o: &mut Overlay, text: &str, mid: f32, y: f32, below: bool, ink: [u8; 4]| {
-        let (pad, h) = (8.0 * scale, 24.0 * scale);
-        let w = o.measure(text, px) + 2.0 * pad;
-        let x = (mid - w / 2.0).clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
-        let top = if below { y } else { y - h };
-        o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
-        o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
-    };
+    // A label centred on `mid`, above the span `ys` (top and bottom on
+    // screen), or below it when `below`. Where the HUD's cards or a label
+    // already drawn cover that spot (a goal card over the hub on a phone
+    // held sideways), it tries the other side, then each side slid clear
+    // along the row, and keeps its first spot if nothing is clear.
+    let mut taken: Vec<[f32; 4]> = panels.to_vec();
+    let mut label =
+        |o: &mut Overlay, text: &str, mid: f32, ys: [f32; 2], below: bool, ink: [u8; 4]| {
+            let (pad, h, gap) = (8.0 * scale, 24.0 * scale, 4.0 * scale);
+            let w = o.measure(text, px) + 2.0 * pad;
+            let fit = |x: f32| x.clamp(4.0 * scale, sw as f32 - w - 4.0 * scale);
+            let x0 = fit(mid - w / 2.0);
+            let top_of = |below: bool| if below { ys[1] + gap } else { ys[0] - gap - h };
+            let over = |x: f32, top: f32, r: &[f32; 4]| {
+                x < r[0] + r[2] && x + w > r[0] && top < r[1] + r[3] && top + h > r[1]
+            };
+            let clear = |x: f32, top: f32| {
+                top >= 0.0 && top + h <= sh as f32 && !taken.iter().any(|r| over(x, top, r))
+            };
+            let mut spot = None;
+            'find: for side in [below, !below] {
+                let top = top_of(side);
+                let mut xs = vec![x0];
+                for r in taken.iter().filter(|r| over(x0, top, r)) {
+                    xs.push(fit(r[0] - w - gap));
+                    xs.push(fit(r[0] + r[2] + gap));
+                }
+                for x in xs {
+                    // Not so far along that it stops pointing at its building.
+                    if (x - x0).abs() <= w * 0.75 && clear(x, top) {
+                        spot = Some((x, top));
+                        break 'find;
+                    }
+                }
+            }
+            let (x, top) = spot.unwrap_or((x0, top_of(below)));
+            taken.push([x, top, w, h]);
+            o.panel([x, top], [w, h], h / 2.0, [0x1d, 0x23, 0x2a, 0xf0]);
+            o.text(text, [x + pad, top + (h + o.cap_height(px)) / 2.0], px, ink);
+        };
     let accent = [0xff, 0xd1, 0x66, 0xff];
     match coach? {
         Coach::Labels(labels) => {
@@ -889,12 +1304,8 @@ fn coach_marks(
             for (pos, (w, h), text, below) in labels {
                 let p = at(*pos);
                 let mid = p[0] + f32::from(*w) * ppt / 2.0;
-                let y = if *below {
-                    p[1] + f32::from(*h) * ppt + 4.0 * scale
-                } else {
-                    p[1] - 4.0 * scale
-                };
-                label(o, text, mid, y, *below, [0xe9, 0xed, 0xf0, 0xff]);
+                let ys = [p[1], p[1] + f32::from(*h) * ppt];
+                label(o, text, mid, ys, *below, [0xe9, 0xed, 0xf0, 0xff]);
             }
             None
         }
@@ -915,13 +1326,111 @@ fn coach_marks(
             let first = at(step.tiles[0]);
             let last = at(*step.tiles.last().unwrap_or(&step.tiles[0]));
             let mid = (first[0] + last[0]) / 2.0 + ppt / 2.0;
-            let y = if *below {
-                first[1].max(last[1]) + ppt + 6.0 * scale
-            } else {
-                first[1].min(last[1]) - 6.0 * scale
-            };
-            label(o, step.say(), mid, y, *below, accent);
+            let ys = [
+                first[1].min(last[1]) - 2.0 * scale,
+                first[1].max(last[1]) + ppt + 2.0 * scale,
+            ];
+            label(o, step.say(), mid, ys, *below, accent);
             Some(step.tool())
+        }
+    }
+}
+
+/// Power made visible on the map: wires between poles in reach of each
+/// other and from each pole to what it powers (as the sim joins them: the
+/// first pole whose supply square covers it), and a "No power" tag on
+/// anything that needs power and has none.
+fn power_marks(
+    o: &mut Overlay,
+    content: &Content,
+    snap: &mofact_core::snapshot::Snapshot,
+    camera: &Camera,
+    (sw, sh): (u32, u32),
+    scale: f32,
+) {
+    use mofact_core::content::BuildingRole as R;
+    let ppt = camera.pixels_per_tile;
+    let def = |e: &mofact_core::snapshot::EntityView| {
+        content.buildings.iter().find(|b| b.id == e.building)
+    };
+    // The middle of an entity on screen, a little up for a pole's top.
+    let mid = |e: &mofact_core::snapshot::EntityView, lift: f32| {
+        let (w, h) = def(e).map_or((1, 1), |d| d.size);
+        [
+            (e.pos.x as f32 + f32::from(w) / 2.0 - camera.center[0]) * ppt + sw as f32 / 2.0,
+            (e.pos.y as f32 + f32::from(h) / 2.0 - lift - camera.center[1]) * ppt + sh as f32 / 2.0,
+        ]
+    };
+    let poles: Vec<_> = snap
+        .entities
+        .iter()
+        .filter_map(|e| match def(e)?.role {
+            R::Pole { wire, supply } => Some((e, wire, supply)),
+            _ => None,
+        })
+        .collect();
+    let thick = (2.0 * scale).max(ppt * 0.06);
+    let wire = |o: &mut Overlay, a: [f32; 2], b: [f32; 2], ink: [u8; 4]| {
+        let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
+        let len = dx.hypot(dy);
+        // Off screen both ends: nothing to draw.
+        let out = |p: [f32; 2]| p[0] < 0.0 || p[1] < 0.0 || p[0] > sw as f32 || p[1] > sh as f32;
+        if out(a) && out(b) && len < (sw + sh) as f32 {
+            return;
+        }
+        let steps = (len / (thick * 0.6)).ceil().max(1.0) as usize;
+        for k in 0..=steps {
+            let f = k as f32 / steps as f32;
+            let p = [a[0] + dx * f - thick / 2.0, a[1] + dy * f - thick / 2.0];
+            o.panel(p, [thick, thick], thick / 2.0, ink);
+        }
+    };
+    let ink = [0x24, 0x1c, 0x16, 0xe0];
+    let lift = 0.25;
+    for (i, (a, wa, _)) in poles.iter().enumerate() {
+        for (b, wb, _) in &poles[i + 1..] {
+            let reach = i32::from((*wa).min(*wb));
+            if (a.pos.x - b.pos.x).abs().max((a.pos.y - b.pos.y).abs()) <= reach {
+                wire(o, mid(a, lift), mid(b, lift), ink);
+            }
+        }
+    }
+    for e in &snap.entities {
+        let Some(d) = def(e) else { continue };
+        let powered = d.power > 0.0 || matches!(d.role, R::Generator { .. } | R::Engine { .. });
+        if !powered {
+            continue;
+        }
+        let (w, h) = (i32::from(d.size.0), i32::from(d.size.1));
+        let covering = poles.iter().find(|(p, _, s)| {
+            let s = i32::from(*s);
+            e.pos.x <= p.pos.x + s
+                && e.pos.x + w > p.pos.x - s
+                && e.pos.y <= p.pos.y + s
+                && e.pos.y + h > p.pos.y - s
+        });
+        if let Some((p, _, _)) = covering {
+            wire(o, mid(p, lift), mid(e, 0.0), ink);
+        }
+        if e.state == mofact_core::snapshot::MachineState::NoPower && ppt >= 14.0 * scale {
+            let px = 11.0 * scale;
+            let text = tr("state.no_power");
+            let (pad, ch) = (6.0 * scale, 18.0 * scale);
+            let tw = o.measure(text, px) + 2.0 * pad;
+            let c = mid(e, 0.0);
+            let top = c[1] - f32::from(d.size.1) * ppt / 2.0 - ch - 2.0 * scale;
+            o.panel(
+                [c[0] - tw / 2.0, top],
+                [tw, ch],
+                ch / 2.0,
+                [0xff, 0x5d, 0x5d, 0xf0],
+            );
+            o.text(
+                text,
+                [c[0] - tw / 2.0 + pad, top + (ch + o.cap_height(px)) / 2.0],
+                px,
+                [0x1b, 0x1f, 0x24, 0xff],
+            );
         }
     }
 }

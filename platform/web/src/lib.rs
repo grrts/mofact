@@ -46,6 +46,9 @@ impl mofact::crash::Keep for CrashKeep {
     }
 }
 const LANGUAGE_KEY: &str = "mofact-language";
+/// The blueprint library (T51), as RON text: a setting of this browser,
+/// shared by every save slot.
+const BLUEPRINTS_KEY: &str = "mofact-blueprints";
 /// Milliseconds between autosaves.
 const SAVE_EVERY: f64 = 30_000.0;
 
@@ -71,6 +74,8 @@ struct Shell {
     large_text: bool,
     reduce_motion: bool,
     language: mofact_ui::i18n::Choice,
+    /// The blueprint library's change count as last stored.
+    blueprints: u64,
 }
 
 impl Shell {
@@ -142,6 +147,13 @@ impl Shell {
             self.language = language;
             if let Ok(Some(st)) = self.window.local_storage() {
                 let _ = st.set_item(LANGUAGE_KEY, language.code());
+            }
+        }
+        let (_, rev) = self.game.blueprints();
+        if rev != self.blueprints {
+            self.blueprints = rev;
+            if let Ok(Some(st)) = self.window.local_storage() {
+                let _ = st.set_item(BLUEPRINTS_KEY, &self.game.blueprints().0);
             }
         }
         if self.game.wants_slots() {
@@ -422,6 +434,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         large_text: false,
         reduce_motion: false,
         language: mofact_ui::i18n::Choice::Device,
+        blueprints: 0,
     }));
     {
         let mut s = shell.borrow_mut();
@@ -434,6 +447,14 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
                 .as_deref()
                 == Some("1")
         };
+        if let Some(text) = window
+            .local_storage()
+            .ok()
+            .flatten()
+            .and_then(|st| st.get_item(BLUEPRINTS_KEY).ok().flatten())
+        {
+            s.game.set_blueprints(&text);
+        }
         if stored(LOW_POWER_KEY) {
             s.game.set_low_power(true);
             s.low_power = true;
