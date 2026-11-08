@@ -86,6 +86,10 @@ function __wbg_get_imports() {
             const ret = arg0.altKey;
             return ret;
         },
+        __wbg_apply_bfe2b07b146427e2: function() { return handleError(function (arg0, arg1, arg2) {
+            const ret = arg0.apply(arg1, arg2);
+            return ret;
+        }, arguments); },
         __wbg_attachShader_3ed301cc92db59f6: function(arg0, arg1, arg2) {
             arg0.attachShader(arg1, arg2);
         },
@@ -249,10 +253,6 @@ function __wbg_get_imports() {
         },
         __wbg_clientY_3371139730cd6f74: function(arg0) {
             const ret = arg0.clientY;
-            return ret;
-        },
-        __wbg_clipboard_047ad3d952a13066: function(arg0) {
-            const ret = arg0.clipboard;
             return ret;
         },
         __wbg_colorMask_24c1b6c3ec53f8c8: function(arg0, arg1, arg2, arg3, arg4) {
@@ -767,6 +767,10 @@ function __wbg_get_imports() {
             const ret = arg0[arg1 >>> 0];
             return isLikeNone(ret) ? 0 : addToExternrefTable0(ret);
         },
+        __wbg_get_2080c49015e35254: function() { return handleError(function (arg0, arg1) {
+            const ret = Reflect.get(arg0, arg1);
+            return ret;
+        }, arguments); },
         __wbg_get_unchecked_e6325ad374eff861: function(arg0, arg1) {
             const ret = arg0[arg1 >>> 0];
             return ret;
@@ -2115,10 +2119,6 @@ function __wbg_get_imports() {
         __wbg_vertexAttribPointer_9e0e4517b8d274bd: function(arg0, arg1, arg2, arg3, arg4, arg5, arg6) {
             arg0.vertexAttribPointer(arg1 >>> 0, arg2, arg3 >>> 0, arg4 !== 0, arg5, arg6);
         },
-        __wbg_vibrate_51fd3db3a9ec010c: function(arg0, arg1) {
-            const ret = arg0.vibrate(arg1 >>> 0);
-            return ret;
-        },
         __wbg_viewport_aaac6dd8cff1831a: function(arg0, arg1, arg2, arg3, arg4) {
             arg0.viewport(arg1, arg2, arg3, arg4);
         },
@@ -2140,10 +2140,6 @@ function __wbg_get_imports() {
         __wbg_writeBuffer_d7640e64ceb69371: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5, arg6) {
             arg0.writeBuffer(arg1, arg2, getArrayU8FromWasm0(arg3, arg4), arg5, arg6);
         }, arguments); },
-        __wbg_writeText_6b6a85b68a7dd3eb: function(arg0, arg1, arg2) {
-            const ret = arg0.writeText(getStringFromWasm0(arg1, arg2));
-            return ret;
-        },
         __wbg_writeTexture_dba1e801af087dfd: function() { return handleError(function (arg0, arg1, arg2, arg3, arg4, arg5) {
             arg0.writeTexture(arg1, getArrayU8FromWasm0(arg2, arg3), arg4, arg5);
         }, arguments); },
