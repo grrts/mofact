@@ -9,6 +9,8 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <title>Mofact</title>
+<link rel="icon" type="image/png" href="favicon.png">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <style>
   html, body { margin: 0; height: 100%; background: #1b1f24; overflow: hidden; }
   /* The game takes every touch; the page never scrolls or zooms. */
@@ -48,6 +50,40 @@ const status = document.getElementById('status');
 const label = document.getElementById('build');
 const update = document.getElementById('update');
 
+// The page's own few words, in the game's languages, picked as the game
+// picks (`?lang=ja`, then the browser's languages), before it has loaded.
+const WORDS = {
+  en: { loading: 'Loading Mofact…', update: 'New version ready · tap to reload',
+        failed: "Mofact couldn't start: {0}. It needs a browser with WebGL2." },
+  de: { loading: 'Mofact lädt…', update: 'Neue Version bereit · zum Neuladen tippen',
+        failed: 'Mofact konnte nicht starten: {0}. Es braucht einen Browser mit WebGL2.' },
+  fr: { loading: 'Chargement de Mofact…', update: 'Nouvelle version prête · touchez pour recharger',
+        failed: "Mofact n'a pas pu démarrer : {0}. Il faut un navigateur avec WebGL2." },
+  es: { loading: 'Cargando Mofact…', update: 'Nueva versión lista · toca para recargar',
+        failed: 'Mofact no pudo iniciarse: {0}. Necesita un navegador con WebGL2.' },
+  'pt-BR': { loading: 'Carregando Mofact…', update: 'Nova versão pronta · toque para recarregar',
+        failed: 'O Mofact não conseguiu iniciar: {0}. Ele precisa de um navegador com WebGL2.' },
+  ja: { loading: 'Mofact を読み込み中…', update: '新しいバージョンがあります · タップして再読み込み',
+        failed: 'Mofact を起動できませんでした：{0}。WebGL2 に対応したブラウザが必要です。' },
+  'zh-Hans': { loading: '正在加载 Mofact…', update: '新版本已就绪 · 点按重新加载',
+        failed: 'Mofact 无法启动：{0}。需要支持 WebGL2 的浏览器。' },
+};
+const lang = (() => {
+  const asked = new URLSearchParams(location.search).get('lang');
+  for (const tag of [asked, ...(navigator.languages ?? []), navigator.language]) {
+    if (!tag) continue;
+    const t = tag.toLowerCase();
+    if (t.startsWith('zh')) return 'zh-Hans';
+    if (t.startsWith('pt')) return 'pt-BR';
+    const base = t.split('-')[0];
+    if (WORDS[base]) return base;
+  }
+  return 'en';
+})();
+const words = WORDS[lang];
+document.documentElement.lang = lang;
+status.textContent = words.loading;
+
 async function current() {
   const r = await fetch(`version.json?t=${Date.now()}`, { cache: 'no-store' });
   if (!r.ok) throw new Error(`version.json: ${r.status}`);
@@ -80,7 +116,7 @@ try {
   document.getElementById('game').focus();
 } catch (e) {
   console.error(e);
-  status.textContent = `Mofact couldn't start: ${e && e.message ? e.message : e}. It needs a browser with WebGL2.`;
+  status.textContent = words.failed.replace('{0}', e && e.message ? e.message : e);
 }
 
 // A newer deploy offers itself; the game saves as the page goes.
@@ -89,7 +125,7 @@ async function check() {
   try {
     const latest = await current();
     if (latest.build && latest.build !== running.build) {
-      update.textContent = `New version ready (${latest.build}) · tap to reload`;
+      update.textContent = words.update;
       update.style.display = 'block';
     }
   } catch (e) { /* offline: try again later */ }
