@@ -862,8 +862,10 @@ pub fn badge(c: &mut Canvas, r: f32, starved: bool, safe: bool) {
     }
 }
 
-/// A power pole seen from above: a post with a cross arm and insulators,
-/// small in its tile so the ground and belts around it stay readable.
+/// A power pole seen from above: a post with a cross arm and, on top, the
+/// porcelain insulator every cable is tied to (the game draws cables from
+/// the middle of the tile), small in its tile so the ground and belts
+/// around it stay readable.
 pub fn pole(c: &mut Canvas, z: f32, fine: bool) {
     let s = z;
     let (cx, cy) = (s / 2.0, s / 2.0);
@@ -875,19 +877,24 @@ pub fn pole(c: &mut Canvas, z: f32, fine: bool) {
         arm * 1.6,
     );
     c.line(&[(s * 0.22, cy), (s * 0.78, cy)], pal::POLE, arm);
-    c.fill_circle(cx, cy, s * 0.13, pal::MACHINE_EDGE);
-    c.fill_circle(cx, cy, s * 0.1, pal::POLE);
+    c.fill_circle(cx, cy, s * 0.15, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.12, pal::POLE);
+    // The insulator: a glazed cap, ringed, catching the light up-left.
+    c.fill_circle(cx, cy, s * 0.085, pal::MACHINE_EDGE);
+    c.fill_circle(cx, cy, s * 0.07, pal::PORCELAIN);
     if fine {
-        for x in [0.22, 0.78] {
-            c.fill_circle(x * s, cy, s * 0.06, pal::MACHINE_EDGE);
-            c.fill_circle(x * s, cy, s * 0.04, pal::ACCENT);
+        // Bolts where the arm meets the post, and its two ends.
+        for x in [0.25, 0.75] {
+            c.fill_circle(x * s, cy, s * 0.03, pal::MACHINE_EDGE);
         }
-        c.fill_circle(
-            cx - s * 0.03,
-            cy - s * 0.03,
-            s * 0.035,
-            shade(pal::POLE, 0.25),
+        c.stroke_circle(
+            cx,
+            cy,
+            s * 0.045,
+            shade(pal::PORCELAIN, -0.25),
+            (z * 0.015).max(0.75),
         );
+        c.fill_circle(cx - s * 0.025, cy - s * 0.025, s * 0.02, pal::WHITE);
     }
 }
 

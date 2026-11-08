@@ -5,6 +5,9 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Power cables:** wires hang between poles as sagging cables with a
+  highlight and a shadow on the ground, tied to an insulator on top of each
+  pole and to a socket on every building that uses or makes power.
 - **Blueprints:** a Select tool drags a box round buildings to copy, cut,
   delete or save them; a blueprint in hand slides with a finger, turns, and
   builds with one tap, and the library keeps up to 24 on the device.

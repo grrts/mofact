@@ -50,6 +50,8 @@ pub const PIN: Rgba = [0xe6, 0xc1, 0x5a, 0xff];
 pub const CHIP: Rgba = [0x1f, 0x5a, 0x35, 0xff];
 /// Power poles' weathered wood, and wind turbine blades.
 pub const POLE: Rgba = [0x8a, 0x6a, 0x48, 0xff];
+/// The glazed insulators power cables are tied to.
+pub const PORCELAIN: Rgba = [0xe2, 0xdc, 0xcf, 0xff];
 pub const BLADE: Rgba = [0xd8, 0xde, 0xe4, 0xff];
 /// Pipes' steel, its lit edge, and the empty channel inside.
 pub const PIPE: Rgba = [0x6e, 0x7d, 0x8b, 0xff];

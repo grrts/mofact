@@ -131,6 +131,23 @@ impl Overlay {
         });
     }
 
+    /// A filled disc of `diameter` pixels centred on `center`, in one quad:
+    /// a ninth of what a round `panel` costs, for things drawn as many dots
+    /// (power cables).
+    pub fn dot(&mut self, center: [f32; 2], diameter: f32, color: Rgba) {
+        let Some(uv) = self.atlas.get("panel") else {
+            return;
+        };
+        let r = diameter / 2.0;
+        self.quad(
+            [center[0] - r, center[1] - r],
+            [diameter, diameter],
+            uv,
+            color,
+            0,
+        );
+    }
+
     /// A filled rectangle with corners of `radius` pixels (up to 12).
     pub fn panel(&mut self, pos: [f32; 2], size: [f32; 2], radius: f32, color: Rgba) {
         let Some(uv) = self.atlas.get("panel") else {
