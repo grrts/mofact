@@ -233,6 +233,7 @@ mod tests {
             dir: Dir::East,
             recipe: None,
             ore: None,
+            ore_left: None,
             grid: None,
             exit: false,
             fluid: None,

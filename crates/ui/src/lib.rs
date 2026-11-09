@@ -4106,9 +4106,11 @@ fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
             .map_or(id.as_str().to_owned(), |i| i18n::in_sentence(&i.name))
     };
     match def.map(|d| &d.role) {
-        Some(BuildingRole::Miner { .. }) => match &e.ore {
-            Some(ore) => trf("inspect.mines", &[&name(ore)]),
-            None => tr("inspect.drill").into(),
+        Some(BuildingRole::Miner { .. }) => match (&e.ore, e.ore_left) {
+            (_, Some(0)) => tr("inspect.mined_out").into(),
+            (Some(ore), Some(left)) => trf("inspect.mines_left", &[&name(ore), &left]),
+            (Some(ore), None) => trf("inspect.mines", &[&name(ore)]),
+            (None, _) => tr("inspect.drill").into(),
         },
         Some(BuildingRole::Lab { .. }) => {
             let research = &view.snapshot.research;

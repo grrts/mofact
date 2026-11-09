@@ -746,6 +746,7 @@ mod tests {
             dir: Dir::East,
             recipe: None,
             ore: None,
+            ore_left: None,
             grid: None,
             exit: false,
             fluid: None,
@@ -929,6 +930,7 @@ mod tests {
             dir: Dir::South,
             recipe: Some("copper-plate".into()),
             ore: None,
+            ore_left: None,
             grid: None,
             exit: false,
             fluid: None,
@@ -973,6 +975,7 @@ mod tests {
             dir: Dir::East,
             recipe: None,
             ore: None,
+            ore_left: None,
             grid: None,
             exit: false,
             fluid: fill.map(|fill| FluidView {

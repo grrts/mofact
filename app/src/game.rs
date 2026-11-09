@@ -53,6 +53,9 @@ pub struct Game {
     built: Built,
     /// When the latest snapshot arrived, for smoothing between ticks.
     latest: (u64, Instant),
+    /// Drills mined out at the last snapshot, to say so when one more
+    /// runs dry; none until the first snapshot, so a loaded game is quiet.
+    dry: Option<usize>,
     /// What it sounds like; the platform plays [`Sound::audio`].
     pub sound: Sound,
     /// When the game started showing, the clock machine animations run on.
@@ -174,6 +177,7 @@ impl Game {
             ore,
             controls,
             latest: (0, Instant::now()),
+            dry: None,
         }
     }
 
@@ -425,6 +429,15 @@ impl Game {
         let (prev, latest) = self.sim.snapshots();
         if latest.tick != self.latest.0 {
             self.latest = (latest.tick, Instant::now());
+            let dry = latest
+                .entities
+                .iter()
+                .filter(|e| e.ore_left == Some(0))
+                .count();
+            if self.dry.is_some_and(|was| dry > was) {
+                self.hud.toast(tr("toast.mined_out"));
+            }
+            self.dry = Some(dry);
         }
         let alpha = (self.latest.1.elapsed().as_secs_f32() / mofact_core::TICK_SECONDS).min(1.0);
         let camera = Camera {

@@ -14,6 +14,8 @@ pub enum Trouble {
     ShortPower,
     /// A powered machine off any grid, or on one that gives nothing.
     NoPower,
+    /// A drill with no ore left in reach: it has to move.
+    MinedOut,
     /// A machine waiting for something to arrive.
     Starved,
     /// A machine that can't get rid of what it made.
@@ -22,7 +24,13 @@ pub enum Trouble {
     EmptyPipe,
     /// A crafter with no recipe and nothing arriving to pick one.
     Idle,
+    /// A drill still digging, with little ore left in reach.
+    LowOre,
 }
+
+/// Ore left in a drill's reach under which it counts as running low:
+/// about ten minutes of digging for a first drill.
+pub const LOW_ORE: u32 = 500;
 
 /// One line of the list: the same trouble with the same kind of building.
 #[derive(Clone, Debug, PartialEq)]
@@ -84,7 +92,12 @@ pub fn find(view: &View) -> Vec<Problem> {
                 | BuildingRole::UndergroundPipe { .. }
         );
         let crafter = matches!(def.role, BuildingRole::Crafter { .. });
+        let drill = matches!(def.role, BuildingRole::Miner { .. });
         let trouble = match e.state {
+            _ if drill && e.ore_left == Some(0) => Trouble::MinedOut,
+            MachineState::Working if drill && e.ore_left.is_some_and(|n| n < LOW_ORE) => {
+                Trouble::LowOre
+            }
             _ if pipe => {
                 if e.fluid.is_some() {
                     continue;
@@ -111,6 +124,8 @@ pub fn find(view: &View) -> Vec<Problem> {
                     Trouble::Starved => "trouble.starved",
                     Trouble::Blocked => "trouble.blocked",
                     Trouble::EmptyPipe => "trouble.empty",
+                    Trouble::MinedOut => "trouble.mined_out",
+                    Trouble::LowOre => "trouble.low_ore",
                     _ => "trouble.idle",
                 });
                 out.push(Problem {
