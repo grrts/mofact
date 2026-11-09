@@ -204,6 +204,14 @@ pub enum BuildingRole {
     RequesterChest {
         capacity: u32,
     },
+    /// A warehouse: a big store between belts. Belts on any side but its
+    /// arrow fill it with anything, up to `capacity` items; it hands what
+    /// it holds out of its arrow, or only the item it is set to. Drones
+    /// take from it like a provider chest. Its contents are not the
+    /// player's stock: only the hub's are.
+    Warehouse {
+        capacity: u32,
+    },
     /// The game's last build (T54): takes the items of each stage in turn
     /// from belts, and when the last stage is in, the factory has won.
     Megaproject {

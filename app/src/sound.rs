@@ -260,6 +260,7 @@ mod tests {
         EntityView {
             request: None,
             filter: None,
+            held: Vec::new(),
             id: EntityId(id),
             building: "drill".into(),
             pos: TilePos::new(x, 0),

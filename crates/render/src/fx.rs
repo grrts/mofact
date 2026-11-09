@@ -229,6 +229,7 @@ mod tests {
         EntityView {
             request: None,
             filter: None,
+            held: Vec::new(),
             id: EntityId(id),
             building: building.into(),
             pos: TilePos::new(x, y),

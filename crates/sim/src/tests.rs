@@ -2519,3 +2519,168 @@ fn hub_orders_ship_for_a_reward_and_a_missed_one_ends_the_streak() {
     sim.check_orders();
     assert_eq!(sim.snapshot().order.map(|o| o.streak), Some(0));
 }
+
+/// A warehouse at (3, 0) to (4, 1) facing east, fed by a line from the
+/// west into its top-left tile, with `out` belts east of it from (5, 0).
+/// Returns the sim, the warehouse and the first belt.
+fn warehouse_test(out: i32) -> (Sim, EntityId, EntityId) {
+    let mut sim = logistics();
+    sim.add_stock(&item("brick"), 50);
+    belts(&mut sim, 0..=2, 0, Dir::East);
+    let warehouse = place(&mut sim, "warehouse", 3, 0, Dir::East, None);
+    belts(&mut sim, 5..=4 + out, 0, Dir::East);
+    let first = sim.entity_at(TilePos::new(0, 0)).unwrap();
+    (sim, warehouse, first)
+}
+
+fn stored(sim: &Sim, id: EntityId) -> Vec<(ItemId, u32)> {
+    sim.snapshot()
+        .entities
+        .into_iter()
+        .find(|e| e.id == id)
+        .unwrap()
+        .held
+}
+
+#[test]
+fn a_warehouse_buffers_belts_and_hands_out_of_its_arrow() {
+    // Nowhere to go: it fills, and none of it is the player's stock.
+    let (mut sim, warehouse, first) = warehouse_test(0);
+    let stock = sim.stock(&item("iron-plate"));
+    for _ in 0..30 {
+        assert!(sim.feed(first, &item("iron-plate")));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 5);
+    assert_eq!(stored(&sim, warehouse), vec![(item("iron-plate"), 30)]);
+    assert_eq!(items_on(&sim, |_| true), 0, "the line in emptied into it");
+    assert_eq!(sim.stock(&item("iron-plate")), stock, "not the hub's stock");
+    assert_eq!(sim.delivered(&item("iron-plate")), 0);
+
+    // A belt out of its arrow, onto either tile of that side, empties it.
+    belts(&mut sim, 5..=24, 1, Dir::East);
+    run(&mut sim, 20);
+    assert!(stored(&sim, warehouse).is_empty());
+    assert_eq!(items_on(&sim, |t| t.x > 4), 30);
+
+    // Its arrow side takes nothing in: a belt pointed into it backs up.
+    let (mut sim, warehouse, _) = warehouse_test(0);
+    let back = place(&mut sim, "belt", 5, 1, Dir::West, None);
+    assert!(sim.feed(back, &item("iron-plate")));
+    run(&mut sim, 5);
+    assert!(stored(&sim, warehouse).is_empty());
+    assert_eq!(items_on(&sim, |_| true), 1);
+}
+
+#[test]
+fn a_warehouse_hands_out_what_it_holds_in_turn_or_only_its_item() {
+    let (mut sim, warehouse, first) = warehouse_test(0);
+    for k in 0..20 {
+        let i = if k % 2 == 0 {
+            "iron-plate"
+        } else {
+            "copper-plate"
+        };
+        assert!(sim.feed(first, &item(i)));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 5);
+    let set = Command::SetFilter {
+        entity: warehouse,
+        filter: Some(item("copper-plate")),
+    };
+    let CommandResult::Applied { undo, .. } = sim.apply(&set) else {
+        panic!("filter refused");
+    };
+    assert_eq!(
+        undo,
+        vec![Command::SetFilter {
+            entity: warehouse,
+            filter: None
+        }]
+    );
+
+    // Contents and its item survive a save.
+    let (mut loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(stored(&loaded, warehouse), stored(&sim, warehouse));
+    let view = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == warehouse)
+            .unwrap()
+    };
+    assert_eq!(view(&loaded).filter, Some(item("copper-plate")));
+
+    belts(&mut loaded, 5..=24, 0, Dir::East);
+    run(&mut loaded, 20);
+    let out: Vec<_> = loaded
+        .snapshot()
+        .belt_items
+        .into_iter()
+        .filter(|b| b.tile.x > 4)
+        .map(|b| b.item)
+        .collect();
+    assert_eq!(out.len(), 10);
+    assert!(out.iter().all(|i| *i == item("copper-plate")), "{out:?}");
+    assert_eq!(stored(&loaded, warehouse), vec![(item("iron-plate"), 10)]);
+
+    // Set to everything, it hands both kinds out in turn.
+    let all = Command::SetFilter {
+        entity: warehouse,
+        filter: None,
+    };
+    let (mut sim, warehouse, first) = warehouse_test(0);
+    for k in 0..20 {
+        let i = if k < 10 { "iron-plate" } else { "copper-plate" };
+        assert!(sim.feed(first, &item(i)));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 5);
+    assert!(matches!(sim.apply(&all), CommandResult::Applied { .. }));
+    belts(&mut sim, 5..=24, 0, Dir::East);
+    run(&mut sim, 2);
+    let out: Vec<_> = sim
+        .snapshot()
+        .belt_items
+        .into_iter()
+        .map(|b| b.item)
+        .collect();
+    assert!(out.contains(&item("iron-plate")) && out.contains(&item("copper-plate")));
+
+    // Taking it down gives its contents to the stock, and undo sets its item again.
+    sim.apply(&Command::SetFilter {
+        entity: warehouse,
+        filter: Some(item("iron-plate")),
+    });
+    let before = sim.stock(&item("copper-plate"));
+    let left = stored(&sim, warehouse)
+        .iter()
+        .find(|h| h.0 == item("copper-plate"))
+        .map_or(0, |h| h.1);
+    let CommandResult::Applied { undo, .. } = sim.apply(&Command::Remove { entity: warehouse })
+    else {
+        panic!("remove refused");
+    };
+    assert_eq!(sim.stock(&item("copper-plate")), before + left);
+    assert!(undo.contains(&Command::SetFilter {
+        entity: warehouse,
+        filter: Some(item("iron-plate")),
+    }));
+}
+
+#[test]
+fn a_warehouse_is_a_provider_to_drones() {
+    let sim = Sim::with_content(&content());
+    let t = &sim.tables;
+    let k = t.building(&"warehouse".into()).unwrap();
+    assert!(matches!(
+        t.buildings[k as usize].role,
+        Role::Chest {
+            requester: false,
+            warehouse: true,
+            ..
+        }
+    ));
+}

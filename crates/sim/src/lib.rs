@@ -733,10 +733,15 @@ impl Sim {
                     self.undock(at, *entity);
                     self.rails.trains.retain(|x| x != entity);
                 }
-                // Undo sets a filter splitter to the same item again.
-                if let Some(State::Splitter {
-                    filter: Some(i), ..
-                }) = &self.states[entity.0 as usize]
+                // Undo sets a filter splitter or warehouse to the same item again.
+                if let Some(
+                    State::Splitter {
+                        filter: Some(i), ..
+                    }
+                    | State::Chest(drones::Chest {
+                        filter: Some(i), ..
+                    }),
+                ) = &self.states[entity.0 as usize]
                 {
                     undo.push(Command::SetFilter {
                         entity: *entity,
@@ -919,6 +924,7 @@ impl Sim {
                 let Role::Chest {
                     capacity,
                     requester: true,
+                    ..
                 } = self.tables.buildings[e.kind as usize].role
                 else {
                     return Err(CommandError::UnknownContent);
@@ -960,20 +966,26 @@ impl Sim {
                     .entities
                     .get(*entity)
                     .ok_or(CommandError::NoSuchEntity)?;
-                let Role::Splitter {
-                    mode: SplitMode::Filter,
-                } = self.tables.buildings[e.kind as usize].role
-                else {
+                // A filter splitter's item ahead, or the one item a warehouse hands out.
+                if !matches!(
+                    self.tables.buildings[e.kind as usize].role,
+                    Role::Splitter {
+                        mode: SplitMode::Filter,
+                    } | Role::Chest {
+                        warehouse: true,
+                        ..
+                    }
+                ) {
                     return Err(CommandError::UnknownContent);
-                };
+                }
                 let new = match filter {
                     Some(item) => Some(self.tables.item(item).ok_or(CommandError::UnknownContent)?),
                     None => None,
                 };
-                let Some(Some(State::Splitter { filter: f, .. })) =
-                    self.states.get_mut(entity.0 as usize)
-                else {
-                    return Err(CommandError::UnknownContent);
+                let f = match self.states.get_mut(entity.0 as usize) {
+                    Some(Some(State::Splitter { filter: f, .. })) => f,
+                    Some(Some(State::Chest(c))) => &mut c.filter,
+                    _ => return Err(CommandError::UnknownContent),
                 };
                 let old = std::mem::replace(f, new);
                 Ok((
@@ -1474,6 +1486,46 @@ impl Sim {
             | State::Mega { .. }
             | State::Port { .. }
             | State::Radar { .. } => {}
+            // A warehouse hands what it holds out of its arrow, onto any
+            // tile along that side: in turn, or only the item it is set to.
+            State::Chest(c)
+                if matches!(
+                    self.tables.buildings[e.kind as usize].role,
+                    Role::Chest {
+                        warehouse: true,
+                        ..
+                    }
+                ) =>
+            {
+                if c.items.is_empty() {
+                    return;
+                }
+                c.wait += 1;
+                if c.wait < drones::WAREHOUSE_OUT_EVERY {
+                    return;
+                }
+                let item = match c.filter {
+                    Some(f) if c.count(f) > 0 => f,
+                    Some(_) => return,
+                    None => c.items[0].0,
+                };
+                let side = e.dir;
+                let out = fluids::edges(e)
+                    .filter(|&(d, _)| d == side)
+                    .map(|(_, n)| n)
+                    .find(|&n| self.push(n, item, side));
+                if out.is_some() {
+                    c.take(item, 1);
+                    c.wait = 0;
+                    // The next item out is the next kind it holds.
+                    if c.filter.is_none() {
+                        if let Some(k) = c.items.iter().position(|&(i, _)| i == item) {
+                            let held = c.items.remove(k);
+                            c.items.push(held);
+                        }
+                    }
+                }
+            }
             // A requester chest hands what drones bring out of its arrow.
             State::Chest(c) => {
                 if c.request.is_none() || c.items.is_empty() {
@@ -1942,12 +1994,14 @@ impl Sim {
             | State::Train(_)
             | State::Radar { .. }
             | State::Port { .. } => false,
-            // A provider chest takes from belts on any side.
+            // A provider chest takes from belts on any side; a warehouse
+            // from any side but the one it hands out of.
             State::Chest(c) => match self.tables.buildings[target.kind as usize].role {
                 Role::Chest {
                     capacity,
                     requester: false,
-                } if c.total() < capacity => {
+                    warehouse,
+                } if c.total() < capacity && !(warehouse && dir == target.dir.opposite()) => {
                     c.add(item, 1);
                     true
                 }
@@ -2281,10 +2335,23 @@ impl Sim {
                     _ => None,
                 },
                 filter: match &self.states[slot] {
-                    Some(State::Splitter {
-                        filter: Some(i), ..
-                    }) => Some(self.tables.items[*i as usize].clone()),
+                    Some(
+                        State::Splitter {
+                            filter: Some(i), ..
+                        }
+                        | State::Chest(drones::Chest {
+                            filter: Some(i), ..
+                        }),
+                    ) => Some(self.tables.items[*i as usize].clone()),
                     _ => None,
+                },
+                held: match &self.states[slot] {
+                    Some(State::Chest(c)) => c
+                        .items
+                        .iter()
+                        .map(|&(i, n)| (self.tables.items[i as usize].clone(), n))
+                        .collect(),
+                    _ => Vec::new(),
                 },
             });
         }

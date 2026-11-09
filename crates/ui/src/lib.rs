@@ -3802,7 +3802,8 @@ impl Hud {
     }
 
     /// A filter splitter's pills: nothing, or one of the solid items in
-    /// stock (most first) to send ahead. Returns the rows.
+    /// stock (most first) to send ahead. A warehouse's: everything, or one
+    /// of the items it holds (most first) to hand out. Returns the rows.
     fn filter_picker(
         &mut self,
         o: &mut Overlay,
@@ -3813,9 +3814,20 @@ impl Hud {
         draw: bool,
     ) -> usize {
         let current = e.filter.as_ref();
-        let items = solid_items(view, current);
+        let warehouse = view
+            .building(&e.building)
+            .is_some_and(|d| matches!(d.role, BuildingRole::Warehouse { .. }));
+        let items = if warehouse {
+            held_items(e, current)
+        } else {
+            solid_items(view, current)
+        };
         let none = (
-            tr("request.none"),
+            if warehouse {
+                tr("warehouse.all")
+            } else {
+                tr("request.none")
+            },
             None,
             current.is_none(),
             Hit::SetFilter(e.id, None),
@@ -3852,12 +3864,19 @@ impl Hud {
             )
         });
         let splits = def.is_some_and(|d| matches!(d.role, BuildingRole::Splitter { .. }));
-        let filter = def.is_some_and(|d| {
-            d.role
-                == BuildingRole::Splitter {
-                    mode: SplitMode::Filter,
-                }
+        // What a warehouse can hold; it shows what it does, and picks
+        // what it hands out like a filter splitter.
+        let warehouse = def.and_then(|d| match d.role {
+            BuildingRole::Warehouse { capacity } => Some(capacity),
+            _ => None,
         });
+        let filter = warehouse.is_some()
+            || def.is_some_and(|d| {
+                d.role
+                    == BuildingRole::Splitter {
+                        mode: SplitMode::Filter,
+                    }
+            });
         let pole = def.is_some_and(|d| matches!(d.role, BuildingRole::Pole { .. }));
         let generator = def.and_then(|d| match d.role {
             BuildingRole::Generator { kw } => Some(kw),
@@ -4044,6 +4063,35 @@ impl Hud {
                 };
                 let px = fit(o, &text, px, r[2] - 2.0 * pad);
                 o.text(&text, [x, base], px, MUTED);
+            } else if let Some(capacity) = warehouse {
+                // How full it is, then what it holds, most first, as fits.
+                let total: u32 = e.held.iter().map(|h| h.1).sum();
+                if total == 0 {
+                    let text = tr("inspect.warehouse_empty");
+                    let px = fit(o, text, px, r[2] - 2.0 * pad);
+                    o.text(text, [x, base], px, MUTED);
+                } else {
+                    let head = trf("inspect.warehouse", &[&total, &capacity]);
+                    x += o.text(&head, [x, base], px, MUTED) + 10.0 * u;
+                    let mut held: Vec<_> = e.held.iter().collect();
+                    held.sort_by_key(|h| std::cmp::Reverse(h.1));
+                    let end = r[0] + r[2] - pad;
+                    for (item, n) in held {
+                        let label = format!("{n}");
+                        let w = s + 2.0 * u + o.measure(&label, px) + 8.0 * u;
+                        if x + w > end {
+                            break;
+                        }
+                        let start = x;
+                        if let Some((sprite, t)) = view.look.item(item) {
+                            o.icon(sprite, [x, y + (row - s) / 2.0], s, t);
+                        }
+                        x += s + 2.0 * u;
+                        x += o.text(&label, [x, base], px, TEXT) + 8.0 * u;
+                        self.hits
+                            .push(([start, y, x - start, row], Hit::Item(item.clone())));
+                    }
+                }
             } else if e.state == MachineState::NoPower {
                 // Say how to fix it, not just that it's wrong.
                 let text = if grid.is_none() {
@@ -4100,6 +4148,12 @@ impl Hud {
                     3.0 * u,
                     color,
                 );
+            } else if let Some(capacity) = warehouse {
+                let total: u32 = e.held.iter().map(|h| h.1).sum();
+                let fill = (total as f32 / capacity.max(1) as f32).clamp(0.0, 1.0);
+                if fill > 0.0 {
+                    o.panel([left, y], [bw * fill, 6.0 * u], 3.0 * u, palette::ACCENT);
+                }
             } else if !hub && !wired && !plumbing && e.progress > 0.0 {
                 let fill = state(e.state, view.look).1;
                 o.panel(
@@ -4184,13 +4238,18 @@ impl Hud {
 /// X removes.
 const RESERVED_KEYS: [char; 4] = ['m', 'r', 't', 'x'];
 
-/// One key for every building but the hub and belts (which have number
-/// keys): the first letter of its name that is free, in content order,
-/// then 8, 9 and 0, then the punctuation keys beside them.
+/// The buildings the number row picks (3 to 5), which need no letter.
+pub const NUMBER_KEYED: [&str; 3] = ["drill", "furnace", "assembler"];
+
+/// One key for every building but the hub, belts and [`NUMBER_KEYED`]
+/// (which have number keys): the first letter of its name that is free, in
+/// content order, then 8, 9 and 0, then the punctuation keys beside them.
 pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
     let mut out: Vec<(char, BuildingId)> = Vec::new();
     for b in &content.buildings {
-        if matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. }) {
+        if matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. })
+            || NUMBER_KEYED.contains(&b.id.as_str())
+        {
             continue;
         }
         let key = b
@@ -4242,6 +4301,25 @@ fn solid_items<'a>(
     items.sort_by_key(|p| std::cmp::Reverse(p.1));
     items.truncate(REQUEST_ITEMS);
     let mut items: Vec<_> = items.into_iter().map(|(i, _)| i).collect();
+    if let Some(i) = current {
+        if !items.contains(&i) {
+            items.push(i);
+        }
+    }
+    items
+}
+
+/// The items a warehouse holds, most first, up to [`REQUEST_ITEMS`], and
+/// `current` after them if it is not among them: what it can be set to
+/// hand out.
+fn held_items<'a>(
+    e: &'a EntityView,
+    current: Option<&'a mofact_core::ids::ItemId>,
+) -> Vec<&'a mofact_core::ids::ItemId> {
+    let mut held: Vec<_> = e.held.iter().filter(|h| h.1 > 0).collect();
+    held.sort_by_key(|h| std::cmp::Reverse(h.1));
+    held.truncate(REQUEST_ITEMS);
+    let mut items: Vec<_> = held.into_iter().map(|(i, _)| i).collect();
     if let Some(i) = current {
         if !items.contains(&i) {
             items.push(i);
@@ -4347,6 +4425,7 @@ fn tip(tool: &Tool) -> &'static str {
             "drone-port" => "tip.drone_port",
             "provider-chest" => "tip.provider_chest",
             "requester-chest" => "tip.requester_chest",
+            "warehouse" => "tip.warehouse",
             _ => "tip.place",
         },
     })

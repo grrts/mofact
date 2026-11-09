@@ -1,0 +1,23 @@
+// The starter iron line runs through a warehouse that hands straight into
+// the hub: one drill and furnace (1.2 s each) make 50 plates a minute, and a
+// warehouse in between passes them all on at full speed.
+(
+    name: "Warehouse",
+    stock: [("iron-plate", 100), ("gear", 10), ("brick", 10)],
+    ore: [(19, 27, "iron-ore")],
+    research: ["logistics"],
+    build: [
+        At(building: "hub", x: 26, y: 26, dir: East),
+        At(building: "drill", x: 19, y: 27, dir: East),
+        Belts(x: 20, y: 27, len: 2, dir: East),
+        At(building: "furnace", x: 22, y: 27, dir: East),
+        Belts(x: 23, y: 27, len: 1, dir: East),
+        // Two tiles a side, from (24, 27): its arrow side touches the hub.
+        At(building: "warehouse", x: 24, y: 27, dir: East),
+    ],
+    warmup_seconds: 60,
+    measure_seconds: 180,
+    expect: [
+        (item: "iron-plate", per_minute: 50.0, tolerance: 1.0),
+    ],
+)

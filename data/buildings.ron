@@ -27,6 +27,10 @@
     // Sends one chosen item ahead and everything else left and right.
     (id: "filter-splitter", name: "Filter splitter", size: (1, 1), role: Splitter(mode: Filter),
         cost: [(item: "circuit", count: 10), (item: "iron-plate", count: 5)]),
+    // A store between belts: belts in on any side, out of its arrow. What
+    // it holds is not the hub's stock.
+    (id: "warehouse", name: "Warehouse", size: (2, 2), role: Warehouse(capacity: 1600),
+        cost: [(item: "iron-plate", count: 20), (item: "gear", count: 10), (item: "brick", count: 10)]),
     // Place an entrance, then an exit up to 5 tiles on, facing the same way.
     (id: "underground-belt", name: "Underground belt", size: (1, 1),
         role: Underground(tiles_per_second: 6.0, reach: 5),

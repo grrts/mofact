@@ -56,9 +56,14 @@ pub struct EntityView {
     /// For a requester chest, what it asks for and how many (T49).
     #[serde(default)]
     pub request: Option<(ItemId, u32)>,
-    /// For a filter splitter, the item it sends ahead.
+    /// For a filter splitter, the item it sends ahead; for a warehouse,
+    /// the one item it hands out.
     #[serde(default)]
     pub filter: Option<ItemId>,
+    /// For a chest or warehouse, what it holds by item. None of it is the
+    /// player's stock: only the hub's is.
+    #[serde(default)]
+    pub held: Vec<(ItemId, u32)>,
 }
 
 /// The fluid in a pipe segment.

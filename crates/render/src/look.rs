@@ -89,6 +89,8 @@ enum Art {
     Chest {
         requester: bool,
     },
+    /// A warehouse, facing east and turned.
+    Warehouse,
     Splitter(SplitMode),
     Underground {
         exit: bool,
@@ -234,6 +236,7 @@ enum Kind {
     Radar,
     Port,
     Chest,
+    Warehouse,
 }
 
 impl Kind {
@@ -546,6 +549,7 @@ impl Look {
                 BuildingRole::ProviderChest { .. } | BuildingRole::RequesterChest { .. } => {
                     (Kind::Chest, Vec::new())
                 }
+                BuildingRole::Warehouse { .. } => (Kind::Warehouse, Vec::new()),
                 BuildingRole::Miner { .. } => (
                     Kind::Drill,
                     content
@@ -707,6 +711,7 @@ impl Look {
                     let requester = matches!(b.role, BuildingRole::RequesterChest { .. });
                     push(&mut look, id.to_owned(), b.size, Art::Chest { requester });
                 }
+                Kind::Warehouse => push(&mut look, id.to_owned(), b.size, Art::Warehouse),
                 Kind::Engine => push(&mut look, id.to_owned(), b.size, Art::Engine),
                 Kind::Well => {
                     let fluid = match &b.role {
@@ -969,6 +974,7 @@ impl Look {
                     | Kind::Pump
                     | Kind::UndergroundPipe
                     | Kind::Train
+                    | Kind::Warehouse
             )
         })
     }
@@ -1116,6 +1122,7 @@ impl Look {
             Kind::Pipe | Kind::Rail | Kind::Signal => b.base + 5,
             Kind::Stop => b.base + 16,
             Kind::Train | Kind::Mega | Kind::Radar | Kind::Port | Kind::Chest => b.base,
+            Kind::Warehouse => b.base,
             Kind::Underground | Kind::UndergroundPipe => {
                 b.base + usize::from(setting == Some("exit"))
             }
@@ -1332,6 +1339,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
             };
             draw::logistic_chest(&mut c, z, fine, trim, requester)
         }
+        Art::Warehouse => draw::warehouse(&mut c, z, fine),
         Art::Stripe { octagon } => draw::stripe(&mut c, z, fine, octagon),
         Art::Ring { electric } => draw::furnace_ring(&mut c, z, fine, electric),
         Art::Notch => draw::notch_east(&mut c, z),

@@ -11,6 +11,7 @@ fn snapshot() -> Snapshot {
     let entity = |id, building: &str, x| EntityView {
         request: None,
         filter: None,
+        held: Vec::new(),
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, 0),
@@ -547,6 +548,7 @@ fn a_pole_sheet_shows_its_grid() {
     f.snapshot.entities.push(EntityView {
         request: None,
         filter: None,
+        held: Vec::new(),
         id: EntityId(9),
         building: "pole".into(),
         pos: TilePos::new(9, 0),
@@ -602,15 +604,18 @@ fn every_building_is_one_key_away() {
         .content
         .buildings
         .iter()
-        .filter(|b| !matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. }))
+        .filter(|b| {
+            !matches!(b.role, BuildingRole::Hub | BuildingRole::Belt { .. })
+                && !NUMBER_KEYED.contains(&b.id.as_str())
+        })
         .collect();
     assert_eq!(keys.len(), others.len());
     for (i, (k, b)) in keys.iter().enumerate() {
         assert!(!RESERVED_KEYS.contains(k), "{b} took {k}");
         assert!(keys[i + 1..].iter().all(|(o, _)| o != k), "{k} twice");
     }
-    assert!(keys.contains(&('d', "drill".into())));
     assert!(keys.contains(&('l', "lab".into())));
+    assert!(keys.iter().any(|(_, b)| b.as_str() == "warehouse"));
 }
 
 #[test]
@@ -732,6 +737,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
     let at = |id, building: &str, x, y, state| EntityView {
         request: None,
         filter: None,
+        held: Vec::new(),
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, y),
@@ -1941,6 +1947,7 @@ fn drills_running_dry_and_mined_out_show_as_problems() {
     let drill = |id, x, left, state| EntityView {
         request: None,
         filter: None,
+        held: Vec::new(),
         id: EntityId(id),
         building: "drill".into(),
         pos: TilePos::new(x, 0),
@@ -2001,4 +2008,35 @@ fn the_order_card_counts_down_and_a_shipped_order_says_so() {
     assert_eq!(toast.as_deref(), Some(tr("toast.order_shipped")));
     let now = f.hud.hits.iter().filter(|(_, h)| *h == Hit::Block).count();
     assert_eq!(now, blocks, "the toast takes the card's place");
+}
+
+#[test]
+fn a_warehouse_sheet_shows_what_it_holds_and_picks_what_goes_out() {
+    let mut f = Fixture::new();
+    let mut w = f.snapshot.entities[2].clone();
+    w.id = EntityId(7);
+    w.building = "warehouse".into();
+    w.pos = TilePos::new(8, 0);
+    w.held = vec![("copper-plate".into(), 40), ("gear".into(), 300)];
+    f.snapshot.entities.push(w);
+    f.hud.select(Some(EntityId(7)));
+    for (size, scale) in [((1280, 720), 1.0), ((750, 1334), 2.0)] {
+        f.draw(size, scale, &Tool::Hand);
+        // What it holds opens the recipe browser, as a machine's items do.
+        f.find(&Hit::Item("gear".into()));
+        f.find(&Hit::Item("copper-plate".into()));
+        // Everything, or one of what it holds, most first.
+        f.find(&Hit::SetFilter(EntityId(7), None));
+        let gear = Hit::SetFilter(EntityId(7), Some("gear".into()));
+        let copper = Hit::SetFilter(EntityId(7), Some("copper-plate".into()));
+        assert!(f.find(&gear)[0] < f.find(&copper)[0], "most first");
+        assert_eq!(
+            f.tap(centre(f.find(&copper))).1,
+            vec![Action::Send(Command::SetFilter {
+                entity: EntityId(7),
+                filter: Some("copper-plate".into())
+            })]
+        );
+        f.hud.select(Some(EntityId(7)));
+    }
 }

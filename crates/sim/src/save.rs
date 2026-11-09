@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 18;
+pub const VERSION: u16 = 19;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -369,6 +369,12 @@ enum SavedState {
         next: u8,
         filter: Option<ItemId>,
     },
+    /// A warehouse (v19): what it holds, in the order it hands them out,
+    /// and the one item it is set to hand out.
+    Warehouse {
+        items: Vec<(ItemId, u32)>,
+        filter: Option<ItemId>,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -607,7 +613,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 orders: SavedOrders::default(),
             })
         }
-        18 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 19 adds warehouses: a new variant only.
+        18 | 19 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -672,6 +679,13 @@ impl Sim {
             .entities
             .iter()
             .filter_map(|(id, e)| {
+                let warehouse = matches!(
+                    t.buildings[e.kind as usize].role,
+                    Role::Chest {
+                        warehouse: true,
+                        ..
+                    }
+                );
                 let state = match self.states.get(id.0 as usize)?.as_ref()? {
                     State::Hub => SavedState::Hub,
                     State::Belt { items, last, .. } => SavedState::Belt {
@@ -757,6 +771,10 @@ impl Sim {
                         done: *done,
                     },
                     State::Port { .. } => SavedState::Port,
+                    State::Chest(c) if warehouse => SavedState::Warehouse {
+                        items: c.items.iter().map(|&(i, n)| (item(i), n)).collect(),
+                        filter: c.filter.map(item),
+                    },
                     State::Chest(c) => SavedState::Chest {
                         items: c.items.iter().map(|&(i, n)| (item(i), n)).collect(),
                         request: c.request.map(|(i, n)| (item(i), n)),
@@ -1057,6 +1075,20 @@ impl Sim {
                         .and_then(|(i, n)| Some((item(i, &mut warnings)?, *n))),
                     incoming,
                     wait: 0,
+                    filter: None,
+                }),
+                (
+                    SavedState::Warehouse { items, filter },
+                    Role::Chest {
+                        warehouse: true, ..
+                    },
+                ) => State::Chest(crate::drones::Chest {
+                    items: items
+                        .iter()
+                        .filter_map(|(i, n)| Some((item(i, &mut warnings)?, *n)))
+                        .collect(),
+                    filter: opt(&filter, &mut warnings),
+                    ..Default::default()
                 }),
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
                     cargo: tr
