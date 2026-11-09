@@ -6,7 +6,8 @@ release, see "Releasing" in CONTRIBUTING.md.
 ## Unreleased
 
 - **More settings:** Settings, from the start menu or the game menu, now
-  open a sheet of their own: volume in steps of a quarter, ambient sound
+  open a dedicated full-screen menu of their own, with none of the game's
+  buttons round it: volume in steps of a quarter, ambient sound
   and vibration on or off, low power, reduce motion, colour-blind mode,
   large text and the language, grouped under Sound, Display,
   Accessibility and General, and kept between runs.
