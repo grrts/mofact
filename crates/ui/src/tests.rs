@@ -37,6 +37,9 @@ fn snapshot() -> Snapshot {
         research: Default::default(),
         grids: Vec::new(),
         goal: None,
+        order: None,
+        orders_shipped: 0,
+        orders_missed: 0,
         cleared: Default::default(),
         depleted: Default::default(),
         pins: Default::default(),
@@ -1971,4 +1974,31 @@ fn drills_running_dry_and_mined_out_show_as_problems() {
         vec![(T::MinedOut, 2), (T::LowOre, 1)],
         "a drill with plenty left is fine"
     );
+}
+
+#[test]
+fn the_order_card_counts_down_and_a_shipped_order_says_so() {
+    use mofact_core::snapshot::OrderView;
+    let mut f = Fixture::new();
+    f.snapshot.order = Some(OrderView {
+        index: 1,
+        item: "gear".into(),
+        have: 40,
+        need: 150,
+        seconds_left: 75,
+        streak: 2,
+        reward: vec![("iron-plate".into(), 420), ("wire".into(), 168)],
+    });
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert_eq!(f.hud.orders_seen, Some((0, 0)));
+    assert!(f.hud.toast.is_none(), "nothing ended yet");
+    let blocks = f.hud.hits.iter().filter(|(_, h)| *h == Hit::Block).count();
+    // It ships: the card goes and a toast says so.
+    f.snapshot.order = None;
+    f.snapshot.orders_shipped = 1;
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let toast = f.hud.toast.as_ref().map(|t| t.0.clone());
+    assert_eq!(toast.as_deref(), Some(tr("toast.order_shipped")));
+    let now = f.hud.hits.iter().filter(|(_, h)| *h == Hit::Block).count();
+    assert_eq!(now, blocks, "the toast takes the card's place");
 }

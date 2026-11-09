@@ -92,6 +92,14 @@ pub struct Snapshot {
     /// The goal the player is on, if any are left.
     #[serde(default)]
     pub goal: Option<GoalView>,
+    /// The hub's order, once the goals are done and while one is open.
+    #[serde(default)]
+    pub order: Option<OrderView>,
+    /// Orders shipped and missed, all told, so a screen sees one end.
+    #[serde(default)]
+    pub orders_shipped: u32,
+    #[serde(default)]
+    pub orders_missed: u32,
     /// Tiles whose tree or boulder has been cleared, sorted. Shared, so a
     /// snapshot costs nothing extra while it doesn't change.
     #[serde(default)]
@@ -209,6 +217,23 @@ pub struct GoalView {
     /// How much of what it wants is done, of how much.
     pub have: u32,
     pub need: u32,
+}
+
+/// The hub's open order: what it wants, how far along, and the clock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OrderView {
+    /// Its place in the content's orders, from 0.
+    pub index: u16,
+    pub item: ItemId,
+    /// How many have reached the hub since it opened, of how many.
+    pub have: u32,
+    pub need: u32,
+    /// Seconds left to ship it.
+    pub seconds_left: u32,
+    /// Orders shipped in a row before this one.
+    pub streak: u32,
+    /// What it pays, with the streak counted in.
+    pub reward: Vec<(ItemId, u32)>,
 }
 
 /// One power grid this tick.

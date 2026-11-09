@@ -527,6 +527,8 @@ pub struct Hud {
     /// Whether the goal card shows how to meet it, and the goal it last showed.
     hint: bool,
     goal_seen: Option<u16>,
+    /// Orders shipped and missed as last drawn, to toast when one ends.
+    orders_seen: Option<(u32, u32)>,
     /// What's stuck, as of the last frame drawn.
     found: Vec<Problem>,
     /// What [`Hud::found`] was worked out from: the time in quarter seconds,
@@ -2526,7 +2528,7 @@ impl Hud {
     fn goal_card(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
         let u = self.unit;
         let Some(g) = &view.snapshot.goal else {
-            return at[1] - 10.0 * u;
+            return self.order_card(view, o, at, width);
         };
         let Some(def) = view.content.goals.get(g.index as usize) else {
             return at[1] - 10.0 * u;
@@ -2586,6 +2588,83 @@ impl Hud {
         }
         // A tap anywhere on the card folds the hint away or brings it back.
         self.hits.push(([at[0], at[1], w, total], Hit::Goal));
+        at[1] + total
+    }
+
+    /// The hub's order, where the goal card was once the goals are done:
+    /// what it wants and the clock, what it pays and the streak. A toast
+    /// says when one ships or is missed. Returns its bottom edge.
+    fn order_card(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) -> f32 {
+        let u = self.unit;
+        let snap = view.snapshot;
+        let ended = (snap.orders_shipped, snap.orders_missed);
+        if let Some((shipped, missed)) = self.orders_seen {
+            if ended.0 > shipped {
+                self.toast = Some((tr("toast.order_shipped").into(), Instant::now(), WORKING));
+            } else if ended.1 > missed {
+                let ink = palette::status(palette::Status::Starved, self.colour_blind);
+                self.toast = Some((tr("toast.order_missed").into(), Instant::now(), ink));
+            }
+        }
+        self.orders_seen = Some(ended);
+        let Some(order) = &snap.order else {
+            return at[1] - 10.0 * u;
+        };
+        let name = |id: &mofact_core::ids::ItemId| {
+            view.content
+                .items
+                .iter()
+                .find(|i| &i.id == id)
+                .map_or(id.as_str().to_owned(), |i| i.name.clone())
+        };
+        let h = 44.0 * u;
+        let px = 14.0 * u;
+        let left = order.seconds_left;
+        let clock = format!("{}:{:02}", left / 60, left % 60);
+        let count = format!("{}/{} · {clock}", order.have, order.need);
+        let cw = o.measure(&count, px);
+        let text = trf("order.title", &[&order.need, &name(&order.item)]);
+        let px = fit(o, &text, px, width - 40.0 * u - cw);
+        let pays: Vec<String> = order
+            .reward
+            .iter()
+            .map(|(i, n)| format!("{n} × {}", name(i)))
+            .collect();
+        let pays = if order.streak > 0 {
+            trf("order.pays_streak", &[&pays.join(", "), &order.streak])
+        } else {
+            trf("order.pays", &[&pays.join(", ")])
+        };
+        let small = 13.0 * u;
+        let line = 20.0 * u;
+        let lines = wrap(o, &pays, small, width - 28.0 * u);
+        let total = h + lines.len() as f32 * line + 8.0 * u;
+        o.panel(at, [width, total], 10.0 * u, RAISED);
+        let base = at[1] + (h - 6.0 * u + o.cap_height(px)) / 2.0;
+        o.text(&text, [at[0] + 14.0 * u, base], px, palette::ACCENT);
+        // The last minute shows in the colour of trouble.
+        let ink = if left < 60 {
+            palette::status(palette::Status::Starved, self.colour_blind)
+        } else {
+            MUTED
+        };
+        o.text(&count, [at[0] + width - 14.0 * u - cw, base], 14.0 * u, ink);
+        let bar = width - 28.0 * u;
+        let done = order.have as f32 / order.need.max(1) as f32;
+        let y = at[1] + h - 9.0 * u;
+        o.panel([at[0] + 14.0 * u, y], [bar, 3.0 * u], 1.5 * u, PANEL);
+        o.panel(
+            [at[0] + 14.0 * u, y],
+            [bar * done.clamp(0.0, 1.0), 3.0 * u],
+            1.5 * u,
+            WORKING,
+        );
+        for (i, l) in lines.iter().enumerate() {
+            let y = at[1] + h + 4.0 * u + o.cap_height(small) + i as f32 * line;
+            o.text(l, [at[0] + 14.0 * u, y], small, MUTED);
+        }
+        // Cards take their taps, so nothing is built unseen under them.
+        self.hits.push(([at[0], at[1], width, total], Hit::Block));
         at[1] + total
     }
 

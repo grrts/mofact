@@ -10,6 +10,8 @@ content lane owns this folder.
 | `recipes.ron` | Inputs, outputs, craft time and which building category crafts it |
 | `buildings.ron` | Size, role (belt, miner, crafter, hub) and build cost |
 | `research.ron` | Research: tier, prerequisites, pack cost and what it unlocks |
+| `goals.ron` | The guided first hour: one goal at a time, and what each pays |
+| `orders.ron` | Hub orders after the goals: an item, a count, a clock and a reward |
 
 `crates/content` loads and checks them (unique ids, every reference resolves),
 and its `Watcher` reloads them in dev builds when a file changes, so new content

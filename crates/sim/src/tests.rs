@@ -2474,3 +2474,48 @@ fn a_drill_claims_the_same_ore_round_it_on_the_map() {
     let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
     assert_eq!(left(&loaded), Some(9 * mofact_world::SPAWN_ORE));
 }
+
+#[test]
+fn hub_orders_ship_for_a_reward_and_a_missed_one_ends_the_streak() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    let iron = sim.tables.item(&item("iron-plate")).unwrap();
+    let gear = sim.tables.item(&item("gear")).unwrap();
+    sim.delivered[iron as usize] = 10;
+    sim.check_orders();
+    assert_eq!(sim.snapshot().order, None, "no orders while goals are left");
+    sim.goal = content.goals.len() as u16;
+    sim.check_orders();
+    let order = sim.snapshot().order.expect("an order opens");
+    assert_eq!(order.item, item("iron-plate"), "the only item made so far");
+    assert_eq!((order.have, order.need, order.streak), (0, 400, 0));
+    assert_eq!(order.seconds_left, 600);
+    // Delivered but spent on building: it waits for the stock.
+    sim.delivered[iron as usize] += 400;
+    sim.check_orders();
+    assert_eq!(sim.snapshot().order.map(|o| o.have), Some(400));
+    sim.stock[iron as usize] = 450;
+    sim.check_orders();
+    let snap = sim.snapshot();
+    assert_eq!((snap.order.clone(), snap.orders_shipped), (None, 1));
+    assert_eq!(sim.stock[iron as usize], 50, "shipped out of the stock");
+    assert_eq!(sim.stock[gear as usize], 120, "and paid");
+    // The next opens after a pause, a fifth bigger for the streak.
+    sim.tick += orders::AFTER_SHIPPED;
+    sim.check_orders();
+    let order = sim.snapshot().order.expect("the next order");
+    assert_eq!((order.need, order.streak), (480, 1));
+    assert_eq!(order.reward[0], (item("gear"), 144));
+    // A save keeps it, clock and all.
+    let (loaded, warnings) = Sim::load(&content, &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(loaded.snapshot().order, Some(order));
+    // Run out the clock: missed, and the streak starts over.
+    sim.tick += 600 * 60;
+    sim.check_orders();
+    let snap = sim.snapshot();
+    assert_eq!((snap.order, snap.orders_missed), (None, 1));
+    sim.tick += orders::AFTER_MISSED;
+    sim.check_orders();
+    assert_eq!(sim.snapshot().order.map(|o| o.streak), Some(0));
+}

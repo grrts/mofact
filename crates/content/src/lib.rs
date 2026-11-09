@@ -13,12 +13,13 @@ use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
 /// The files [`load_dir`] reads, in order.
-pub const FILES: [&str; 5] = [
+pub const FILES: [&str; 6] = [
     "items.ron",
     "recipes.ron",
     "buildings.ron",
     "research.ron",
     "goals.ron",
+    "orders.ron",
 ];
 
 #[derive(Debug)]
@@ -61,6 +62,7 @@ pub fn load_dir(dir: &Path) -> Result<Content, LoadError> {
         buildings: read(&dir.join(FILES[2]))?,
         research: read(&dir.join(FILES[3]))?,
         goals: read(&dir.join(FILES[4]))?,
+        orders: read(&dir.join(FILES[5]))?,
     };
     checked(content)
 }
@@ -73,6 +75,7 @@ pub fn load_strs(
     buildings: &str,
     research: &str,
     goals: &str,
+    orders: &str,
 ) -> Result<Content, LoadError> {
     checked(Content {
         items: parse(FILES[0], items)?,
@@ -80,6 +83,7 @@ pub fn load_strs(
         buildings: parse(FILES[2], buildings)?,
         research: parse(FILES[3], research)?,
         goals: parse(FILES[4], goals)?,
+        orders: parse(FILES[5], orders)?,
     })
 }
 
@@ -333,6 +337,20 @@ pub fn check(content: &Content) -> Vec<String> {
                     problems.push(format!("{owner} wants unknown research `{r}`"));
                 }
             }
+        }
+    }
+    let mut orders = HashSet::new();
+    for o in &content.orders {
+        let owner = format!("order `{}`", o.id);
+        if !orders.insert(o.id.as_str()) {
+            problems.push(format!("{owner} is defined twice"));
+        }
+        stacks(&owner, &o.reward, &mut problems);
+        if !content.items.iter().any(|i| i.id == o.item) {
+            problems.push(format!("{owner} wants unknown item `{}`", o.item));
+        }
+        if o.count == 0 || o.minutes <= 0.0 {
+            problems.push(format!("{owner} wants nothing, or no time to ship it"));
         }
     }
     problems

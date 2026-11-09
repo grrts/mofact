@@ -329,6 +329,20 @@ pub struct GoalDef {
     pub reward: Vec<Stack>,
 }
 
+/// A hub order: once the guided goals are done, the hub asks for these
+/// one at a time, each against the clock.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct OrderDef {
+    pub id: String,
+    /// What to ship to the hub, and how many before any streak.
+    pub item: ItemId,
+    pub count: u32,
+    /// How long the hub waits.
+    pub minutes: f32,
+    /// Added to the stock when it ships, before any streak.
+    pub reward: Vec<Stack>,
+}
+
 /// Everything loaded from `data/`, before validation.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Content {
@@ -339,6 +353,8 @@ pub struct Content {
     pub research: Vec<ResearchDef>,
     #[serde(default)]
     pub goals: Vec<GoalDef>,
+    #[serde(default)]
+    pub orders: Vec<OrderDef>,
 }
 
 #[cfg(test)]

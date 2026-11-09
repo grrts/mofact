@@ -21,6 +21,7 @@ mod hash;
 mod history;
 mod jobs;
 mod local;
+mod orders;
 mod power;
 mod rails;
 pub mod save;
@@ -229,6 +230,8 @@ pub struct Sim {
     /// The goal the player is on: an index into the content's goals, which
     /// is their count once all are met.
     goal: u16,
+    /// The hub's orders, once the goals are done.
+    orders: orders::Orders,
     /// The demo's last open tier: research of a higher tier is refused
     /// until the full game is bought. Not saved: the app sets it from the
     /// store each time it starts.
@@ -1408,6 +1411,7 @@ impl Sim {
         // Goals move on twice a second; nobody needs it sooner.
         if self.tick % 30 == 0 {
             self.check_goals();
+            self.check_orders();
         }
         self.settle_grids();
         self.fluids.refill_budgets();
@@ -2331,6 +2335,9 @@ impl Sim {
             have,
             need,
         });
+        snap.order = self.order_view();
+        snap.orders_shipped = self.orders.shipped;
+        snap.orders_missed = self.orders.missed;
         self.drone_views(&mut snap);
         snap
     }

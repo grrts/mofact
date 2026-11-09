@@ -181,6 +181,9 @@ pub struct Tables {
     /// The goals in order, and what each gives when met.
     pub goals: Vec<(Goal, Vec<(Item, u32)>)>,
     pub goal_ids: Vec<String>,
+    /// The hub's orders, in content order, and their ids for saves.
+    pub orders: Vec<crate::orders::OrderRow>,
+    pub order_ids: Vec<String>,
     item_index: HashMap<ItemId, Item>,
     recipe_index: HashMap<RecipeId, Recipe>,
     building_index: HashMap<BuildingId, u16>,
@@ -391,6 +394,15 @@ impl Tables {
             t.goals
                 .push((goal.unwrap_or(Goal::Never), stacks(&t, &g.reward)));
             t.goal_ids.push(g.id.clone());
+        }
+        for o in &content.orders {
+            t.orders.push(crate::orders::OrderRow {
+                item: t.item(&o.item),
+                count: o.count,
+                ticks: u64::from(ticks(o.minutes * 60.0)),
+                reward: stacks(&t, &o.reward),
+            });
+            t.order_ids.push(o.id.clone());
         }
         t
     }

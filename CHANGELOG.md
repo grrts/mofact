@@ -5,6 +5,13 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Hub orders:** once the guided goals are done, the hub posts an order
+  against the clock, such as 150 gears in 10 minutes, picked from the
+  latest things the factory makes. Shipping it takes the items out of the
+  stock and pays a bigger bundle of other parts. Each order shipped in a
+  row asks a fifth more and pays a fifth more, up to three times as much;
+  a missed one starts the streak over. The card shows the count, the
+  clock (red in the last minute) and the pay.
 - **More splitters:** Logistics now also unlocks a three-way splitter
   (left, ahead and right in turn), a priority splitter (fills the line ahead
   first and only sends the overflow to the sides) and a filter splitter (one
