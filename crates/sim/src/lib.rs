@@ -40,7 +40,7 @@ pub use thread::SimHandle;
 use entities::{Entities, Entity};
 use fluids::Fluids;
 use mofact_core::command::{Command, CommandError, CommandResult};
-use mofact_core::content::{Bonus, Content, Repeat};
+use mofact_core::content::{Bonus, Content, Repeat, SplitMode};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
 use mofact_core::snapshot::{
@@ -93,10 +93,13 @@ enum State {
     /// Poles and generators hold nothing: their grids follow from where they stand.
     Pole,
     Generator,
-    /// The item waiting to go out, and whether it goes right next.
+    /// The item waiting to go out, which way out it tries first (counting
+    /// left, then ahead or right, by the splitter's mode), and for a filter
+    /// splitter the item it sends ahead.
     Splitter {
         held: Option<Item>,
-        right: bool,
+        next: u8,
+        filter: Option<Item>,
     },
     Tunnel(Tunnel),
     /// Pipes and tanks: their fluid is their segment's (see [`fluids`]).
@@ -669,6 +672,16 @@ impl Sim {
                     self.undock(at, *entity);
                     self.rails.trains.retain(|x| x != entity);
                 }
+                // Undo sets a filter splitter to the same item again.
+                if let Some(State::Splitter {
+                    filter: Some(i), ..
+                }) = &self.states[entity.0 as usize]
+                {
+                    undo.push(Command::SetFilter {
+                        entity: *entity,
+                        filter: Some(self.tables.items[*i as usize].clone()),
+                    });
+                }
                 // A chest's contents go back to the stock; undo asks for the same again.
                 if let Some(State::Chest(c)) = &self.states[entity.0 as usize] {
                     for &(i, n) in &c.items {
@@ -881,6 +894,35 @@ impl Sim {
                     None,
                 ))
             }
+            Command::SetFilter { entity, filter } => {
+                let e = *self
+                    .entities
+                    .get(*entity)
+                    .ok_or(CommandError::NoSuchEntity)?;
+                let Role::Splitter {
+                    mode: SplitMode::Filter,
+                } = self.tables.buildings[e.kind as usize].role
+                else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let new = match filter {
+                    Some(item) => Some(self.tables.item(item).ok_or(CommandError::UnknownContent)?),
+                    None => None,
+                };
+                let Some(Some(State::Splitter { filter: f, .. })) =
+                    self.states.get_mut(entity.0 as usize)
+                else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let old = std::mem::replace(f, new);
+                Ok((
+                    vec![Command::SetFilter {
+                        entity: *entity,
+                        filter: old.map(|i| self.tables.items[i as usize].clone()),
+                    }],
+                    None,
+                ))
+            }
             Command::Plan {
                 building,
                 pos,
@@ -1025,9 +1067,10 @@ impl Sim {
             },
             Role::Pole { .. } => State::Pole,
             Role::Generator { .. } => State::Generator,
-            Role::Splitter => State::Splitter {
+            Role::Splitter { .. } => State::Splitter {
                 held: None,
-                right: false,
+                next: 0,
+                filter: None,
             },
             Role::Underground { .. } => State::Tunnel(Tunnel::default()),
             Role::Pipe { .. } | Role::Tank { .. } => State::Pipe,
@@ -1424,17 +1467,38 @@ impl Sim {
                         .fill(&self.entities, e, |_| true, *fluid, *per_tick);
                 }
             }
-            State::Splitter { held, right } => {
-                if let Some(item) = *held {
-                    let r = e.dir.rotate_cw();
-                    let l = r.opposite();
-                    let order = if *right { [r, l] } else { [l, r] };
-                    for side in order {
-                        if self.push(e.pos.step(side), item, side) {
-                            *held = None;
-                            *right = side != r;
-                            break;
-                        }
+            State::Splitter { held, next, filter } => {
+                let Some(item) = *held else {
+                    return;
+                };
+                let Role::Splitter { mode } = self.tables.buildings[e.kind as usize].role else {
+                    return;
+                };
+                let r = e.dir.rotate_cw();
+                let l = r.opposite();
+                // Ahead first, if this item goes ahead; then the ways it
+                // takes in turn.
+                let (first, turns): (Option<Dir>, &[Dir]) = match mode {
+                    SplitMode::Even => (None, &[l, r]),
+                    SplitMode::ThreeWay => (None, &[l, e.dir, r]),
+                    SplitMode::Priority => (Some(e.dir), &[l, r]),
+                    SplitMode::Filter if *filter == Some(item) => (Some(e.dir), &[]),
+                    SplitMode::Filter => (None, &[l, r]),
+                };
+                if let Some(d) = first {
+                    if self.push(e.pos.step(d), item, d) {
+                        *held = None;
+                        return;
+                    }
+                }
+                let n = turns.len();
+                for k in 0..n {
+                    let i = (usize::from(*next) + k) % n;
+                    let side = turns[i];
+                    if self.push(e.pos.step(side), item, side) {
+                        *held = None;
+                        *next = ((i + 1) % n) as u8;
+                        break;
                     }
                 }
             }
@@ -2151,6 +2215,12 @@ impl Sim {
                     Some(State::Chest(c)) => c
                         .request
                         .map(|(i, n)| (self.tables.items[i as usize].clone(), n)),
+                    _ => None,
+                },
+                filter: match &self.states[slot] {
+                    Some(State::Splitter {
+                        filter: Some(i), ..
+                    }) => Some(self.tables.items[*i as usize].clone()),
                     _ => None,
                 },
             });

@@ -14,7 +14,7 @@
 
 use mofact_core::command::Command;
 use mofact_core::content::{
-    Bonus, BuildingDef, BuildingRole, Content, RecipeDef, ResearchDef, Stack,
+    Bonus, BuildingDef, BuildingRole, Content, RecipeDef, ResearchDef, SplitMode, Stack,
 };
 use mofact_core::geom::Dir;
 use mofact_core::ids::{BuildingId, EntityId, ItemId, RecipeId, ResearchId};
@@ -318,6 +318,8 @@ enum Hit {
     SetRecipe(EntityId, Option<RecipeId>),
     /// What a requester chest asks drones for (T49).
     SetRequest(EntityId, Option<(mofact_core::ids::ItemId, u32)>),
+    /// What a filter splitter sends ahead.
+    SetFilter(EntityId, Option<mofact_core::ids::ItemId>),
     Turn(EntityId, Dir),
     Remove(EntityId),
     /// The research button: opens or closes the research sheet.
@@ -918,6 +920,9 @@ impl Hud {
             Hit::Belt(b) => vec![Action::Belt(b)],
             Hit::SetRequest(entity, request) => {
                 vec![Action::Send(Command::SetRequest { entity, request })]
+            }
+            Hit::SetFilter(entity, filter) => {
+                vec![Action::Send(Command::SetFilter { entity, filter })]
             }
             Hit::SetRecipe(entity, recipe) => {
                 vec![Action::Send(Command::SetRecipe { entity, recipe })]
@@ -3678,26 +3683,7 @@ impl Hud {
     ) -> usize {
         let current = e.request.clone();
         let count = current.as_ref().map_or(REQUEST_COUNTS[1], |r| r.1);
-        let solid = |i: &mofact_core::ids::ItemId| {
-            view.content
-                .items
-                .iter()
-                .any(|d| &d.id == i && d.kind == mofact_core::content::ItemKind::Solid)
-        };
-        let mut items: Vec<(&mofact_core::ids::ItemId, u32)> = view
-            .snapshot
-            .stock
-            .iter()
-            .filter(|(i, n)| *n > 0 && solid(i))
-            .map(|(i, n)| (i, *n))
-            .collect();
-        items.sort_by_key(|p| std::cmp::Reverse(p.1));
-        items.truncate(REQUEST_ITEMS);
-        if let Some((i, _)) = &current {
-            if !items.iter().any(|(j, _)| *j == i) {
-                items.push((i, 0));
-            }
-        }
+        let items = solid_items(view, current.as_ref().map(|c| &c.0));
         let none = (
             tr("request.none"),
             None,
@@ -3705,7 +3691,7 @@ impl Hud {
             Hit::SetRequest(e.id, None),
         );
         let list: Vec<Pill> = std::iter::once(none)
-            .chain(items.iter().map(|(i, _)| {
+            .chain(items.iter().map(|i| {
                 let on = current.as_ref().is_some_and(|c| &c.0 == *i);
                 (
                     "",
@@ -3736,20 +3722,62 @@ impl Hud {
         rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
     }
 
+    /// A filter splitter's pills: nothing, or one of the solid items in
+    /// stock (most first) to send ahead. Returns the rows.
+    fn filter_picker(
+        &mut self,
+        o: &mut Overlay,
+        view: &View,
+        e: &EntityView,
+        at: [f32; 2],
+        width: f32,
+        draw: bool,
+    ) -> usize {
+        let current = e.filter.as_ref();
+        let items = solid_items(view, current);
+        let none = (
+            tr("request.none"),
+            None,
+            current.is_none(),
+            Hit::SetFilter(e.id, None),
+        );
+        let list: Vec<Pill> = std::iter::once(none)
+            .chain(items.iter().map(|i| {
+                (
+                    "",
+                    view.look.item(i),
+                    current == Some(*i),
+                    Hit::SetFilter(e.id, Some((*i).clone())),
+                )
+            }))
+            .collect();
+        self.pills(o, list, at, width, draw)
+    }
+
     /// The inspect sheet for `e`, bottom-left at `at`.
     fn sheet(&mut self, view: &View, o: &mut Overlay, e: &EntityView, at: [f32; 2], width: f32) {
         let u = self.unit;
         let pad = 16.0 * u;
         let def = view.building(&e.building);
         let hub = def.is_some_and(|d| d.role == BuildingRole::Hub);
-        // Belts, splitters and underground belts only carry: nothing to show but the controls.
+        // Belts, splitters and underground belts only carry: nothing to show
+        // but the controls. Splitters of other modes say what they do.
         let belt = def.is_some_and(|d| {
             matches!(
                 d.role,
                 BuildingRole::Belt { .. }
-                    | BuildingRole::Splitter
+                    | BuildingRole::Splitter {
+                        mode: SplitMode::Even
+                    }
                     | BuildingRole::Underground { .. }
             )
+        });
+        let splits = def.is_some_and(|d| matches!(d.role, BuildingRole::Splitter { .. }));
+        let filter = def.is_some_and(|d| {
+            d.role
+                == BuildingRole::Splitter {
+                    mode: SplitMode::Filter,
+                }
         });
         let pole = def.is_some_and(|d| matches!(d.role, BuildingRole::Pole { .. }));
         let generator = def.and_then(|d| match d.role {
@@ -3810,6 +3838,8 @@ impl Hud {
         let requester = def.is_some_and(|d| matches!(d.role, BuildingRole::RequesterChest { .. }));
         let pill_rows = if requester {
             self.request_picker(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
+        } else if filter {
+            self.filter_picker(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
         } else {
             pill_rows
         };
@@ -3840,7 +3870,7 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
-        if !belt && !hub && !wired && !plumbing && mega.is_none() {
+        if !belt && !splits && !hub && !wired && !plumbing && mega.is_none() {
             let (label, color) = state(e.state, view.look);
             let spx = 12.0 * u;
             let sw = o.measure(label, spx) + 16.0 * u;
@@ -4020,6 +4050,19 @@ impl Hud {
             y += band;
         }
 
+        if filter {
+            let band = pill_rows * 46.0 * u;
+            self.filter_picker(
+                o,
+                view,
+                e,
+                [left, y + band - 6.0 * u],
+                r[2] - 2.0 * pad,
+                true,
+            );
+            y += band;
+        }
+
         if requester {
             let band = pill_rows * 46.0 * u;
             self.request_picker(
@@ -4078,8 +4121,10 @@ pub fn hotkeys(content: &Content) -> Vec<(char, BuildingId)> {
             .filter(char::is_ascii_lowercase)
             .chain('a'..='z')
             // Once the letters run out, the number keys the toolbar leaves,
-            // then the keys beside them on the top two rows.
-            .chain(['8', '9', '0', '-', '=', '[', ']', ';', ',', '.', '/'])
+            // then the keys beside them on the top three rows.
+            .chain([
+                '8', '9', '0', '-', '=', '[', ']', ';', ',', '.', '/', '\'', '\\', '`',
+            ])
             .find(|c| !RESERVED_KEYS.contains(c) && !out.iter().any(|(k, _)| k == c));
         if let Some(k) = key {
             out.push((k, b.id.clone()));
@@ -4094,6 +4139,37 @@ type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
 /// The items a requester chest's sheet offers, and the counts.
 const REQUEST_ITEMS: usize = 11;
 const REQUEST_COUNTS: [u32; 4] = [10, 50, 100, 200];
+
+/// The solid items in stock, most first, up to [`REQUEST_ITEMS`], and
+/// `current` after them if it is not among them: what a requester chest or
+/// filter splitter can be set to.
+fn solid_items<'a>(
+    view: &'a View,
+    current: Option<&'a mofact_core::ids::ItemId>,
+) -> Vec<&'a mofact_core::ids::ItemId> {
+    let solid = |i: &mofact_core::ids::ItemId| {
+        view.content
+            .items
+            .iter()
+            .any(|d| &d.id == i && d.kind == mofact_core::content::ItemKind::Solid)
+    };
+    let mut items: Vec<(&mofact_core::ids::ItemId, u32)> = view
+        .snapshot
+        .stock
+        .iter()
+        .filter(|(i, n)| *n > 0 && solid(i))
+        .map(|(i, n)| (i, *n))
+        .collect();
+    items.sort_by_key(|p| std::cmp::Reverse(p.1));
+    items.truncate(REQUEST_ITEMS);
+    let mut items: Vec<_> = items.into_iter().map(|(i, _)| i).collect();
+    if let Some(i) = current {
+        if !items.contains(&i) {
+            items.push(i);
+        }
+    }
+    items
+}
 
 /// One line on what a building does, for the inspect sheet, when it has no
 /// recipe, fluid or power figures to show instead.
@@ -4124,7 +4200,15 @@ fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
                 None => tr("inspect.lab_idle").into(),
             }
         }
-        Some(BuildingRole::Splitter) => tr("inspect.splitter").into(),
+        Some(BuildingRole::Splitter { mode }) => match mode {
+            SplitMode::Even => tr("inspect.splitter").into(),
+            SplitMode::ThreeWay => tr("inspect.three_way").into(),
+            SplitMode::Priority => tr("inspect.priority").into(),
+            SplitMode::Filter => match &e.filter {
+                Some(item) => trf("inspect.filter", &[&name(item)]),
+                None => tr("inspect.filter_none").into(),
+            },
+        },
         Some(BuildingRole::Underground { reach, .. }) => trf("inspect.underground", &[reach]),
         Some(BuildingRole::Rail) => tr("inspect.rail").into(),
         Some(BuildingRole::RailSignal) => tr("inspect.signal").into(),
@@ -4168,6 +4252,9 @@ fn tip(tool: &Tool) -> &'static str {
             "lab" => "tip.lab",
             "pole" => "tip.pole",
             "splitter" => "tip.splitter",
+            "three-way-splitter" => "tip.three_way_splitter",
+            "priority-splitter" => "tip.priority_splitter",
+            "filter-splitter" => "tip.filter_splitter",
             "underground-belt" => "tip.underground_belt",
             "rail" => "tip.rail",
             "rail-signal" => "tip.rail_signal",

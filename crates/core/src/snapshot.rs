@@ -53,6 +53,9 @@ pub struct EntityView {
     /// For a requester chest, what it asks for and how many (T49).
     #[serde(default)]
     pub request: Option<(ItemId, u32)>,
+    /// For a filter splitter, the item it sends ahead.
+    #[serde(default)]
+    pub filter: Option<ItemId>,
 }
 
 /// The fluid in a pipe segment.

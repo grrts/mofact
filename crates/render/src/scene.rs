@@ -169,6 +169,7 @@ impl Carriers {
             Some(&(Conveyor::Belt, dir, _)) => dir == d,
             Some(&(Conveyor::Underground, dir, exit)) => exit && dir == d,
             Some(&(Conveyor::Splitter, dir, _)) => d == left_of(dir) || d == dir.rotate_cw(),
+            Some(&(Conveyor::SplitterAhead, dir, _)) => d != dir.opposite(),
             None => false,
         }
     }
@@ -178,7 +179,7 @@ impl Carriers {
         match self.0.get(&at) {
             Some(&(Conveyor::Belt, dir, _)) => dir != d.opposite(),
             Some(&(Conveyor::Underground, dir, exit)) => !exit && dir == d,
-            Some(&(Conveyor::Splitter, dir, _)) => dir == d,
+            Some(&(Conveyor::Splitter | Conveyor::SplitterAhead, dir, _)) => dir == d,
             None => false,
         }
     }
@@ -740,6 +741,7 @@ mod tests {
     fn belt(x: i32) -> EntityView {
         EntityView {
             request: None,
+            filter: None,
             id: EntityId(x as u32),
             building: "belt".into(),
             pos: TilePos::new(x, 0),
@@ -923,6 +925,7 @@ mod tests {
         let (atlases, mut scene) = (look.atlases(), Scene::default());
         let furnace = |state| EntityView {
             request: None,
+            filter: None,
             id: EntityId(9),
             building: "furnace".into(),
             pos: TilePos::new(2, 0),
@@ -967,6 +970,7 @@ mod tests {
         let (atlases, mut scene) = (look.atlases(), Scene::default());
         let pipe = |fill: Option<f32>| EntityView {
             request: None,
+            filter: None,
             id: EntityId(3),
             building: "pipe".into(),
             pos: TilePos::new(1, 0),

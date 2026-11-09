@@ -16,9 +16,9 @@ use web_time::Instant;
 /// What each building sounds like while working.
 fn hum_for(role: &BuildingRole) -> Option<Hum> {
     Some(match role {
-        BuildingRole::Belt { .. } | BuildingRole::Splitter | BuildingRole::Underground { .. } => {
-            Hum::Belt
-        }
+        BuildingRole::Belt { .. }
+        | BuildingRole::Splitter { .. }
+        | BuildingRole::Underground { .. } => Hum::Belt,
         BuildingRole::Miner { .. } => Hum::Drill,
         BuildingRole::Crafter { categories, .. } => {
             let has = |k: &str| categories.iter().any(|c| c == k);
@@ -259,6 +259,7 @@ mod tests {
     fn drill(id: u32, x: i32, state: MachineState) -> EntityView {
         EntityView {
             request: None,
+            filter: None,
             id: EntityId(id),
             building: "drill".into(),
             pos: TilePos::new(x, 0),

@@ -16,8 +16,17 @@
     (id: "express-belt", name: "Express belt", size: (1, 1), role: Belt(tiles_per_second: 6.0),
         cost: [(item: "gear", count: 2), (item: "steel", count: 1)]),
     // Splits a line in two: items from behind go out left and right in turn.
-    (id: "splitter",  name: "Splitter",  size: (1, 1), role: Splitter,
+    (id: "splitter",  name: "Splitter",  size: (1, 1), role: Splitter(mode: Even),
         cost: [(item: "circuit", count: 5), (item: "iron-plate", count: 5)]),
+    // Splits a line in three: left, ahead and right in turn.
+    (id: "three-way-splitter", name: "Three-way splitter", size: (1, 1), role: Splitter(mode: ThreeWay),
+        cost: [(item: "circuit", count: 8), (item: "iron-plate", count: 8)]),
+    // Feeds the line ahead first; only the overflow goes left and right.
+    (id: "priority-splitter", name: "Priority splitter", size: (1, 1), role: Splitter(mode: Priority),
+        cost: [(item: "circuit", count: 5), (item: "gear", count: 5), (item: "iron-plate", count: 5)]),
+    // Sends one chosen item ahead and everything else left and right.
+    (id: "filter-splitter", name: "Filter splitter", size: (1, 1), role: Splitter(mode: Filter),
+        cost: [(item: "circuit", count: 10), (item: "iron-plate", count: 5)]),
     // Place an entrance, then an exit up to 5 tiles on, facing the same way.
     (id: "underground-belt", name: "Underground belt", size: (1, 1),
         role: Underground(tiles_per_second: 6.0, reach: 5),

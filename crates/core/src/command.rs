@@ -61,6 +61,12 @@ pub enum Command {
     /// Mark an entity for construction drones to take down, or with
     /// `false` unmark it.
     Mark { entity: EntityId, on: bool },
+    /// Choose the item a filter splitter sends ahead; `None` sends
+    /// everything to the sides.
+    SetFilter {
+        entity: EntityId,
+        filter: Option<ItemId>,
+    },
 }
 
 /// One stop on a train's schedule: the train stop at `at`, where it

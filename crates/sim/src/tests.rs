@@ -870,6 +870,147 @@ fn two_rows_of_splitters_balance_four_lines() {
     assert_eq!(lines, [10; 4], "40 plates split four ways");
 }
 
+/// A splitter of `kind` at (3, 0) facing east, fed by a line from the
+/// west, with lines of `ahead` belts east and ten north and south of it.
+/// Returns the sim, the splitter and the first belt.
+fn split_test(kind: &str, ahead: i32) -> (Sim, EntityId, EntityId) {
+    let mut sim = logistics();
+    belts(&mut sim, 0..=2, 0, Dir::East);
+    let splitter = place(&mut sim, kind, 3, 0, Dir::East, None);
+    belts(&mut sim, 4..=3 + ahead, 0, Dir::East);
+    for y in 1..=10 {
+        place(&mut sim, "belt", 3, -y, Dir::North, None);
+        place(&mut sim, "belt", 3, y, Dir::South, None);
+    }
+    let first = sim.entity_at(TilePos::new(0, 0)).unwrap();
+    (sim, splitter, first)
+}
+
+/// Items on the lines north, ahead (east) and south of a [`split_test`].
+fn split_lines(sim: &Sim) -> [usize; 3] {
+    [
+        items_on(sim, |t| t.x == 3 && t.y < 0),
+        items_on(sim, |t| t.x > 3),
+        items_on(sim, |t| t.x == 3 && t.y > 0),
+    ]
+}
+
+#[test]
+fn a_three_way_splitter_splits_a_line_in_three() {
+    let (mut sim, _, first) = split_test("three-way-splitter", 10);
+    for _ in 0..30 {
+        assert!(sim.feed(first, &item("iron-plate")));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 10);
+    assert_eq!(split_lines(&sim), [10; 3], "30 plates split three ways");
+}
+
+#[test]
+fn a_priority_splitter_fills_ahead_first_then_overflows() {
+    let (mut sim, _, first) = split_test("priority-splitter", 10);
+    for _ in 0..6 {
+        assert!(sim.feed(first, &item("iron-plate")));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 5);
+    assert_eq!(
+        split_lines(&sim),
+        [0, 6, 0],
+        "all ahead while there is room"
+    );
+
+    // Two belts ahead that lead nowhere back up; the rest overflows.
+    let (mut sim, _, first) = split_test("priority-splitter", 2);
+    for _ in 0..30 {
+        assert!(sim.feed(first, &item("iron-plate")));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 10);
+    let [north, ahead, south] = split_lines(&sim);
+    assert!(ahead > 0, "the line ahead filled");
+    assert_eq!(north + ahead + south, 30);
+    assert!(
+        north.abs_diff(south) <= 1,
+        "overflow split evenly: {north} {south}"
+    );
+}
+
+#[test]
+fn a_filter_splitter_sends_its_item_ahead() {
+    let (mut sim, splitter, first) = split_test("filter-splitter", 10);
+    let set = Command::SetFilter {
+        entity: splitter,
+        filter: Some(item("copper-plate")),
+    };
+    let CommandResult::Applied { undo, .. } = sim.apply(&set) else {
+        panic!("filter refused");
+    };
+    assert_eq!(
+        undo,
+        vec![Command::SetFilter {
+            entity: splitter,
+            filter: None
+        }]
+    );
+    let shown = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == splitter)
+            .unwrap()
+            .filter
+    };
+    assert_eq!(shown(&sim), Some(item("copper-plate")));
+    for k in 0..30 {
+        let i = if k % 3 == 0 {
+            "copper-plate"
+        } else {
+            "iron-plate"
+        };
+        assert!(sim.feed(first, &item(i)));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 10);
+    assert_eq!(split_lines(&sim), [10, 10, 10]);
+    let ahead: Vec<_> = sim
+        .snapshot()
+        .belt_items
+        .into_iter()
+        .filter(|b| b.tile.x > 3)
+        .map(|b| b.item)
+        .collect();
+    assert!(
+        ahead.iter().all(|i| *i == item("copper-plate")),
+        "{ahead:?}"
+    );
+
+    // The filter survives a save, and removing the splitter undoes to the same.
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty());
+    assert_eq!(shown(&loaded), Some(item("copper-plate")));
+    let CommandResult::Applied { undo, .. } = sim.apply(&Command::Remove { entity: splitter })
+    else {
+        panic!("remove refused");
+    };
+    assert!(undo.contains(&Command::SetFilter {
+        entity: splitter,
+        filter: Some(item("copper-plate")),
+    }));
+}
+
+#[test]
+fn only_a_filter_splitter_takes_a_filter() {
+    let (mut sim, splitter, _) = split_test("splitter", 10);
+    assert_eq!(
+        sim.apply(&Command::SetFilter {
+            entity: splitter,
+            filter: Some(item("iron-plate")),
+        }),
+        CommandResult::Refused(CommandError::UnknownContent)
+    );
+}
+
 #[test]
 fn underground_belts_pass_under_buildings() {
     let mut sim = logistics();
