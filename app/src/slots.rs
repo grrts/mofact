@@ -29,6 +29,7 @@ pub enum Request {
         slot: u8,
         seed: u64,
         preset: u8,
+        rules: mofact_sim::Rules,
     },
 }
 

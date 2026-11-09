@@ -47,6 +47,10 @@ const LOW_POWER_KEY: &str = "mofact-low-power";
 const COLOUR_BLIND_KEY: &str = "mofact-colour-blind";
 const LARGE_TEXT_KEY: &str = "mofact-large-text";
 const REDUCE_MOTION_KEY: &str = "mofact-reduce-motion";
+/// The volume in percent, and ambience and vibration as "1" or "0".
+const VOLUME_KEY: &str = "mofact-volume";
+const AMBIENCE_KEY: &str = "mofact-ambience";
+const VIBRATION_KEY: &str = "mofact-vibration";
 const CRASH_KEY: &str = "mofact-crash";
 
 /// Crash reports kept in local storage, never sent (see `mofact::crash`).
@@ -87,6 +91,8 @@ struct Shell {
     colour_blind: bool,
     large_text: bool,
     reduce_motion: bool,
+    /// Volume, ambience and vibration as last stored.
+    hearing: (u8, bool, bool),
     language: mofact_ui::i18n::Choice,
     /// The blueprint library's change count as last stored.
     blueprints: u64,
@@ -158,6 +164,18 @@ impl Shell {
                 let _ = st.set_item(COLOUR_BLIND_KEY, flag(now.1));
                 let _ = st.set_item(LARGE_TEXT_KEY, flag(now.2));
                 let _ = st.set_item(REDUCE_MOTION_KEY, flag(now.3));
+            }
+        }
+        // And the sound and vibration settings.
+        let g = &self.game;
+        let now = (g.volume(), g.ambience(), g.vibration());
+        if now != self.hearing {
+            self.hearing = now;
+            if let Ok(Some(st)) = self.window.local_storage() {
+                let flag = |on: bool| if on { "1" } else { "0" };
+                let _ = st.set_item(VOLUME_KEY, &now.0.to_string());
+                let _ = st.set_item(AMBIENCE_KEY, flag(now.1));
+                let _ = st.set_item(VIBRATION_KEY, flag(now.2));
             }
         }
         // And the language, when the player picks one.
@@ -452,6 +470,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         colour_blind: false,
         large_text: false,
         reduce_motion: false,
+        hearing: (100, true, true),
         language: mofact_ui::i18n::Choice::Device,
         blueprints: 0,
     }));
@@ -474,6 +493,22 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
         {
             s.game.set_blueprints(&text);
         }
+        let item = |key: &str| {
+            window
+                .local_storage()
+                .ok()
+                .flatten()
+                .and_then(|st| st.get_item(key).ok().flatten())
+        };
+        let volume = item(VOLUME_KEY)
+            .and_then(|v| v.parse::<u8>().ok())
+            .map_or(100, |v| v.min(100));
+        let ambience = item(AMBIENCE_KEY).as_deref() != Some("0");
+        let vibration = item(VIBRATION_KEY).as_deref() != Some("0");
+        s.game.set_volume(volume);
+        s.game.set_ambience(ambience);
+        s.game.set_vibration(vibration);
+        s.hearing = (s.game.volume(), ambience, vibration);
         if stored(LOW_POWER_KEY) {
             s.game.set_low_power(true);
             s.low_power = true;

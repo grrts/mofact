@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 19;
+pub const VERSION: u16 = 20;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -77,6 +77,30 @@ struct World {
     /// Drones, ghosts and what is marked for them (T49, T50).
     fleet: SavedFleet,
     /// The hub's orders (version 18).
+    orders: SavedOrders,
+    /// The rules the game was started with (version 20): whether ore runs
+    /// out, and the orders' pace by number.
+    rules: (bool, u8),
+}
+
+/// Versions 18 and 19: the same, before the new-game rules.
+#[derive(Deserialize)]
+struct WorldV19 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+    pins: Vec<TilePos>,
+    world: Option<(u64, u8)>,
+    explored: Option<Vec<mofact_core::geom::FogCell>>,
+    fleet: SavedFleet,
     orders: SavedOrders,
 }
 
@@ -405,6 +429,10 @@ struct SavedCrafter {
     blocked: u32,
 }
 
+/// The rules a save from before them plays by: ore runs out, orders at
+/// normal pace.
+const DEFAULT_RULES: (bool, u8) = (true, crate::OrderPace::Normal as u8);
+
 /// Bring an older payload up to [`VERSION`].
 fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
     let corrupt = |e: postcard::Error| LoadError::Corrupt(e.to_string());
@@ -428,6 +456,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -453,6 +482,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -476,6 +506,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -499,6 +530,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 12 adds pins on the world map.
@@ -521,6 +553,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 13 saves the map's seed and preset.
@@ -543,6 +576,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 14 adds the megaproject: a new variant only. Version 15
@@ -566,6 +600,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: None,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 16 adds drones, ghosts and marks, ports and chests.
@@ -588,6 +623,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: v.explored,
                 fleet: SavedFleet::default(),
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
         // Version 17 adds splitter modes: a new variant only. Version 18
@@ -611,10 +647,34 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 explored: v.explored,
                 fleet: v.fleet,
                 orders: SavedOrders::default(),
+                rules: DEFAULT_RULES,
             })
         }
-        // Version 19 adds warehouses: a new variant only.
-        18 | 19 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 19 adds warehouses: a new variant only. Version 20 adds
+        // the new-game rules; an older game plays by the defaults.
+        18 | 19 => {
+            let v: WorldV19 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: v.world,
+                explored: v.explored,
+                fleet: v.fleet,
+                orders: v.orders,
+                rules: DEFAULT_RULES,
+            })
+        }
+        20 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -845,6 +905,7 @@ impl Sim {
             explored: Some(self.explored.to_vec()),
             fleet: self.save_fleet(),
             orders: self.save_orders(),
+            rules: (self.rules.ore_runs_out, self.rules.orders as u8),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -933,6 +994,10 @@ impl Sim {
                 }) as u16,
         };
         sim.load_orders(&world.orders, &mut warnings);
+        sim.rules = crate::Rules {
+            ore_runs_out: world.rules.0,
+            orders: crate::OrderPace::from_u8(world.rules.1),
+        };
         // What each pipe brought, to fill the segments once they are built.
         let mut fluid = std::collections::HashMap::new();
         for (slot, s) in world.entities {

@@ -232,6 +232,8 @@ pub struct Sim {
     goal: u16,
     /// The hub's orders, once the goals are done.
     orders: orders::Orders,
+    /// The rules the game was started with (see [`Rules`]).
+    rules: Rules,
     /// The demo's last open tier: research of a higher tier is refused
     /// until the full game is bought. Not saved: the app sets it from the
     /// store each time it starts.
@@ -249,6 +251,70 @@ struct Research {
     /// What repeatable research has added, as extra speed: drills,
     /// crafters, labs. Worked out from `units`, never saved.
     boost: [f32; 3],
+}
+
+/// How the hub's orders run, as picked for a new game.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum OrderPace {
+    /// No orders: the factory grows at its own pace.
+    Off = 0,
+    /// Twice the time for each order.
+    Relaxed = 1,
+    /// The times the content gives.
+    #[default]
+    Normal = 2,
+    /// Two thirds of the time, for half as much again in reward.
+    Hard = 3,
+}
+
+impl OrderPace {
+    pub const ALL: [OrderPace; 4] = [
+        OrderPace::Off,
+        OrderPace::Relaxed,
+        OrderPace::Normal,
+        OrderPace::Hard,
+    ];
+
+    /// The pace numbered `n`; an unknown number is normal.
+    pub fn from_u8(n: u8) -> Self {
+        Self::ALL.get(usize::from(n)).copied().unwrap_or_default()
+    }
+
+    /// An order's time, from the time the content gives.
+    pub fn ticks(self, ticks: Tick) -> Tick {
+        match self {
+            OrderPace::Relaxed => ticks * 2,
+            OrderPace::Hard => ticks * 2 / 3,
+            _ => ticks,
+        }
+    }
+
+    /// An order's reward, from the reward it would pay at normal pace.
+    pub fn reward(self, n: u32) -> u32 {
+        match self {
+            OrderPace::Hard => n + n / 2,
+            _ => n,
+        }
+    }
+}
+
+/// The rules a game was started with, picked on the new-game form and
+/// kept in its save.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Rules {
+    /// Whether drills use up the ore they dig. Off, a patch lasts forever.
+    pub ore_runs_out: bool,
+    /// How the hub's orders run.
+    pub orders: OrderPace,
+}
+
+impl Default for Rules {
+    fn default() -> Self {
+        Self {
+            ore_runs_out: true,
+            orders: OrderPace::Normal,
+        }
+    }
 }
 
 impl Sim {
@@ -280,6 +346,20 @@ impl Sim {
     pub fn complete_research(&mut self, id: &mofact_core::ids::ResearchId) {
         if let Some(r) = self.tables.research(id) {
             self.finish_research(r);
+        }
+    }
+
+    /// The rules this game was started with.
+    pub fn rules(&self) -> Rules {
+        self.rules
+    }
+
+    /// Play under `rules`, as a new game set up on the form does. With
+    /// orders turned off, an order open now is dropped.
+    pub fn set_rules(&mut self, rules: Rules) {
+        self.rules = rules;
+        if rules.orders == OrderPace::Off {
+            self.orders.open = None;
         }
     }
 
@@ -443,8 +523,13 @@ impl Sim {
     /// then from the tiles around it. A tile is mined out when it runs dry.
     fn mine(&mut self, pos: TilePos) -> Option<Item> {
         let pos = Self::reach(pos).find(|t| self.ore.contains_key(t))?;
+        let endless = !self.rules.ore_runs_out;
         let (item, left) = self.ore.get_mut(&pos)?;
         let item = *item;
+        if endless {
+            // Ore that never runs out: the drill digs without using it up.
+            return Some(item);
+        }
         *left -= 1;
         if *left == 0 {
             self.ore.remove(&pos);

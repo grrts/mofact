@@ -323,6 +323,38 @@ impl Game {
         self.hud.set_large_text(on);
     }
 
+    /// How loud the game is, in percent.
+    pub fn volume(&self) -> u8 {
+        self.hud.volume()
+    }
+
+    /// Set the volume, as a platform does from a saved setting.
+    pub fn set_volume(&mut self, percent: u8) {
+        self.hud.set_volume(percent);
+        self.sound.set_volume(self.hud.volume());
+    }
+
+    /// Whether the land's ambient sound plays.
+    pub fn ambience(&self) -> bool {
+        self.hud.ambience()
+    }
+
+    /// Turn the land's ambient sound on or off, as a platform does from a saved setting.
+    pub fn set_ambience(&mut self, on: bool) {
+        self.hud.set_ambience(on);
+        self.sound.set_ambience(on);
+    }
+
+    /// Whether the game may vibrate the phone.
+    pub fn vibration(&self) -> bool {
+        self.hud.vibration()
+    }
+
+    /// Turn vibration on or off, as a platform does from a saved setting.
+    pub fn set_vibration(&mut self, on: bool) {
+        self.hud.set_vibration(on);
+    }
+
     /// Whether reduce motion is on.
     pub fn reduce_motion(&self) -> bool {
         self.hud.reduce_motion()
@@ -387,7 +419,10 @@ impl Game {
         self.sim.pump();
         let results: Vec<_> = self.sim.results().collect();
         self.sound.results(&results);
-        self.haptic = self.haptics.frame(&results, &self.sim.latest());
+        self.haptic = self
+            .haptics
+            .frame(&results, &self.sim.latest())
+            .filter(|_| self.hud.vibration());
         for result in results {
             if let mofact_core::command::CommandResult::Refused(why) = result {
                 use mofact_core::command::CommandError as E;
@@ -891,9 +926,21 @@ impl Game {
             Action::Language(_) => self.requests.push(Request::Refresh),
             Action::LoadSlot(n) => self.requests.push(Request::Load(n)),
             Action::DeleteSlot(n) => self.requests.push(Request::Delete(n)),
-            Action::NewGame { slot, seed, preset } => {
-                self.requests.push(Request::New { slot, seed, preset })
-            }
+            Action::NewGame {
+                slot,
+                seed,
+                preset,
+                ore_runs_out,
+                orders,
+            } => self.requests.push(Request::New {
+                slot,
+                seed,
+                preset,
+                rules: mofact_sim::Rules {
+                    ore_runs_out,
+                    orders: mofact_sim::OrderPace::from_u8(orders),
+                },
+            }),
             Action::Redo => self.sim.redo(),
             Action::CopyCrash => {
                 if let Some(r) = self.crash.take() {
@@ -1063,6 +1110,9 @@ impl Game {
             Action::ColourBlind(on) => self.use_colour_blind(on),
             Action::LargeText(_) => {}
             Action::ReduceMotion(on) => self.scene.still = on,
+            Action::Volume(percent) => self.sound.set_volume(percent),
+            Action::Ambience(on) => self.sound.set_ambience(on),
+            Action::Vibration(_) => {}
             Action::Map(open) => {
                 let cam = &mut self.controls.camera;
                 let scale = cam.scale();
@@ -1168,12 +1218,18 @@ impl Game {
                     store.set_current(n);
                     self.hud.toast(trf("toast.slot_loaded", &[&(n + 1)]));
                 }
-                Request::New { slot, seed, preset } => {
+                Request::New {
+                    slot,
+                    seed,
+                    preset,
+                    rules,
+                } => {
                     if !crate::slots::valid(slot) {
                         continue;
                     }
                     let (mut sim, _) = new_game(&self.content, seed)?;
                     sim.set_world_gen(seed, mofact_world::Preset::from_u8(preset));
+                    sim.set_rules(rules);
                     if slot != current {
                         store.write(current, &self.save_bytes()?)?;
                     }

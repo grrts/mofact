@@ -899,6 +899,7 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                 "menu",
                 "menu-delete",
                 "new-game",
+                "settings",
                 "unlock",
                 "selection",
                 "library",
@@ -924,6 +925,7 @@ fn every_state(mut check: impl FnMut(&mut Fixture, (u32, u32), f32, &Tool, &str)
                         f.hud.confirm_delete = Some(1);
                     }
                     "new-game" => f.hud.open_menu(Some((2, 123_456_789))),
+                    "settings" => f.hud.open_settings(),
                     "unlock" => {
                         f.store.demo = Some(3);
                         f.store.price = Some("4,99 €".into());
@@ -1112,13 +1114,20 @@ fn the_game_menu_loads_deletes_after_asking_and_starts_a_seeded_game() {
     f.draw(screen, 1.0, &Tool::Hand);
     f.tap(centre(f.find(&Hit::Preset(2))));
     f.draw(screen, 1.0, &Tool::Hand);
+    // Endless ore, and the orders stepped from normal to hard.
+    f.tap(centre(f.find(&Hit::RuleOre)));
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::RuleOrders)));
+    f.draw(screen, 1.0, &Tool::Hand);
     let (_, actions) = f.tap(centre(f.find(&Hit::StartNew)));
     assert_eq!(
         actions,
         vec![Action::NewGame {
             slot: 2,
             seed: 707,
-            preset: 2
+            preset: 2,
+            ore_runs_out: false,
+            orders: 3,
         }]
     );
 }
@@ -1441,10 +1450,10 @@ fn large_text_fits_every_screen_in_english_and_german() {
 }
 
 #[test]
-fn large_text_draws_bigger_and_the_menu_toggles_both_settings() {
+fn large_text_draws_bigger_and_the_settings_toggle_both() {
     let mut f = Fixture::new();
     let size = (1170, 2532);
-    f.hud.open_menu(None);
+    f.hud.open_settings();
     f.draw(size, 3.0, &Tool::Hand);
     let small = f.hud.unit;
     let large = centre(f.find(&Hit::LargeText));
@@ -2039,4 +2048,104 @@ fn a_warehouse_sheet_shows_what_it_holds_and_picks_what_goes_out() {
         );
         f.hud.select(Some(EntityId(7)));
     }
+}
+
+#[test]
+fn the_settings_sheet_opens_from_both_menus_and_goes_back_to_where_it_came_from() {
+    let mut f = Fixture::new();
+    let screen = (390, 844);
+    f.hud.open_title();
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::TitleSettings)));
+    assert!(f.hud.settings_open() && !f.hud.title_open());
+    f.draw(screen, 1.0, &Tool::Hand);
+    // The volume steps down to silent and round to full again.
+    let mut steps = Vec::new();
+    for _ in 0..5 {
+        let (_, actions) = f.tap(centre(f.find(&Hit::Volume)));
+        steps.extend(actions);
+        f.draw(screen, 1.0, &Tool::Hand);
+    }
+    assert_eq!(
+        steps,
+        [75, 50, 25, 0, 100].map(Action::Volume).to_vec(),
+        "volume steps"
+    );
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Ambience))).1,
+        vec![Action::Ambience(false)]
+    );
+    assert!(!f.hud.ambience());
+    f.draw(screen, 1.0, &Tool::Hand);
+    assert_eq!(
+        f.tap(centre(f.find(&Hit::Vibration))).1,
+        vec![Action::Vibration(false)]
+    );
+    assert!(!f.hud.vibration());
+    f.draw(screen, 1.0, &Tool::Hand);
+    for hit in [
+        Hit::Power,
+        Hit::Motion,
+        Hit::ColourBlind,
+        Hit::LargeText,
+        Hit::Language,
+    ] {
+        f.find(&hit);
+    }
+    f.tap(centre(f.find(&Hit::SettingsClose)));
+    assert!(f.hud.title_open() && !f.hud.settings_open());
+
+    // From the game menu, closing goes back to the menu.
+    f.hud.close_title();
+    f.hud.open_menu(None);
+    f.draw(screen, 1.0, &Tool::Hand);
+    f.tap(centre(f.find(&Hit::Settings)));
+    assert!(f.hud.settings_open() && !f.hud.menu_open());
+    f.draw(screen, 1.0, &Tool::Hand);
+    let (_, actions) = f.tap(centre(f.find(&Hit::SettingsClose)));
+    assert_eq!(actions, vec![Action::MenuOpened]);
+    assert!(f.hud.menu_open() && !f.hud.settings_open());
+
+    // A volume set from a saved file lands on the nearest step.
+    f.hud.set_volume(60);
+    assert_eq!(f.hud.volume(), 50);
+}
+
+#[test]
+fn the_settings_sheet_and_new_game_rules_fit_a_small_phone_either_way_in_every_language() {
+    for lang in i18n::Lang::ALL {
+        i18n::set_lang(lang);
+        for (size, scale) in [((640, 1136), 2.0), ((1136, 640), 2.0), ((2048, 2732), 2.0)] {
+            for form in [false, true] {
+                let mut f = Fixture::new();
+                if form {
+                    f.hud.open_menu(Some((0, 42)));
+                } else {
+                    f.hud.open_settings();
+                }
+                f.draw(size, scale, &Tool::Hand);
+                let want = if form {
+                    vec![Hit::RuleOre, Hit::RuleOrders, Hit::StartNew]
+                } else {
+                    vec![
+                        Hit::Volume,
+                        Hit::Vibration,
+                        Hit::Language,
+                        Hit::SettingsClose,
+                    ]
+                };
+                for hit in want {
+                    let r = f.find(&hit);
+                    assert!(
+                        r[0] >= 0.0
+                            && r[1] >= 0.0
+                            && r[0] + r[2] <= size.0 as f32
+                            && r[1] + r[3] <= size.1 as f32,
+                        "{lang:?} {size:?}: {hit:?} at {r:?} off screen"
+                    );
+                }
+            }
+        }
+    }
+    i18n::set_lang(i18n::Lang::En);
 }
