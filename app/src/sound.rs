@@ -47,7 +47,12 @@ pub struct Sound {
     /// The goal and research count last frame, to hear them change.
     goal: Option<Option<u16>>,
     done: usize,
+    /// Whether the land's ambient sound plays.
+    ambience: bool,
 }
+
+/// The synth's overall loudness at full volume: room left for a crowd of cues.
+const FULL: f32 = 0.7;
 
 impl Sound {
     pub fn new(content: &Content) -> Self {
@@ -62,6 +67,7 @@ impl Sound {
             last: None,
             goal: None,
             done: 0,
+            ambience: true,
         }
     }
 
@@ -73,13 +79,38 @@ impl Sound {
     /// Use `audio` instead, as a platform does when its output runs at
     /// another sample rate. Muting carries over.
     pub fn use_audio(&mut self, audio: Audio) {
-        let muted = self.audio.lock().muted();
-        audio.lock().set_muted(muted);
+        let (muted, master) = {
+            let old = self.audio.lock();
+            (old.muted(), old.master())
+        };
+        {
+            let mut new = audio.lock();
+            new.set_muted(muted);
+            new.set_master(master);
+        }
         self.audio = audio;
     }
 
     pub fn set_muted(&self, muted: bool) {
         self.audio.lock().set_muted(muted);
+    }
+
+    /// Set how loud the game is, in percent of full.
+    pub fn set_volume(&self, percent: u8) {
+        self.audio
+            .lock()
+            .set_master(FULL * f32::from(percent.min(100)) / 100.0);
+    }
+
+    /// Let the land's ambient sound play, or hush it.
+    pub fn set_ambience(&mut self, on: bool) {
+        self.ambience = on;
+        if !on {
+            let mut synth = self.audio.lock();
+            for a in AMBIENTS {
+                synth.set_ambient(a, 0.0);
+            }
+        }
     }
 
     /// A cue for what the latest commands did: a build, a removal (whose
@@ -241,6 +272,9 @@ pub fn ambient_levels(terrain: impl IntoIterator<Item = u8>, far: bool) -> [f32;
 impl Sound {
     /// Set the land's sound from the terrain in view; see [`ambient_levels`].
     pub fn ground(&self, terrain: impl IntoIterator<Item = u8>, far: bool) {
+        if !self.ambience {
+            return;
+        }
         let levels = ambient_levels(terrain, far);
         let mut synth = self.audio.lock();
         for (a, l) in AMBIENTS.iter().zip(levels) {

@@ -5,6 +5,16 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **More settings:** Settings, from the start menu or the game menu, now
+  open a sheet of their own: volume in steps of a quarter, ambient sound
+  and vibration on or off, low power, reduce motion, colour-blind mode,
+  large text and the language, grouped under Sound, Display,
+  Accessibility and General, and kept between runs.
+- **New-game rules:** the new-game form also picks whether ore runs out
+  (off, a patch lasts forever) and the hub orders' pace: off, relaxed
+  (twice the time), normal, or hard (two thirds of the time for half as
+  much again in reward). Save format 20 keeps them; older games play on
+  by the usual rules.
 - **Hub orders:** once the guided goals are done, the hub posts an order
   against the clock, such as 150 gears in 10 minutes, picked from the
   latest things the factory makes. Shipping it takes the items out of the

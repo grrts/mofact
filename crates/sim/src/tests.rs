@@ -2684,3 +2684,51 @@ fn a_warehouse_is_a_provider_to_drones() {
         }
     ));
 }
+
+#[test]
+fn a_game_where_ore_never_runs_out_keeps_its_patch() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.set_rules(crate::Rules {
+        ore_runs_out: false,
+        ..crate::Rules::default()
+    });
+    sim.add_stock(&item("iron-plate"), 10_000);
+    let t = TilePos::new(0, 0);
+    sim.set_ore_amount(t, &item("iron-ore"), 3);
+    place(&mut sim, "drill", t.x, t.y, Dir::East, None);
+    for x in 1..=4 {
+        place(&mut sim, "belt", x, 0, Dir::East, None);
+    }
+    run(&mut sim, 45);
+    assert_eq!(sim.ore_left(t), Some(3), "dug, but never used up");
+    assert!(sim.snapshot().depleted.is_empty());
+    // The save keeps the rule.
+    let (loaded, warnings) = Sim::load(&content, &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert!(!loaded.rules().ore_runs_out);
+}
+
+#[test]
+fn the_orders_pace_picked_for_a_game_sets_their_time_and_reward() {
+    let content = content();
+    let open = |pace: crate::OrderPace| {
+        let mut sim = Sim::with_content(&content);
+        sim.set_rules(crate::Rules {
+            orders: pace,
+            ..crate::Rules::default()
+        });
+        let iron = sim.tables.item(&item("iron-plate")).unwrap();
+        sim.delivered[iron as usize] = 10;
+        sim.goal = content.goals.len() as u16;
+        sim.check_orders();
+        let order = sim.snapshot().order;
+        let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+        assert_eq!(loaded.rules().orders, pace, "the save keeps the pace");
+        order.map(|o| (o.seconds_left, o.reward[0].1))
+    };
+    assert_eq!(open(crate::OrderPace::Off), None, "no orders at all");
+    assert_eq!(open(crate::OrderPace::Relaxed), Some((1200, 120)));
+    assert_eq!(open(crate::OrderPace::Normal), Some((600, 120)));
+    assert_eq!(open(crate::OrderPace::Hard), Some((400, 180)));
+}

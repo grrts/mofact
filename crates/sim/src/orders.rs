@@ -6,7 +6,7 @@
 //! between.
 
 use crate::tables::Item;
-use crate::Sim;
+use crate::{OrderPace, Sim};
 use mofact_core::snapshot::OrderView;
 use mofact_core::{Tick, TICKS_PER_SECOND};
 
@@ -59,7 +59,10 @@ pub fn scaled(n: u32, streak: u32) -> u32 {
 impl Sim {
     /// Ship, miss or open an order. Nothing happens until the goals are done.
     pub(crate) fn check_orders(&mut self) {
-        if (self.goal as usize) < self.tables.goals.len() || self.tables.orders.is_empty() {
+        if (self.goal as usize) < self.tables.goals.len()
+            || self.tables.orders.is_empty()
+            || self.rules.orders == OrderPace::Off
+        {
             return;
         }
         let tick = self.tick;
@@ -74,8 +77,9 @@ impl Sim {
             let have = self.delivered[item as usize].saturating_sub(open.base);
             if have >= u64::from(need) && self.stock[item as usize] >= need {
                 self.stock[item as usize] -= need;
+                let pace = self.rules.orders;
                 for &(i, n) in &row.reward {
-                    self.stock[i as usize] += scaled(n, o.streak);
+                    self.stock[i as usize] += pace.reward(scaled(n, o.streak));
                 }
                 o.shipped += 1;
                 o.streak += 1;
@@ -115,7 +119,7 @@ impl Sim {
         let item = row.item.expect("only orders with an item are picked");
         o.open = Some(Open {
             index: k,
-            due: tick + row.ticks,
+            due: tick + self.rules.orders.ticks(row.ticks),
             base: self.delivered[item as usize],
         });
         o.last = Some(k);
@@ -140,7 +144,7 @@ impl Sim {
             reward: row
                 .reward
                 .iter()
-                .map(|&(i, n)| (name(i), scaled(n, streak)))
+                .map(|&(i, n)| (name(i), self.rules.orders.reward(scaled(n, streak))))
                 .collect(),
         })
     }

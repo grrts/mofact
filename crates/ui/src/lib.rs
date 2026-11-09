@@ -269,6 +269,12 @@ pub enum Action {
     LargeText(bool),
     /// Turn reduce motion on (true) or off.
     ReduceMotion(bool),
+    /// Set how loud the game is, in percent (0 to 100).
+    Volume(u8),
+    /// Turn the land's ambient sound on (true) or off.
+    Ambience(bool),
+    /// Turn vibration on (true) or off.
+    Vibration(bool),
     /// The player picked a language, or to follow the device's (T65).
     Language(i18n::Choice),
     /// The game menu opened: the slots it lists want refreshing.
@@ -278,11 +284,15 @@ pub enum Action {
     /// Wipe the game in this slot.
     DeleteSlot(u8),
     /// Save the game being played and start a new one in this slot, on
-    /// the map from this seed and preset (by number, see `mofact_world::PRESETS`).
+    /// the map from this seed and preset (by number, see `mofact_world::PRESETS`),
+    /// under these rules: whether ore runs out, and the pace of the hub's
+    /// orders by number (see [`PACE_NAMES`]).
     NewGame {
         slot: u8,
         seed: u64,
         preset: u8,
+        ore_runs_out: bool,
+        orders: u8,
     },
     /// Buy the full game.
     Buy,
@@ -369,6 +379,13 @@ enum Hit {
     Motion,
     /// The game menu's crash report button.
     CopyCrash,
+    /// The game menu's settings button, and the settings sheet's close.
+    Settings,
+    SettingsClose,
+    /// The settings sheet's volume, ambience and vibration.
+    Volume,
+    Ambience,
+    Vibration,
     /// The menu button: opens and closes the game menu.
     Menu,
     /// The language button in the game menu: steps to the next language.
@@ -383,6 +400,9 @@ enum Hit {
     Backspace,
     Dice,
     Preset(u8),
+    /// The new-game rules: whether ore runs out, and the orders' pace.
+    RuleOre,
+    RuleOrders,
     CancelNew,
     StartNew,
     /// The selection's and blueprint's buttons (T51).
@@ -427,7 +447,34 @@ struct NewGame {
     slot: u8,
     seed: String,
     preset: u8,
+    ore_runs_out: bool,
+    orders: u8,
 }
+
+impl NewGame {
+    /// A new game in `slot` on `seed`, by the standard map and rules.
+    fn new(slot: u8, seed: String) -> Self {
+        Self {
+            slot,
+            seed,
+            preset: 0,
+            ore_runs_out: true,
+            orders: PACE_NORMAL,
+        }
+    }
+}
+
+/// A setting on the settings sheet: its words, whether it shows as on,
+/// and what tapping it does.
+type Setting = (String, bool, Hit);
+
+/// The names of the hub orders' paces, by number: off, relaxed, normal
+/// and hard (see `mofact_sim::OrderPace`).
+pub const PACE_NAMES: [&str; 4] = ["setting.off", "pace.relaxed", "pace.normal", "pace.hard"];
+/// The pace a new game starts with.
+const PACE_NORMAL: u8 = 2;
+/// The steps the volume button goes through, loudest first.
+const VOLUMES: [u8; 5] = [100, 75, 50, 25, 0];
 
 thread_local! {
     static START: Instant = Instant::now();
@@ -489,6 +536,15 @@ pub struct Hud {
     /// Whether the player wants the world to hold still: no swaying trees,
     /// rippling water or pulsing hints.
     reduce_motion: bool,
+    /// Volume steps down from full (see [`VOLUMES`]), and whether the
+    /// land's ambient sound and vibration are turned off.
+    quieter: u8,
+    ambience_off: bool,
+    vibration_off: bool,
+    /// Whether the settings sheet is open, and whether it was opened from
+    /// the game menu, so closing it goes back there.
+    settings: bool,
+    settings_from_menu: bool,
     /// The language the player chose, and the device's (T65).
     language: i18n::Choice,
     device: i18n::Lang,
@@ -674,6 +730,52 @@ impl Hud {
         self.menu
     }
 
+    /// How loud the game is, in percent.
+    pub fn volume(&self) -> u8 {
+        VOLUMES[usize::from(self.quieter).min(VOLUMES.len() - 1)]
+    }
+
+    /// Set the volume, as the settings sheet does, to the nearest of its
+    /// steps (to restore what the player chose last time).
+    pub fn set_volume(&mut self, percent: u8) {
+        self.quieter = VOLUMES
+            .iter()
+            .enumerate()
+            .min_by_key(|(_, v)| v.abs_diff(percent))
+            .map_or(0, |(i, _)| i as u8);
+    }
+
+    /// Whether the land's ambient sound plays.
+    pub fn ambience(&self) -> bool {
+        !self.ambience_off
+    }
+
+    pub fn set_ambience(&mut self, on: bool) {
+        self.ambience_off = !on;
+    }
+
+    /// Whether the game may vibrate the phone.
+    pub fn vibration(&self) -> bool {
+        !self.vibration_off
+    }
+
+    pub fn set_vibration(&mut self, on: bool) {
+        self.vibration_off = !on;
+    }
+
+    /// Whether the settings sheet is open.
+    pub fn settings_open(&self) -> bool {
+        self.settings
+    }
+
+    /// Open the settings sheet, as the start menu's and the game menu's
+    /// settings buttons do.
+    pub fn open_settings(&mut self) {
+        self.title = false;
+        self.menu = false;
+        self.settings = true;
+    }
+
     /// Whether the start menu is up.
     pub fn title_open(&self) -> bool {
         self.title
@@ -684,6 +786,8 @@ impl Hud {
         self.title = true;
         self.from_title = false;
         self.menu = false;
+        self.settings = false;
+        self.settings_from_menu = false;
         self.new_game = None;
         self.confirm_delete = None;
         self.selected = None;
@@ -706,11 +810,7 @@ impl Hud {
     /// slot and seed, as a screenshot or a test does.
     pub fn open_menu(&mut self, new_game: Option<(u8, u64)>) {
         self.menu = true;
-        self.new_game = new_game.map(|(slot, seed)| NewGame {
-            slot,
-            seed: seed.to_string(),
-            preset: 0,
-        });
+        self.new_game = new_game.map(|(slot, seed)| NewGame::new(slot, seed.to_string()));
     }
 
     /// Tell the HUD whether the camera is out on the world map.
@@ -1011,7 +1111,13 @@ impl Hud {
                 self.close_title();
                 Vec::new()
             }
-            Hit::TitleNew | Hit::TitleLoad | Hit::TitleSettings => {
+            Hit::TitleSettings => {
+                self.title = false;
+                self.from_title = true;
+                self.settings = true;
+                Vec::new()
+            }
+            Hit::TitleNew | Hit::TitleLoad => {
                 self.title = false;
                 self.from_title = true;
                 self.menu = true;
@@ -1022,11 +1128,7 @@ impl Hud {
                 if hit == Hit::TitleNew {
                     if let Some(n) = self.empty_slot.filter(|n| *n < SLOTS) {
                         self.rolls += 1;
-                        self.new_game = Some(NewGame {
-                            slot: n,
-                            seed: roll(self.rolls).to_string(),
-                            preset: 0,
-                        });
+                        self.new_game = Some(NewGame::new(n, roll(self.rolls).to_string()));
                     }
                 }
                 vec![Action::MenuOpened]
@@ -1040,6 +1142,12 @@ impl Hud {
             Hit::Menu if self.menu && self.from_title => {
                 // Closing a menu opened from the start menu goes back to it.
                 self.open_title();
+                Vec::new()
+            }
+            Hit::Menu if self.settings => {
+                // The menu button on the settings sheet closes it.
+                self.settings = false;
+                self.settings_from_menu = false;
                 Vec::new()
             }
             Hit::Menu => {
@@ -1074,11 +1182,7 @@ impl Hud {
             Hit::SlotNew(n) => {
                 self.confirm_delete = None;
                 self.rolls += 1;
-                self.new_game = Some(NewGame {
-                    slot: n,
-                    seed: roll(self.rolls).to_string(),
-                    preset: 0,
-                });
+                self.new_game = Some(NewGame::new(n, roll(self.rolls).to_string()));
                 Vec::new()
             }
             Hit::Digit(d) => {
@@ -1112,6 +1216,53 @@ impl Hud {
                 }
                 Vec::new()
             }
+            Hit::RuleOre => {
+                if let Some(g) = &mut self.new_game {
+                    g.ore_runs_out = !g.ore_runs_out;
+                }
+                Vec::new()
+            }
+            Hit::RuleOrders => {
+                if let Some(g) = &mut self.new_game {
+                    g.orders = (g.orders + 1) % PACE_NAMES.len() as u8;
+                }
+                Vec::new()
+            }
+            Hit::Settings => {
+                self.menu = false;
+                self.confirm_delete = None;
+                self.new_game = None;
+                self.settings = true;
+                self.settings_from_menu = true;
+                Vec::new()
+            }
+            Hit::SettingsClose => {
+                self.settings = false;
+                if self.from_title {
+                    self.open_title();
+                } else if self.settings_from_menu {
+                    self.menu = true;
+                    self.settings_from_menu = false;
+                    return vec![Action::MenuOpened];
+                }
+                Vec::new()
+            }
+            Hit::Volume => {
+                let at = VOLUMES
+                    .iter()
+                    .position(|v| *v == self.volume())
+                    .unwrap_or(0);
+                self.quieter = ((at + 1) % VOLUMES.len()) as u8;
+                vec![Action::Volume(self.volume())]
+            }
+            Hit::Ambience => {
+                self.ambience_off = !self.ambience_off;
+                vec![Action::Ambience(!self.ambience_off)]
+            }
+            Hit::Vibration => {
+                self.vibration_off = !self.vibration_off;
+                vec![Action::Vibration(!self.vibration_off)]
+            }
             Hit::CancelNew => {
                 self.new_game = None;
                 Vec::new()
@@ -1126,6 +1277,8 @@ impl Hud {
                     slot: g.slot,
                     seed: g.seed.parse().unwrap_or(0),
                     preset: g.preset,
+                    ore_runs_out: g.ore_runs_out,
+                    orders: g.orders,
                 }]
             }
             Hit::ColourBlind => {
@@ -1368,7 +1521,8 @@ impl Hud {
         // The map and the game menu want the whole screen: the goal waits
         // until they close. So does the recipe browser on a screen held
         // sideways, where it needs the height for its calculator.
-        let top = if self.map || self.menu || (self.browse.is_some() && !portrait) {
+        let top = if self.map || self.menu || self.settings || (self.browse.is_some() && !portrait)
+        {
             top
         } else {
             self.goal_card(view, o, [ml, top + gap], column)
@@ -1399,6 +1553,7 @@ impl Hud {
             && !hand_with_goal
             && !self.map
             && !self.menu
+            && !self.settings
         {
             self.tip(view, o, [ml, tip_y], column);
         }
@@ -1435,6 +1590,11 @@ impl Hud {
         if self.research {
             let room = corner[1] - tip_y;
             self.research_sheet(view, o, [corner[0] - width, corner[1]], width, room);
+            return;
+        }
+        if self.settings {
+            let room = corner[1] - tip_y;
+            self.settings_sheet(view, o, corner, width, corner[0] - ml, room);
             return;
         }
         if self.menu {
@@ -1983,8 +2143,8 @@ impl Hud {
         self.hits.push((r, hit));
     }
 
-    /// The game menu (T63, S4): the save slots, a new game with its seed
-    /// and preset, and low-power mode (T66). Bottom-right at `corner`, `width`
+    /// The game menu (T63, S4): the save slots, a new game with its seed,
+    /// preset and rules, and a button for the settings. Bottom-right at `corner`, `width`
     /// wide, or up to `wide` when the new-game form needs two columns to
     /// fit a short screen.
     #[allow(clippy::too_many_arguments)]
@@ -2003,32 +2163,26 @@ impl Hud {
         let gap = 8.0 * u;
         let new_game = self.new_game.clone();
         // The form in one column: a note, the seed, three rows of keys,
-        // the presets, then cancel and start.
+        // the presets, the rules, then cancel and start.
         let note = 24.0 * u;
-        let tall = 50.0 * u + note + 3.0 * (bh + gap) + 3.0 * (bh + gap) - gap;
+        let tall = 50.0 * u + note + 4.0 * (bh + gap) + 3.0 * (bh + gap) - gap;
         // On a short screen it takes two columns and drops its heading:
         // the keypad on the left, the rest on the right.
         let two = new_game.is_some() && 2.0 * pad + tall > room && wide > width;
         let title = if two { 0.0 } else { 50.0 * u };
         let width = if two { wide.min(620.0 * u) } else { width };
         // Slot rows shrink on a short screen, down to a button and a gap.
-        // Under the slots, three rows of settings, and a crash report
-        // waiting adds a row for sending it. Where even that is too tall,
-        // as on a small phone held sideways, the language moves up beside
-        // the heading.
+        // Under the slots, the settings button, and a crash report waiting
+        // adds a row for sending it.
         let extra = if view.crash { bh + gap } else { 0.0 };
-        let short = new_game.is_none()
-            && 2.0 * pad + title + f32::from(SLOTS) * (bh + gap) + 3.0 * bh + 2.0 * gap + extra
-                > room;
-        let rows = if short { 2.0 } else { 3.0 };
-        let settings = rows * bh + (rows - 1.0) * gap + extra;
+        let settings = bh + extra;
         let row =
             ((room - 2.0 * pad - title - settings) / f32::from(SLOTS)).clamp(bh + gap, 64.0 * u);
         // The keys grow into spare room on a tall screen.
         let key = ((room - 2.0 * pad - tall) / 3.0 + bh).clamp(bh, 52.0 * u);
         let body = match &new_game {
-            Some(_) if two => 4.0 * bh + 3.0 * gap,
-            Some(_) => note + 3.0 * (bh + gap) + 3.0 * (key + gap) - gap,
+            Some(_) if two => 5.0 * bh + 4.0 * gap,
+            Some(_) => note + 4.0 * (bh + gap) + 3.0 * (key + gap) - gap,
             None => f32::from(SLOTS) * row + settings,
         };
         let height = pad + title + body + pad;
@@ -2067,19 +2221,13 @@ impl Hud {
                 Hit::Menu
             };
             self.hits.push((c, back));
-            if short {
-                let x = left + o.measure(&heading, px) + 12.0 * u;
-                let b = [x, y, c[0] - gap - x, close];
-                let label = self.language_label();
-                self.button(o, b, &label, 15.0 * u, RAISED, TEXT, Hit::Language);
-            }
             y += title;
         }
 
         if let Some(g) = new_game {
             // Where each part goes: the seed row, the keypad (columns and
-            // rows of keys) and the presets (columns) and the last row.
-            let (seed_at, pad_at, cols, presets_at, pcols, last_at);
+            // rows of keys) and the presets (columns), the rules and the last row.
+            let (seed_at, pad_at, cols, presets_at, pcols, rules_at, last_at);
             if two {
                 let half = (inner - gap) / 2.0;
                 let right = left + half + gap;
@@ -2088,7 +2236,8 @@ impl Hud {
                 seed_at = [right, y, half];
                 presets_at = [right, y + bh + gap, half];
                 pcols = 2u8;
-                last_at = [right, y + 3.0 * (bh + gap), half];
+                rules_at = [right, y + 3.0 * (bh + gap), half];
+                last_at = [right, y + 4.0 * (bh + gap), half];
             } else {
                 let text = tr("menu.seed_note");
                 let mpx = fit(o, text, 14.0 * u, inner);
@@ -2099,7 +2248,8 @@ impl Hud {
                 cols = 4;
                 presets_at = [left, y + bh + gap + 3.0 * (key + gap), inner];
                 pcols = 4;
-                last_at = [presets_at[0], presets_at[1] + bh + gap, inner];
+                rules_at = [presets_at[0], presets_at[1] + bh + gap, inner];
+                last_at = [rules_at[0], rules_at[1] + bh + gap, inner];
             }
             let key = if two { bh } else { key };
             // The seed, and a die for a random one.
@@ -2177,6 +2327,35 @@ impl Hud {
                     bh,
                 ];
                 self.button(o, pr, tr(name), 14.0 * u, fill, ink, Hit::Preset(i as u8));
+            }
+            // The rules: whether ore runs out, and the orders' pace.
+            let half = (rules_at[2] - gap) / 2.0;
+            let state = |on: bool| tr(if on { "setting.on" } else { "setting.off" });
+            let pace = PACE_NAMES[usize::from(g.orders).min(PACE_NAMES.len() - 1)];
+            for (i, label, on, hit) in [
+                (
+                    0.0,
+                    trf(
+                        "setting.state",
+                        &[&tr("rules.ore_runs_out"), &state(g.ore_runs_out)],
+                    ),
+                    g.ore_runs_out,
+                    Hit::RuleOre,
+                ),
+                (
+                    1.0,
+                    trf("setting.state", &[&tr("rules.orders"), &tr(pace)]),
+                    g.orders != 0,
+                    Hit::RuleOrders,
+                ),
+            ] {
+                let (fill, ink) = if on {
+                    (PRESSED, view.look.status(palette::Status::Working))
+                } else {
+                    (RAISED, TEXT)
+                };
+                let b = [rules_at[0] + i * (half + gap), rules_at[1], half, bh];
+                self.button(o, b, &label, 14.0 * u, fill, ink, hit);
             }
             let half = (last_at[2] - gap) / 2.0;
             let [lx, ly, _] = last_at;
@@ -2277,60 +2456,186 @@ impl Hud {
             }
             y += row;
         }
-        // Low-power and colour-blind mode side by side, the language under
-        // them, then large text and reduce motion.
-        let half = (inner - gap) / 2.0;
-        let below = y + (rows - 1.0) * (bh + gap);
-        for (i, y, on, name, hit) in [
-            (0.0, y, self.low_power, "setting.low_power", Hit::Power),
-            (
-                1.0,
-                y,
-                self.colour_blind,
-                "setting.colour_blind",
-                Hit::ColourBlind,
-            ),
-            (
-                0.0,
-                below,
-                self.large_text,
-                "setting.large_text",
-                Hit::LargeText,
-            ),
-            (
-                1.0,
-                below,
-                self.reduce_motion,
-                "setting.reduce_motion",
-                Hit::Motion,
-            ),
-        ] {
-            let state = tr(if on { "setting.on" } else { "setting.off" });
-            let label = trf("setting.state", &[&tr(name), &state]);
-            let (fill, ink) = if on {
-                (PRESSED, view.look.status(palette::Status::Working))
-            } else {
-                (RAISED, TEXT)
-            };
-            let b = [left + i * (half + gap), y, half, bh];
-            self.button(o, b, &label, 15.0 * u, fill, ink, hit);
-        }
-        // The language, under them, unless it went up by the heading.
-        if !short {
-            let label = self.language_label();
-            let b = [left, y + bh + gap, inner, bh];
-            self.button(o, b, &label, 15.0 * u, RAISED, TEXT, Hit::Language);
-        }
+        // The settings have a sheet of their own.
+        self.button(
+            o,
+            [left, y, inner, bh],
+            tr("title.settings"),
+            15.0 * u,
+            RAISED,
+            TEXT,
+            Hit::Settings,
+        );
         if view.crash {
             self.button(
                 o,
-                [left, y + rows * (bh + gap), inner, bh],
+                [left, y + bh + gap, inner, bh],
                 tr("menu.copy_crash"),
                 15.0 * u,
                 RAISED,
                 TEXT,
                 Hit::CopyCrash,
             );
+        }
+    }
+
+    /// The settings sheet: sound, display, accessibility and general
+    /// settings, two to a row under a heading each. Bottom-right at
+    /// `corner`, `width` wide. A short screen drops the headings, and one
+    /// shorter still, as a small phone held sideways, lays the settings
+    /// four to a row, up to `wide` across.
+    #[allow(clippy::too_many_arguments)]
+    fn settings_sheet(
+        &mut self,
+        view: &View,
+        o: &mut Overlay,
+        corner: [f32; 2],
+        width: f32,
+        wide: f32,
+        room: f32,
+    ) {
+        let u = self.unit;
+        let pad = 16.0 * u;
+        let bh = 44.0 * u;
+        let gap = 8.0 * u;
+        let title = 50.0 * u;
+        let label = 26.0 * u;
+        let groups = 4.0;
+        let labelled = groups * (label + bh) + (groups - 1.0) * gap;
+        let plain = groups * bh + (groups - 1.0) * gap;
+        let (cols, heads) = if 2.0 * pad + title + labelled <= room {
+            (2usize, true)
+        } else if 2.0 * pad + title + plain <= room || wide <= width {
+            (2, false)
+        } else {
+            (4, false)
+        };
+        let width = if cols == 4 {
+            wide.min(720.0 * u)
+        } else {
+            width
+        };
+        let rows = (8 / cols) as f32;
+        let body = if heads {
+            labelled
+        } else {
+            rows * bh + (rows - 1.0) * gap
+        };
+        let height = pad + title + body + pad;
+        let r = [corner[0] - width, corner[1] - height, width, height];
+        o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
+        self.hits.push((r, Hit::Block));
+        let left = r[0] + pad;
+        let inner = r[2] - 2.0 * pad;
+        let mut y = r[1] + pad;
+        // The heading and its close button.
+        let px = 20.0 * u;
+        let close = 44.0 * u;
+        o.text(
+            tr("title.settings"),
+            [left, y + (close + o.cap_height(px)) / 2.0],
+            px,
+            TEXT,
+        );
+        let c = [r[0] + r[2] - pad - close, y, close, close];
+        o.panel([c[0], c[1]], [close, close], close / 2.0, RAISED);
+        let xw = o.measure("×", 22.0 * u);
+        o.text(
+            "×",
+            [c[0] + (close - xw) / 2.0, c[1] + close * 0.72],
+            22.0 * u,
+            TEXT,
+        );
+        self.hits.push((c, Hit::SettingsClose));
+        y += title;
+        // Each setting: its words, whether it shows as on, and its hit.
+        let toggle = |name: &str, on: bool| {
+            let state = tr(if on { "setting.on" } else { "setting.off" });
+            trf("setting.state", &[&tr(name), &state])
+        };
+        let volume = trf(
+            "setting.state",
+            &[
+                &tr("setting.volume"),
+                &trf("setting.percent", &[&self.volume()]),
+            ],
+        );
+        let groups: [(&str, [Setting; 2]); 4] = [
+            (
+                "settings.sound",
+                [
+                    (volume, self.volume() > 0, Hit::Volume),
+                    (
+                        toggle("setting.ambience", self.ambience()),
+                        self.ambience(),
+                        Hit::Ambience,
+                    ),
+                ],
+            ),
+            (
+                "settings.display",
+                [
+                    (
+                        toggle("setting.low_power", self.low_power),
+                        self.low_power,
+                        Hit::Power,
+                    ),
+                    (
+                        toggle("setting.reduce_motion", self.reduce_motion),
+                        self.reduce_motion,
+                        Hit::Motion,
+                    ),
+                ],
+            ),
+            (
+                "settings.access",
+                [
+                    (
+                        toggle("setting.colour_blind", self.colour_blind),
+                        self.colour_blind,
+                        Hit::ColourBlind,
+                    ),
+                    (
+                        toggle("setting.large_text", self.large_text),
+                        self.large_text,
+                        Hit::LargeText,
+                    ),
+                ],
+            ),
+            (
+                "settings.general",
+                [
+                    (
+                        toggle("setting.vibration", self.vibration()),
+                        self.vibration(),
+                        Hit::Vibration,
+                    ),
+                    (self.language_label(), false, Hit::Language),
+                ],
+            ),
+        ];
+        let cw = (inner - (cols as f32 - 1.0) * gap) / cols as f32;
+        let mut k = 0usize;
+        for (head, items) in groups {
+            if heads {
+                let hpx = 13.0 * u;
+                o.text(tr(head), [left, y + label - 9.0 * u], hpx, MUTED);
+                y += label;
+            }
+            for (words, on, hit) in items {
+                let col = k % cols;
+                let (fill, ink) = if on {
+                    (PRESSED, view.look.status(palette::Status::Working))
+                } else {
+                    (RAISED, TEXT)
+                };
+                let b = [left + col as f32 * (cw + gap), y, cw, bh];
+                self.button(o, b, &words, 15.0 * u, fill, ink, hit);
+                k += 1;
+                if k % cols == 0 {
+                    y += bh + gap;
+                }
+            }
         }
     }
 

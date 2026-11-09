@@ -406,6 +406,9 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
     app.game.set_blueprints(&files.blueprints());
     let mut blueprints = app.game.blueprints().1;
     let mut saves = autosave::Autosave::new(save_path);
+    app.game.set_volume(settings.volume);
+    app.game.set_ambience(settings.ambience);
+    app.game.set_vibration(settings.vibration);
     app.game.set_low_power(settings.low_power);
     app.game.set_colour_blind(settings.colour_blind);
     app.game.set_large_text(settings.large_text);
@@ -489,6 +492,9 @@ pub fn run_with(platform: Platform) -> Result<(), String> {
             saves.set_path(files.path(crate::slots::Store::current(&files)));
         }
         let now = autosave::Settings {
+            volume: app.game.volume(),
+            ambience: app.game.ambience(),
+            vibration: app.game.vibration(),
             low_power: app.game.low_power(),
             colour_blind: app.game.colour_blind(),
             large_text: app.game.large_text(),
@@ -883,6 +889,7 @@ fn screenshots(
             "unlock",
             "large-text",
             "title",
+            "settings",
         ];
         // As a fresh install sees it: the demo, with the price known.
         let store = mofact_ui::StoreView {
@@ -923,9 +930,10 @@ fn screenshots(
                 "plan" => hud.browse("circuit".into()),
                 "menu" => hud.open_menu(None),
                 "title" => hud.open_title(),
+                "settings" => hud.open_settings(),
                 "large-text" => {
                     hud.set_large_text(true);
-                    hud.open_menu(None);
+                    hud.open_settings();
                 }
                 "new-game" => hud.open_menu(Some((2, 271_828))),
                 "radial" => {

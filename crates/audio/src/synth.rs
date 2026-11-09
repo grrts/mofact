@@ -232,6 +232,11 @@ impl Synth {
         self.master = master.clamp(0.0, 1.0);
     }
 
+    /// Overall loudness as last set.
+    pub fn master(&self) -> f32 {
+        self.master
+    }
+
     pub fn set_muted(&mut self, muted: bool) {
         self.muted = muted;
     }

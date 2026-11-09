@@ -17,8 +17,13 @@ pub use mofact_ui::i18n::Choice;
 /// The settings that outlive a game, saved as `key = value` lines in
 /// `settings.txt`. A key that is missing or unknown keeps its default, so
 /// settings can be added without breaking older files.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Settings {
+    /// How loud the game is, in percent.
+    pub volume: u8,
+    /// Whether the land's ambient sound plays, and the phone may vibrate.
+    pub ambience: bool,
+    pub vibration: bool,
     pub low_power: bool,
     pub colour_blind: bool,
     pub large_text: bool,
@@ -27,6 +32,21 @@ pub struct Settings {
     pub reduce_motion: Option<bool>,
     /// The device's language, or the player's own pick (T65).
     pub language: Choice,
+}
+
+impl Default for Settings {
+    fn default() -> Self {
+        Self {
+            volume: 100,
+            ambience: true,
+            vibration: true,
+            low_power: false,
+            colour_blind: false,
+            large_text: false,
+            reduce_motion: None,
+            language: Choice::Device,
+        }
+    }
 }
 
 impl Settings {
@@ -40,6 +60,11 @@ impl Settings {
         };
         let on = |key: &str| value(key) == Some("on");
         Settings {
+            volume: value("volume")
+                .and_then(|v| v.parse::<u8>().ok())
+                .map_or(100, |v| v.min(100)),
+            ambience: value("ambience") != Some("off"),
+            vibration: value("vibration") != Some("off"),
             low_power: on("low-power"),
             colour_blind: on("colour-blind"),
             large_text: on("large-text"),
@@ -52,7 +77,10 @@ impl Settings {
     pub fn text(&self) -> String {
         let flag = |on: bool| if on { "on" } else { "off" };
         format!(
-            "low-power = {}\ncolour-blind = {}\nlarge-text = {}\n{}language = {}\n",
+            "volume = {}\nambience = {}\nvibration = {}\nlow-power = {}\ncolour-blind = {}\nlarge-text = {}\n{}language = {}\n",
+            self.volume,
+            flag(self.ambience),
+            flag(self.vibration),
             flag(self.low_power),
             flag(self.colour_blind),
             flag(self.large_text),
@@ -288,6 +316,23 @@ mod tests {
         };
         files.set_settings(german).unwrap();
         assert_eq!(files.settings(), german);
+        let hushed = Settings {
+            volume: 25,
+            ambience: false,
+            vibration: false,
+            ..Settings::default()
+        };
+        files.set_settings(hushed).unwrap();
+        assert_eq!(
+            files.settings(),
+            hushed,
+            "sound and vibration come back as set"
+        );
+        assert_eq!(
+            Settings::parse("low-power = on\n").volume,
+            100,
+            "an older file is loud"
+        );
         let calm = Settings {
             large_text: true,
             reduce_motion: Some(false),
