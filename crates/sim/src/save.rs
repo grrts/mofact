@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 17;
+pub const VERSION: u16 = 18;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -76,6 +76,40 @@ struct World {
     explored: Option<Vec<mofact_core::geom::FogCell>>,
     /// Drones, ghosts and what is marked for them (T49, T50).
     fleet: SavedFleet,
+    /// The hub's orders (version 18).
+    orders: SavedOrders,
+}
+
+/// Versions 16 and 17: the same, before hub orders.
+#[derive(Deserialize)]
+struct WorldV17 {
+    tick: Tick,
+    stock: Vec<(ItemId, u32)>,
+    delivered: Vec<(ItemId, u64)>,
+    ore: Vec<(TilePos, ItemId)>,
+    entities: Vec<(u32, Saved)>,
+    research: Vec<(ResearchId, u32, bool)>,
+    current: Option<ResearchId>,
+    goal: Option<String>,
+    cleared: Vec<TilePos>,
+    ore_left: Vec<u32>,
+    depleted: Vec<TilePos>,
+    pins: Vec<TilePos>,
+    world: Option<(u64, u8)>,
+    explored: Option<Vec<mofact_core::geom::FogCell>>,
+    fleet: SavedFleet,
+}
+
+/// The hub's orders: the open one by id, with its deadline and the count
+/// delivered when it opened.
+#[derive(Serialize, Deserialize, Default)]
+struct SavedOrders {
+    open: Option<(String, Tick, u64)>,
+    streak: u32,
+    next: Tick,
+    shipped: u32,
+    missed: u32,
+    last: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -387,6 +421,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Versions 3 to 6 added poles and generators, then splitters and
@@ -411,6 +446,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Version 8 adds crafters with several outputs: a new variant only.
@@ -433,6 +469,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Version 10 adds rails and trains: new variants only.
@@ -455,6 +492,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Version 12 adds pins on the world map.
@@ -476,6 +514,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Version 13 saves the map's seed and preset.
@@ -497,6 +536,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: None,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Version 14 adds the megaproject: a new variant only. Version 15
@@ -519,6 +559,7 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: v.world,
                 explored: None,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
         // Version 16 adds drones, ghosts and marks, ports and chests.
@@ -540,10 +581,33 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 world: v.world,
                 explored: v.explored,
                 fleet: SavedFleet::default(),
+                orders: SavedOrders::default(),
             })
         }
-        // Version 17 adds splitter modes: a new variant only.
-        16 | 17 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 17 adds splitter modes: a new variant only. Version 18
+        // adds hub orders.
+        16 | 17 => {
+            let v: WorldV17 = postcard::from_bytes(payload).map_err(corrupt)?;
+            Ok(World {
+                tick: v.tick,
+                stock: v.stock,
+                delivered: v.delivered,
+                ore: v.ore,
+                entities: v.entities,
+                research: v.research,
+                current: v.current,
+                goal: v.goal,
+                cleared: v.cleared,
+                ore_left: v.ore_left,
+                depleted: v.depleted,
+                pins: v.pins,
+                world: v.world,
+                explored: v.explored,
+                fleet: v.fleet,
+                orders: SavedOrders::default(),
+            })
+        }
+        18 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -762,6 +826,7 @@ impl Sim {
             world: self.world.map(|w| (w.seed, w.preset as u8)),
             explored: Some(self.explored.to_vec()),
             fleet: self.save_fleet(),
+            orders: self.save_orders(),
         };
         let mut out = MAGIC.to_vec();
         out.extend_from_slice(&VERSION.to_le_bytes());
@@ -849,6 +914,7 @@ impl Sim {
                     0
                 }) as u16,
         };
+        sim.load_orders(&world.orders, &mut warnings);
         // What each pipe brought, to fill the segments once they are built.
         let mut fluid = std::collections::HashMap::new();
         for (slot, s) in world.entities {
@@ -1227,5 +1293,46 @@ impl Sim {
             .map(EntityId)
             .filter(|&m| self.entities.get(m).is_some())
             .collect();
+    }
+}
+
+impl Sim {
+    fn save_orders(&self) -> SavedOrders {
+        let o = &self.orders;
+        let id = |k: u16| self.tables.order_ids[k as usize].clone();
+        SavedOrders {
+            open: o.open.map(|x| (id(x.index), x.due, x.base)),
+            streak: o.streak,
+            next: o.next,
+            shipped: o.shipped,
+            missed: o.missed,
+            last: o.last.map(id),
+        }
+    }
+
+    /// An order the content no longer has is dropped, and the next opens
+    /// on time.
+    fn load_orders(&mut self, s: &SavedOrders, warnings: &mut Vec<String>) {
+        let ids = &self.tables.order_ids;
+        let find = |id: &String| ids.iter().position(|x| x == id).map(|k| k as u16);
+        let open = s.open.as_ref().and_then(|(id, due, base)| {
+            let k = find(id);
+            if k.is_none() {
+                warnings.push(format!("order `{id}` is gone"));
+            }
+            Some(crate::orders::Open {
+                index: k?,
+                due: *due,
+                base: *base,
+            })
+        });
+        self.orders = crate::orders::Orders {
+            open,
+            streak: s.streak,
+            next: s.next,
+            shipped: s.shipped,
+            missed: s.missed,
+            last: s.last.as_ref().and_then(find),
+        };
     }
 }

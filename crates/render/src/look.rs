@@ -1487,6 +1487,7 @@ pub(crate) mod tests {
             buildings: ron::from_str(&read("buildings.ron")).unwrap(),
             research: Vec::new(),
             goals: Vec::new(),
+            orders: Vec::new(),
         }
     }
 
