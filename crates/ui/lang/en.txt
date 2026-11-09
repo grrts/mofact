@@ -100,6 +100,8 @@ trouble.starved = waiting for input
 trouble.blocked = output full
 trouble.empty = empty
 trouble.idle = no recipe
+trouble.mined_out = ore ran out
+trouble.low_ore = ore running low
 
 # Research.
 research.title = Research
@@ -133,6 +135,7 @@ unlock.buy_price = Buy the full game · {0}
 unlock.buy = Buy the full game
 unlock.restore = Restore a purchase
 toast.full_game_open = The full game is open. Thank you!
+toast.mined_out = A drill ran out of ore. Patches further from the hub are richer: look on the world map
 store.cancelled = Purchase cancelled: nothing was charged.
 store.not_found = No purchase found on this account.
 store.unreachable = The store couldn't be reached.
@@ -153,6 +156,8 @@ inspect.empty = Empty: nothing is flowing in
 inspect.recipe_any = Picks its recipe from what arrives
 inspect.drill = Mines the ore under it
 inspect.mines = Mines the {0} under it
+inspect.mines_left = Mines the {0} under and around it · {1} left
+inspect.mined_out = Mined out: move it onto fresh ore. Richer patches lie further from the hub
 inspect.lab = Studies {0} · {1}/{2}
 inspect.lab_idle = Studies research: pick one under Research
 inspect.splitter = Sends items out left and right in turn

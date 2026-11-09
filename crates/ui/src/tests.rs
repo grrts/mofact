@@ -16,6 +16,7 @@ fn snapshot() -> Snapshot {
         dir: Dir::East,
         recipe: None,
         ore: None,
+        ore_left: None,
         grid: None,
         exit: false,
         fluid: None,
@@ -547,6 +548,7 @@ fn a_pole_sheet_shows_its_grid() {
         dir: Dir::East,
         recipe: None,
         ore: None,
+        ore_left: None,
         grid: Some(0),
         exit: false,
         fluid: None,
@@ -730,6 +732,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
         dir: Dir::East,
         recipe: None,
         ore: None,
+        ore_left: None,
         grid: None,
         exit: false,
         fluid: None,
@@ -1886,4 +1889,44 @@ fn the_start_menu_fits_a_small_phone_held_either_way_in_every_language() {
         }
     }
     i18n::set_lang(i18n::Lang::En);
+}
+
+#[test]
+fn drills_running_dry_and_mined_out_show_as_problems() {
+    let mut f = Fixture::new();
+    let drill = |id, x, left, state| EntityView {
+        request: None,
+        id: EntityId(id),
+        building: "drill".into(),
+        pos: TilePos::new(x, 0),
+        dir: Dir::East,
+        recipe: None,
+        ore: (left > 0).then(|| "iron-ore".into()),
+        ore_left: Some(left),
+        grid: None,
+        exit: false,
+        fluid: None,
+        links: 0,
+        state,
+        progress: 0.0,
+    };
+    f.snapshot.entities = vec![
+        drill(1, 0, 0, MachineState::Starved),
+        drill(2, 2, 0, MachineState::Starved),
+        drill(3, 4, 120, MachineState::Working),
+        drill(4, 6, 50_000, MachineState::Working),
+    ];
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let lines: Vec<_> = f
+        .hud
+        .found
+        .iter()
+        .map(|p| (p.trouble, p.at.len()))
+        .collect();
+    use problems::Trouble as T;
+    assert_eq!(
+        lines,
+        vec![(T::MinedOut, 2), (T::LowOre, 1)],
+        "a drill with plenty left is fine"
+    );
 }
