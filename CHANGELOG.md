@@ -5,6 +5,12 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **More splitters:** Logistics now also unlocks a three-way splitter
+  (left, ahead and right in turn), a priority splitter (fills the line ahead
+  first and only sends the overflow to the sides) and a filter splitter (one
+  chosen item goes ahead, everything else to the sides). Tap a filter
+  splitter to pick its item from big item buttons. Each kind has its own
+  colour so they are easy to tell apart.
 - **Ore runs out:** the patches round the hub are thin, so the starter
   iron runs dry in about an hour and a half of a first factory's digging,
   and ore gets richer the further out a patch lies: about six times as

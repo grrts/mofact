@@ -7,6 +7,7 @@
 
 use crate::canvas::{ellipse, poly, rect, rr, Canvas};
 use crate::palette::{self as pal, alpha, shade, Rgba};
+use mofact_core::content::SplitMode;
 use std::f32::consts::{FRAC_PI_2, PI, TAU};
 use tiny_skia::PathBuilder;
 
@@ -932,8 +933,11 @@ pub fn turbine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
 /// Casts no shadow: it is turned when drawn, so the renderer casts one
 /// in world space.
 /// A splitter facing east: a short belt stub from the west into a housing
-/// that sends items out north and south, shown by arrows on both sides.
-pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
+/// with arrows for its ways out. The plain one sends items north and
+/// south; a three-way one east too; a priority one has a bold arrow east
+/// and small ones to the sides for the overflow; a filter one a mesh
+/// before its arrow east.
+pub fn splitter(c: &mut Canvas, z: f32, fine: bool, mode: SplitMode) {
     let s = z;
     // The intake: the belt's western half.
     c.fill_rect(0.0, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
@@ -944,19 +948,57 @@ pub fn splitter(c: &mut Canvas, z: f32, fine: bool) {
         rr(s * 0.3, s * 0.06, s * 0.62, s * 0.88, s * 0.12),
         pal::MACHINE_EDGE,
     );
-    fill(
-        c,
-        rr(s * 0.34, s * 0.1, s * 0.54, s * 0.8, s * 0.1),
-        pal::MACHINE,
-    );
-    // A divider down the middle, and the two ways out.
-    c.line(
-        &[(s * 0.4, s * 0.5), (s * 0.82, s * 0.5)],
-        pal::MACHINE_EDGE,
-        (z * 0.05).max(1.0),
-    );
-    arrow(c, s * 0.61, s * 0.27, 3, s * 0.42, pal::ACCENT);
-    arrow(c, s * 0.61, s * 0.73, 1, s * 0.42, pal::ACCENT);
+    let body = match mode {
+        SplitMode::Even => pal::MACHINE,
+        SplitMode::ThreeWay => pal::SPLIT[0],
+        SplitMode::Priority => pal::SPLIT[1],
+        SplitMode::Filter => pal::SPLIT[2],
+    };
+    fill(c, rr(s * 0.34, s * 0.1, s * 0.54, s * 0.8, s * 0.1), body);
+    let w = (z * 0.05).max(1.0);
+    match mode {
+        SplitMode::Even => {
+            // A divider down the middle, and the two ways out.
+            c.line(
+                &[(s * 0.4, s * 0.5), (s * 0.82, s * 0.5)],
+                pal::MACHINE_EDGE,
+                w,
+            );
+            arrow(c, s * 0.61, s * 0.27, 3, s * 0.42, pal::ACCENT);
+            arrow(c, s * 0.61, s * 0.73, 1, s * 0.42, pal::ACCENT);
+        }
+        SplitMode::ThreeWay => {
+            arrow(c, s * 0.52, s * 0.27, 3, s * 0.4, pal::ACCENT);
+            arrow(c, s * 0.52, s * 0.73, 1, s * 0.4, pal::ACCENT);
+            arrow(c, s * 0.68, s * 0.5, 0, s * 0.4, pal::ACCENT);
+        }
+        SplitMode::Priority => {
+            arrow(c, s * 0.54, s * 0.25, 3, s * 0.3, pal::INK);
+            arrow(c, s * 0.54, s * 0.75, 1, s * 0.3, pal::INK);
+            arrow(c, s * 0.6, s * 0.5, 0, s * 0.5, pal::ACCENT);
+        }
+        SplitMode::Filter => {
+            arrow(c, s * 0.56, s * 0.24, 3, s * 0.28, pal::INK);
+            arrow(c, s * 0.56, s * 0.76, 1, s * 0.28, pal::INK);
+            // A mesh across the way ahead.
+            let (x0, y0, side) = (s * 0.42, s * 0.36, s * 0.28);
+            fill(c, rect(x0, y0, side, side), pal::SOOT);
+            for k in 1..4 {
+                let f = k as f32 / 4.0;
+                c.line(
+                    &[(x0 + side * f, y0), (x0 + side * f, y0 + side)],
+                    pal::MACHINE_HI,
+                    w * 0.6,
+                );
+                c.line(
+                    &[(x0, y0 + side * f), (x0 + side, y0 + side * f)],
+                    pal::MACHINE_HI,
+                    w * 0.6,
+                );
+            }
+            arrow(c, s * 0.76, s * 0.5, 0, s * 0.26, pal::ACCENT);
+        }
+    }
     if fine {
         for (bx, by) in [(0.4, 0.16), (0.82, 0.16), (0.4, 0.84), (0.82, 0.84)] {
             bolt(c, bx * s, by * s, s * 0.025);

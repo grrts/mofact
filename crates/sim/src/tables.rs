@@ -1,6 +1,6 @@
 //! Content interned into dense indices for the simulation (R1).
 
-use mofact_core::content::{BuildingRole, Content, IconShape, ItemKind, Stack};
+use mofact_core::content::{BuildingRole, Content, IconShape, ItemKind, SplitMode, Stack};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
 use mofact_core::TICKS_PER_SECOND;
 use std::collections::HashMap;
@@ -41,7 +41,9 @@ pub enum Role {
     Generator {
         watts: u32,
     },
-    Splitter,
+    Splitter {
+        mode: SplitMode,
+    },
     Underground {
         per_tick: u32,
         reach: u8,
@@ -234,7 +236,7 @@ impl Tables {
                 BuildingRole::Belt { tiles_per_second } => Role::Belt {
                     per_tick: per_tick(*tiles_per_second),
                 },
-                BuildingRole::Splitter => Role::Splitter,
+                BuildingRole::Splitter { mode } => Role::Splitter { mode: *mode },
                 BuildingRole::Underground {
                     tiles_per_second,
                     reach,

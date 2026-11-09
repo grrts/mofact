@@ -10,6 +10,7 @@ fn content() -> Content {
 fn snapshot() -> Snapshot {
     let entity = |id, building: &str, x| EntityView {
         request: None,
+        filter: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, 0),
@@ -542,6 +543,7 @@ fn a_pole_sheet_shows_its_grid() {
     let mut f = Fixture::new();
     f.snapshot.entities.push(EntityView {
         request: None,
+        filter: None,
         id: EntityId(9),
         building: "pole".into(),
         pos: TilePos::new(9, 0),
@@ -726,6 +728,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
     let mut f = Fixture::new();
     let at = |id, building: &str, x, y, state| EntityView {
         request: None,
+        filter: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, y),
@@ -1892,10 +1895,49 @@ fn the_start_menu_fits_a_small_phone_held_either_way_in_every_language() {
 }
 
 #[test]
+fn a_filter_splitter_sheet_picks_the_item_that_goes_ahead() {
+    let mut f = Fixture::new();
+    let mut splitter = f.snapshot.entities[2].clone();
+    splitter.id = EntityId(7);
+    splitter.building = "filter-splitter".into();
+    splitter.recipe = None;
+    splitter.pos = TilePos::new(8, 0);
+    f.snapshot.entities.push(splitter);
+    let at = f.snapshot.entities.len() - 1;
+    f.hud.select(Some(EntityId(7)));
+    // On a phone held upright as well as a wide screen.
+    for (size, scale) in [((1080, 2340), 3.0), ((1280, 720), 1.0)] {
+        f.snapshot.entities[at].filter = None;
+        f.draw(size, scale, &Tool::Hand);
+        let iron = Hit::SetFilter(EntityId(7), Some("iron-plate".into()));
+        let pill = f.find(&iron);
+        assert!(pill[3] >= 36.0 * scale, "a pill a finger can hit: {pill:?}");
+        assert_eq!(
+            f.tap(centre(pill)).1,
+            vec![Action::Send(Command::SetFilter {
+                entity: EntityId(7),
+                filter: Some("iron-plate".into())
+            })]
+        );
+        // Set to iron: nothing turns it off again.
+        f.snapshot.entities[at].filter = Some("iron-plate".into());
+        f.draw(size, scale, &Tool::Hand);
+        assert_eq!(
+            f.tap(centre(f.find(&Hit::SetFilter(EntityId(7), None)))).1,
+            vec![Action::Send(Command::SetFilter {
+                entity: EntityId(7),
+                filter: None
+            })]
+        );
+    }
+}
+
+#[test]
 fn drills_running_dry_and_mined_out_show_as_problems() {
     let mut f = Fixture::new();
     let drill = |id, x, left, state| EntityView {
         request: None,
+        filter: None,
         id: EntityId(id),
         building: "drill".into(),
         pos: TilePos::new(x, 0),

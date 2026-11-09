@@ -49,6 +49,9 @@ pub enum Build {
         dir: Dir,
         #[serde(default)]
         recipe: Option<RecipeId>,
+        /// For a filter splitter, the item it sends ahead.
+        #[serde(default)]
+        filter: Option<ItemId>,
     },
     /// A straight run of belts from (x, y), `len` tiles long, all facing `dir`.
     Belts { x: i32, y: i32, len: u32, dir: Dir },
@@ -169,8 +172,18 @@ pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
                 y,
                 dir,
                 recipe,
+                filter,
             } => {
-                place(&mut sim, building, TilePos::new(*x, *y), *dir, recipe)?;
+                let made = place(&mut sim, building, TilePos::new(*x, *y), *dir, recipe)?;
+                if let (Some(entity), Some(_)) = (made, filter) {
+                    let cmd = Command::SetFilter {
+                        entity,
+                        filter: filter.clone(),
+                    };
+                    if let CommandResult::Refused(e) = sim.apply(&cmd) {
+                        return Err(format!("{}: filtering {building}: {e:?}", s.name));
+                    }
+                }
             }
             Build::Belts { x, y, len, dir } => {
                 let mut pos = TilePos::new(*x, *y);

@@ -12,7 +12,7 @@ use mofact_artkit::belt::{self, Bend, Joins};
 use mofact_artkit::draw::{self, Pose, Shape};
 use mofact_artkit::rail;
 use mofact_artkit::Canvas;
-use mofact_core::content::{BuildingRole, Content, IconShape};
+use mofact_core::content::{BuildingRole, Content, IconShape, SplitMode};
 use mofact_core::geom::Dir;
 use mofact_core::ids::{BuildingId, ItemId};
 use std::collections::HashMap;
@@ -89,7 +89,7 @@ enum Art {
     Chest {
         requester: bool,
     },
-    Splitter,
+    Splitter(SplitMode),
     Underground {
         exit: bool,
     },
@@ -314,6 +314,8 @@ pub struct Look {
     belt_tier: HashMap<BuildingId, usize>,
     /// How fast each belt runs, in tiles a second, to move its surface.
     belt_speed: HashMap<BuildingId, f32>,
+    /// Each splitter's mode.
+    split_mode: HashMap<BuildingId, SplitMode>,
     /// Colour-blind mode (T58): safer colours, and marks on look-alike items.
     colour_blind: bool,
 }
@@ -324,6 +326,8 @@ pub enum Conveyor {
     Belt,
     /// Takes from behind, gives out left and right.
     Splitter,
+    /// Takes from behind, gives out left, ahead and right.
+    SplitterAhead,
     /// An underground belt end: entrances take from behind, exits give ahead.
     Underground,
 }
@@ -521,7 +525,10 @@ impl Look {
                 BuildingRole::Lab { .. } => (Kind::Lab, Vec::new()),
                 BuildingRole::Pole { .. } => (Kind::Pole, Vec::new()),
                 BuildingRole::Generator { .. } => (Kind::Generator, Vec::new()),
-                BuildingRole::Splitter => (Kind::Splitter, Vec::new()),
+                BuildingRole::Splitter { mode } => {
+                    look.split_mode.insert(b.id.clone(), *mode);
+                    (Kind::Splitter, Vec::new())
+                }
                 BuildingRole::Underground { .. } => (Kind::Underground, Vec::new()),
                 BuildingRole::Pipe { .. } => (Kind::Pipe, Vec::new()),
                 BuildingRole::Tank { .. } => (Kind::Tank, Vec::new()),
@@ -632,7 +639,10 @@ impl Look {
                         }
                     }
                 }
-                Kind::Splitter => push(&mut look, id.to_owned(), b.size, Art::Splitter),
+                Kind::Splitter => {
+                    let mode = look.split_mode.get(&b.id).copied().unwrap_or_default();
+                    push(&mut look, id.to_owned(), b.size, Art::Splitter(mode))
+                }
                 Kind::Underground | Kind::UndergroundPipe => {
                     for exit in [false, true] {
                         let end = if exit { "exit" } else { "entrance" };
@@ -890,7 +900,10 @@ impl Look {
     pub fn conveyor(&self, building: &BuildingId) -> Option<Conveyor> {
         match self.buildings.get(building)?.kind {
             Kind::Belt => Some(Conveyor::Belt),
-            Kind::Splitter => Some(Conveyor::Splitter),
+            Kind::Splitter => Some(match self.split_mode.get(building) {
+                None | Some(SplitMode::Even) => Conveyor::Splitter,
+                Some(_) => Conveyor::SplitterAhead,
+            }),
             Kind::Underground => Some(Conveyor::Underground),
             _ => None,
         }
@@ -1324,7 +1337,7 @@ fn render(art: &Art, tiles: f32, tiles_high: f32, px: u32, fine: bool) -> (u32, 
         Art::Notch => draw::notch_east(&mut c, z),
         Art::Vat => draw::chemical_vat(&mut c, z),
         Art::Paddle => draw::chemical_paddle(&mut c, z),
-        Art::Splitter => draw::splitter(&mut c, z, fine),
+        Art::Splitter(mode) => draw::splitter(&mut c, z, fine, mode),
         Art::Underground { exit } => draw::underground(&mut c, z, fine, exit),
         Art::Pipe { links } => draw::pipe(&mut c, z, fine, links),
         Art::PipeFluid { links } => draw::pipe_fluid(&mut c, z, links),

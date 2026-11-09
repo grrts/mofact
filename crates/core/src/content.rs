@@ -72,6 +72,22 @@ pub struct RecipeDef {
     pub category: String,
 }
 
+/// Where a splitter sends what it takes from behind.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum SplitMode {
+    /// Left and right in turn.
+    #[default]
+    Even,
+    /// Left, ahead and right in turn: a line in three.
+    ThreeWay,
+    /// Ahead while there is room there; only what backs up goes left and
+    /// right, in turn.
+    Priority,
+    /// The item it is set to goes ahead; everything else goes left and
+    /// right in turn. Set to nothing, everything goes to the sides.
+    Filter,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum BuildingRole {
     Belt {
@@ -100,9 +116,13 @@ pub enum BuildingRole {
     Generator {
         kw: f32,
     },
-    /// Takes items from behind and hands them out to its left and right in
-    /// turn, so a line splits evenly.
-    Splitter,
+    /// Takes items from behind and hands them out as its `mode` says: the
+    /// plain splitter sends them left and right in turn, so a line splits
+    /// evenly.
+    Splitter {
+        #[serde(default)]
+        mode: SplitMode,
+    },
     /// One end of an underground belt. Placed facing the same way within
     /// `reach` tiles after an entrance, it becomes that entrance's exit;
     /// items pass between them under whatever is built above.

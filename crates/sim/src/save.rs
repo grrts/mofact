@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 16;
+pub const VERSION: u16 = 17;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -328,6 +328,13 @@ enum SavedState {
         request: Option<(ItemId, u32)>,
         incoming: u32,
     },
+    /// A splitter of any mode (v17): the way out it tries next, and a
+    /// filter splitter's item. Older saves wrote [`SavedState::Splitter`].
+    Splitter2 {
+        held: Option<ItemId>,
+        next: u8,
+        filter: Option<ItemId>,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -535,7 +542,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 fleet: SavedFleet::default(),
             })
         }
-        16 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 17 adds splitter modes: a new variant only.
+        16 | 17 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -641,9 +649,10 @@ impl Sim {
                     },
                     State::Pole => SavedState::Pole,
                     State::Generator => SavedState::Generator,
-                    State::Splitter { held, right } => SavedState::Splitter {
+                    State::Splitter { held, next, filter } => SavedState::Splitter2 {
                         held: held.map(item),
-                        right: *right,
+                        next: *next,
+                        filter: filter.map(item),
                     },
                     State::Tunnel(tu) => SavedState::Underground {
                         exit: tu.exit,
@@ -881,10 +890,18 @@ impl Sim {
                 }),
                 (SavedState::Pole, Role::Pole { .. }) => State::Pole,
                 (SavedState::Generator, Role::Generator { .. }) => State::Generator,
-                (SavedState::Splitter { held, right }, Role::Splitter) => State::Splitter {
+                (SavedState::Splitter { held, right }, Role::Splitter { .. }) => State::Splitter {
                     held: opt(&held, &mut warnings),
-                    right,
+                    next: u8::from(right),
+                    filter: None,
                 },
+                (SavedState::Splitter2 { held, next, filter }, Role::Splitter { .. }) => {
+                    State::Splitter {
+                        held: opt(&held, &mut warnings),
+                        next,
+                        filter: opt(&filter, &mut warnings),
+                    }
+                }
                 (
                     SavedState::Underground {
                         exit,

@@ -9,7 +9,8 @@ cargo run -p mofact-headless -- scenarios data
 ```
 
 Fields: `stock` (starting items), `ore` (tiles with ore under them), `build`
-(`At(...)` for one building, `Belts(...)` for a straight run of belts,
+(`At(...)` for one building, with a `recipe` or, for a filter splitter, a
+`filter`; `Belts(...)` for a straight run of belts,
 `Line(...)` for a straight run of anything, such as rail, and `Train(...)` for a
 train with its stops), `warmup_seconds`,
 `measure_seconds` and `expect`. Write the expected rate from the recipe maths

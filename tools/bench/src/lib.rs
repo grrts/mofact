@@ -24,6 +24,7 @@ fn cell(x: i32, y: i32, s: &mut Scenario) {
         y: y + dy,
         dir: Dir::East,
         recipe: recipe.map(Into::into),
+        filter: None,
     };
     let belts = |dx: i32, dy: i32, len: u32, dir: Dir| Build::Belts {
         x: x + dx,

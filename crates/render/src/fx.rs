@@ -227,6 +227,7 @@ mod tests {
     ) -> EntityView {
         EntityView {
             request: None,
+            filter: None,
             id: EntityId(id),
             building: building.into(),
             pos: TilePos::new(x, y),

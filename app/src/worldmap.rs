@@ -64,7 +64,7 @@ pub fn factory(
         let carrier = matches!(
             def.role,
             Role::Belt { .. }
-                | Role::Splitter
+                | Role::Splitter { .. }
                 | Role::Underground { .. }
                 | Role::Pipe { .. }
                 | Role::UndergroundPipe { .. }
