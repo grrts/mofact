@@ -1426,6 +1426,15 @@ impl Hud {
             self.title_screen(view, o, [w, h], [mt, mr, mb, ml]);
             return;
         }
+        // Settings are a menu of their own: they take the whole screen,
+        // with nothing of the game's HUD round them.
+        if self.settings {
+            o.panel([0.0, 0.0], [w, h], 0.0, TITLE_DIM);
+            self.hits.push(([0.0, 0.0, w, h], Hit::Block));
+            let area = [ml, mt, w - ml - mr, h - mt - mb];
+            self.settings_menu(view, o, area);
+            return;
+        }
         let selected = self
             .selected
             .and_then(|id| view.snapshot.entities.iter().find(|e| e.id == id));
@@ -1590,11 +1599,6 @@ impl Hud {
         if self.research {
             let room = corner[1] - tip_y;
             self.research_sheet(view, o, [corner[0] - width, corner[1]], width, room);
-            return;
-        }
-        if self.settings {
-            let room = corner[1] - tip_y;
-            self.settings_sheet(view, o, corner, width, corner[0] - ml, room);
             return;
         }
         if self.menu {
@@ -2479,22 +2483,15 @@ impl Hud {
         }
     }
 
-    /// The settings sheet: sound, display, accessibility and general
-    /// settings, two to a row under a heading each. Bottom-right at
-    /// `corner`, `width` wide. A short screen drops the headings, and one
-    /// shorter still, as a small phone held sideways, lays the settings
-    /// four to a row, up to `wide` across.
-    #[allow(clippy::too_many_arguments)]
-    fn settings_sheet(
-        &mut self,
-        view: &View,
-        o: &mut Overlay,
-        corner: [f32; 2],
-        width: f32,
-        wide: f32,
-        room: f32,
-    ) {
+    /// The settings menu: sound, display, accessibility and general
+    /// settings, two to a row under a heading each, in a panel in the
+    /// middle of `area` (the screen clear of notches). A short screen drops
+    /// the headings, and one shorter still, as a small phone held
+    /// sideways, lays the settings four to a row.
+    fn settings_menu(&mut self, view: &View, o: &mut Overlay, area: Rect) {
         let u = self.unit;
+        let [ax, ay, wide, room] = area;
+        let width = wide.min(480.0 * u);
         let pad = 16.0 * u;
         let bh = 44.0 * u;
         let gap = 8.0 * u;
@@ -2522,7 +2519,12 @@ impl Hud {
             rows * bh + (rows - 1.0) * gap
         };
         let height = pad + title + body + pad;
-        let r = [corner[0] - width, corner[1] - height, width, height];
+        let r = [
+            ax + (wide - width) / 2.0,
+            ay + ((room - height) / 2.0).max(0.0),
+            width,
+            height,
+        ];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
         let left = r[0] + pad;

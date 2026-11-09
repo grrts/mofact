@@ -2102,6 +2102,14 @@ fn the_settings_sheet_opens_from_both_menus_and_goes_back_to_where_it_came_from(
     f.tap(centre(f.find(&Hit::Settings)));
     assert!(f.hud.settings_open() && !f.hud.menu_open());
     f.draw(screen, 1.0, &Tool::Hand);
+    // A menu of its own: none of the game's HUD round it, and a tap
+    // anywhere stays in it.
+    assert!(f
+        .hud
+        .hits
+        .iter()
+        .all(|(_, h)| !matches!(h, Hit::Tool(_) | Hit::Menu | Hit::Research | Hit::Sound)));
+    assert!(f.hud.covers([5.0, 5.0]));
     let (_, actions) = f.tap(centre(f.find(&Hit::SettingsClose)));
     assert_eq!(actions, vec![Action::MenuOpened]);
     assert!(f.hud.menu_open() && !f.hud.settings_open());
