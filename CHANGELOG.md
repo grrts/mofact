@@ -12,6 +12,12 @@ release, see "Releasing" in CONTRIBUTING.md.
   row asks a fifth more and pays a fifth more, up to three times as much;
   a missed one starts the streak over. The card shows the count, the
   clock (red in the last minute) and the pay.
+- **Warehouses:** Logistics also unlocks a warehouse, a two-by-two store
+  for up to 1,600 items between belts. Belts feed it from any side but its
+  arrow, and it hands what it holds back out of its arrow, every kind in
+  turn, or only the one item you pick in its sheet. Use it to buffer a line
+  or to keep a stock part-way along the factory. What it holds is not your
+  stock: only the hub's counts. Drones take from it like a provider chest.
 - **More splitters:** Logistics now also unlocks a three-way splitter
   (left, ahead and right in turn), a priority splitter (fills the line ahead
   first and only sends the overflow to the sides) and a filter splitter (one

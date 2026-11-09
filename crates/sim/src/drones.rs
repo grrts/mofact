@@ -33,6 +33,9 @@ const DISPATCH_EVERY: u64 = 6;
 const DISPATCH_MAX: usize = 32;
 /// A requester chest hands one item out of its arrow this often.
 pub const OUT_EVERY: u32 = 6;
+/// A warehouse hands one item out of its arrow this often: faster than
+/// an express belt takes them, so it never holds a line up.
+pub const WAREHOUSE_OUT_EVERY: u32 = 2;
 
 /// A provider or requester chest.
 #[derive(Clone, Debug, Default)]
@@ -45,6 +48,8 @@ pub struct Chest {
     pub incoming: u32,
     /// Ticks since it last handed an item out.
     pub wait: u32,
+    /// The one item a warehouse hands out, if it is set to one.
+    pub filter: Option<Item>,
 }
 
 impl Chest {

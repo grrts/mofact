@@ -2610,3 +2610,79 @@ pub fn logistic_chest(c: &mut Canvas, z: f32, fine: bool, trim: Rgba, requester:
         }
     }
 }
+
+/// A warehouse, two tiles a side, facing east: a long shed under a
+/// corrugated roof with a ridge down its middle, and a loading door on
+/// the east wall with the output arrow over it, where it hands items out.
+pub fn warehouse(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z * 2.0;
+    let sh = z * 0.08;
+    let (x0, y0, w, h) = (s * 0.05, s * 0.07, s * 0.86, s * 0.86);
+    shadow(c, rr(x0 + sh, y0 + sh * 1.3, w, h, s * 0.05));
+    fill(c, rr(x0, y0, w, h, s * 0.05), pal::MACHINE_EDGE);
+    // The roof: panels across the shed, lighter and darker in turn.
+    let (rx, ry, rw, rh) = (x0 + s * 0.03, y0 + s * 0.03, w - s * 0.1, h - s * 0.06);
+    fill(c, rr(rx, ry, rw, rh, s * 0.03), pal::MACHINE);
+    let n = 8;
+    let step = rw / n as f32;
+    for k in 0..n {
+        if k % 2 == 0 {
+            fill(
+                c,
+                rect(
+                    rx + k as f32 * step,
+                    ry + s * 0.01,
+                    step * 0.5,
+                    rh - s * 0.02,
+                ),
+                shade(pal::MACHINE, 0.1),
+            );
+        }
+    }
+    // The ridge, east to west down the middle.
+    fill(
+        c,
+        rect(rx, s * 0.5 - s * 0.022, rw, s * 0.044),
+        pal::MACHINE_HI,
+    );
+    fill(
+        c,
+        rect(rx, s * 0.5 + s * 0.022, rw, s * 0.012),
+        pal::MACHINE_EDGE,
+    );
+    // The loading door on the east wall, in hazard yellow, and its arrow.
+    let (dx, dy, dw, dh) = (x0 + w - s * 0.09, s * 0.3, s * 0.1, s * 0.4);
+    fill(c, rr(dx, dy, dw, dh, s * 0.02), pal::ACCENT);
+    fill(
+        c,
+        rr(
+            dx + s * 0.02,
+            dy + s * 0.03,
+            dw - s * 0.04,
+            dh - s * 0.06,
+            s * 0.01,
+        ),
+        pal::HAZARD_DARK,
+    );
+    arrow(c, s * 0.82, s * 0.5, 0, s * 0.2, pal::ACCENT);
+    // Skylights down each side of the ridge.
+    for &yy in &[0.3, 0.7] {
+        fill(
+            c,
+            rr(s * 0.22, s * yy - s * 0.035, s * 0.4, s * 0.07, s * 0.015),
+            pal::WINDOW,
+        );
+        if fine {
+            fill(
+                c,
+                rect(s * 0.24, s * yy - s * 0.02, s * 0.36, s * 0.012),
+                shade(pal::GLASS, -0.35),
+            );
+        }
+    }
+    if fine {
+        for (bx, by) in [(0.1, 0.12), (0.1, 0.88), (0.86, 0.12), (0.86, 0.88)] {
+            bolt(c, bx * s, by * s, s * 0.016);
+        }
+    }
+}

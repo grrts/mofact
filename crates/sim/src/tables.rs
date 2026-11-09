@@ -98,10 +98,13 @@ pub enum Role {
         drones: u8,
         reach: u8,
     },
-    /// A provider or requester chest, holding at most `capacity` items.
+    /// A provider or requester chest, or a warehouse, holding at most
+    /// `capacity` items. A warehouse fills from belts like a provider and
+    /// hands out of its arrow like a requester.
     Chest {
         capacity: u32,
         requester: bool,
+        warehouse: bool,
     },
 }
 
@@ -275,10 +278,17 @@ impl Tables {
                 BuildingRole::ProviderChest { capacity } => Role::Chest {
                     capacity: *capacity,
                     requester: false,
+                    warehouse: false,
                 },
                 BuildingRole::RequesterChest { capacity } => Role::Chest {
                     capacity: *capacity,
                     requester: true,
+                    warehouse: false,
+                },
+                BuildingRole::Warehouse { capacity } => Role::Chest {
+                    capacity: *capacity,
+                    requester: false,
+                    warehouse: true,
                 },
                 BuildingRole::Megaproject { stages } => Role::Mega {
                     stages: stages.iter().map(|st| stacks(&t, &st.needs)).collect(),
