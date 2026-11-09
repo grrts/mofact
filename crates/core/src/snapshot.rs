@@ -34,6 +34,9 @@ pub struct EntityView {
     /// For a miner, the ore under it.
     #[serde(default)]
     pub ore: Option<ItemId>,
+    /// For a miner, the ore left in its reach: 0 once it is mined out.
+    #[serde(default)]
+    pub ore_left: Option<u32>,
     /// The power grid it is on, as an index into [`Snapshot::grids`].
     #[serde(default)]
     pub grid: Option<u16>,

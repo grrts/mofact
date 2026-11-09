@@ -2416,3 +2416,61 @@ fn drones_mid_flight_save_and_play_on_the_same() {
     assert_eq!(back.save(), sim.save());
     assert_eq!(sim.inventory(chest), vec![(item("circuit"), 30)]);
 }
+
+#[test]
+fn drills_dig_round_themselves_once_their_tile_runs_dry() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.add_stock(&item("iron-plate"), 10_000);
+    let t = TilePos::new(0, 0);
+    let north = TilePos::new(0, -1);
+    sim.set_ore_amount(t, &item("iron-ore"), 3);
+    sim.set_ore_amount(north, &item("iron-ore"), 2);
+    let drill = place(&mut sim, "drill", t.x, t.y, Dir::East, None);
+    for x in 1..=4 {
+        place(&mut sim, "belt", x, 0, Dir::East, None);
+    }
+    let view = |sim: &Sim| {
+        let snap = sim.snapshot();
+        let e = snap
+            .entities
+            .iter()
+            .find(|e| e.id == drill)
+            .unwrap()
+            .clone();
+        (e.ore_left, e.ore, e.state)
+    };
+    assert_eq!(view(&sim).0, Some(5), "its own tile and the one beside it");
+    run(&mut sim, 5);
+    assert_eq!(sim.ore_left(t), None, "its own tile went first");
+    assert!(sim.ore_left(north).is_some(), "then the tile beside it");
+    assert_eq!(view(&sim).1, Some(item("iron-ore")));
+    assert_eq!(view(&sim).2, MachineState::Working);
+    run(&mut sim, 40);
+    assert_eq!(view(&sim), (Some(0), None, MachineState::Starved));
+    assert_eq!(*sim.snapshot().depleted, vec![north, t]);
+}
+
+#[test]
+fn a_drill_claims_the_same_ore_round_it_on_the_map() {
+    let content = content();
+    let mut sim = Sim::with_content(&content);
+    sim.add_stock(&item("iron-plate"), 10_000);
+    sim.set_world(42);
+    // The middle of the starter iron patch: ore on all nine tiles.
+    let t = TilePos::new(-10, 1);
+    let iron = sim.ore_at(t).expect("starter iron");
+    let drill = place(&mut sim, "drill", t.x, t.y, Dir::East, None);
+    let left = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .iter()
+            .find(|e| e.id == drill)
+            .and_then(|e| e.ore_left)
+    };
+    assert_eq!(left(&sim), Some(9 * mofact_world::SPAWN_ORE));
+    assert_eq!(sim.ore_at(TilePos::new(-11, 0)), Some(iron));
+    // A save keeps the claim, and loading claims no more.
+    let (loaded, _) = Sim::load(&content, &sim.save()).unwrap();
+    assert_eq!(left(&loaded), Some(9 * mofact_world::SPAWN_ORE));
+}

@@ -1071,6 +1071,16 @@ impl Sim {
                 sim.reveal_wide(e);
             }
         }
+        // A save from before drills reached round themselves claims the
+        // ore around each drill now.
+        for e in &all {
+            if matches!(
+                sim.tables.buildings[e.kind as usize].role,
+                Role::Miner { .. }
+            ) {
+                sim.claim(e.pos);
+            }
+        }
         sim.load_fleet(world.fleet, &mut warnings);
         sim.rebuild_grids();
         sim.rebuild_blocks();

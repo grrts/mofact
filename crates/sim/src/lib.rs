@@ -179,6 +179,21 @@ struct Crafter {
 /// Ore a scenario places by hand: enough for hours of one drill.
 pub const PLACED_ORE: u32 = 10_000;
 
+/// The tiles a drill digs, by offset from it, in the order it digs them:
+/// its own tile, then the four beside it, then the four corners. A drill
+/// reaching round itself runs dry with its patch rather than its tile.
+const DRILL_REACH: [(i32, i32); 9] = [
+    (0, 0),
+    (0, -1),
+    (1, 0),
+    (0, 1),
+    (-1, 0),
+    (1, -1),
+    (1, 1),
+    (-1, 1),
+    (-1, -1),
+];
+
 /// The most pins the map holds.
 pub const MAX_PINS: usize = 64;
 
@@ -381,8 +396,50 @@ impl Sim {
         self.world.map(|w| (w.seed, w.preset))
     }
 
-    /// Dig one ore from under `pos`; the tile is mined out when it runs dry.
+    /// The tiles a drill at `pos` digs, in the order it digs them: its own
+    /// tile first, then the eight around it.
+    fn reach(pos: TilePos) -> impl Iterator<Item = TilePos> {
+        DRILL_REACH
+            .iter()
+            .map(move |&(dx, dy)| TilePos::new(pos.x + dx, pos.y + dy))
+    }
+
+    /// Copy the generated ore around a drill at `pos` into `ore`, so the
+    /// drill can dig it once its own tile runs dry: only the same ore as
+    /// under the drill, and only what nothing has claimed or mined out.
+    fn claim(&mut self, pos: TilePos) {
+        let Some(&(item, _)) = self.ore.get(&pos) else {
+            return;
+        };
+        for t in Self::reach(pos).skip(1) {
+            if self.ore.contains_key(&t) {
+                continue;
+            }
+            if let Some((i, n)) = self.ore_item(t) {
+                if i == item {
+                    self.ore.insert(t, (i, n));
+                }
+            }
+        }
+    }
+
+    /// The ore a drill at `pos` still has in reach, and what it is.
+    fn ore_in_reach(&self, pos: TilePos) -> (Option<Item>, u32) {
+        let mut what = None;
+        let mut left = 0u32;
+        for t in Self::reach(pos) {
+            if let Some(&(i, n)) = self.ore.get(&t) {
+                what.get_or_insert(i);
+                left = left.saturating_add(n);
+            }
+        }
+        (what, left)
+    }
+
+    /// Dig one ore for the drill at `pos`: from under it while that lasts,
+    /// then from the tiles around it. A tile is mined out when it runs dry.
     fn mine(&mut self, pos: TilePos) -> Option<Item> {
+        let pos = Self::reach(pos).find(|t| self.ore.contains_key(t))?;
         let (item, left) = self.ore.get_mut(&pos)?;
         let item = *item;
         *left -= 1;
@@ -614,6 +671,7 @@ impl Sim {
                 }
                 if let Some(ore) = mined {
                     self.ore.insert(*pos, ore);
+                    self.claim(*pos);
                 }
                 self.regrid(kind);
                 if track {
@@ -2082,7 +2140,7 @@ impl Sim {
                     let ticks = self.mine_ticks(ticks);
                     let st = if out.is_some() && *waiting > BLOCKED_AFTER {
                         MachineState::Blocked
-                    } else if out.is_none() && !self.ore.contains_key(&e.pos) {
+                    } else if out.is_none() && self.ore_in_reach(e.pos).1 == 0 {
                         // Mined out: nothing left to dig.
                         MachineState::Starved
                     } else {
@@ -2185,16 +2243,17 @@ impl Sim {
                 }
                 _ => state,
             };
+            let miner = matches!(b.role, Role::Miner { .. }).then(|| self.ore_in_reach(e.pos));
             snap.entities.push(EntityView {
                 id,
                 building: b.id.clone(),
                 pos: e.pos,
                 dir: e.dir,
                 recipe,
-                ore: matches!(b.role, Role::Miner { .. })
-                    .then(|| self.ore.get(&e.pos))
-                    .flatten()
-                    .map(|&(i, _)| self.tables.items[i as usize].clone()),
+                ore: miner
+                    .and_then(|(i, _)| i)
+                    .map(|i| self.tables.items[i as usize].clone()),
+                ore_left: miner.map(|(_, n)| n),
                 grid: self.grids.grid(slot),
                 exit: matches!(
                     self.states[slot],

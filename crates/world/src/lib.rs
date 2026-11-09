@@ -542,9 +542,13 @@ fn ore_on_land(gen: &WorldGen, t: TilePos) -> Option<Ore> {
         return None;
     }
     let (h, far) = (cell.hash, cell.far);
-    // Richest in the middle, and richer the further you go.
+    // Richest in the middle, and richer the further you go: the patches
+    // near home are thin, so they run dry and the factory has to reach
+    // out, and a patch a thousand tiles out holds about six times as much
+    // a tile as one beside the start.
     let rich = 1.0 + ((h >> 40) % 100) as f64 / 100.0 + far / 600.0;
-    let amount = (1200.0 + 3600.0 * rich * (1.0 - d * d)) as u32;
+    let depth = (0.4 + far / 500.0).min(4.0);
+    let amount = ((600.0 + 3000.0 * rich * (1.0 - d * d)) * depth) as u32;
     let amount = if gen.preset == Preset::Rich {
         amount * 2
     } else {
@@ -688,9 +692,10 @@ fn pick_resource(resources: u8, roll: u64) -> u8 {
     resources - 1
 }
 
-/// Ore on each tile of a starter patch: a starter iron patch worked by a
-/// handful of drills runs out in about five hours (R14).
-pub const SPAWN_ORE: u32 = 2_500;
+/// Ore on each tile of a starter patch: the starter iron patch, worked by
+/// the ten or so drills of a first factory, runs dry in about an hour and
+/// a half, so the factory has to reach out to the patches beyond.
+pub const SPAWN_ORE: u32 = 1_000;
 
 /// The starter patches: centre, radius and resource.
 const SPAWN_PATCHES: [(i32, i32, i32, u8); 4] =
@@ -938,7 +943,7 @@ mod tests {
         );
     }
 
-    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 12_243_604_811_049_948_823;
+    const SNAPSHOT_SEED_42_CHUNK_0_0: u64 = 1_186_944_345_773_368_068;
 
     #[test]
     fn spawn_has_iron_and_copper_close_by() {
@@ -1040,6 +1045,32 @@ mod tests {
             patch(2_000, 0) > patch(300, 0),
             "ore near 2,000 tiles out beats ore near the start"
         );
+    }
+
+    #[test]
+    fn ore_near_home_is_thin_so_the_factory_reaches_out() {
+        let gen = WorldGen::new(3, 4);
+        // Ore a tile, on average, over the ore tiles in a ring.
+        let per_tile = |lo: i32, hi: i32| {
+            let (mut total, mut tiles) = (0u64, 0u64);
+            for y in (-hi..hi).step_by(2) {
+                for x in (-hi..hi).step_by(2) {
+                    let r2 = i64::from(x).pow(2) + i64::from(y).pow(2);
+                    if r2 < i64::from(lo).pow(2) || r2 >= i64::from(hi).pow(2) {
+                        continue;
+                    }
+                    if let Some(o) = ore_at(&gen, TilePos::new(x, y)) {
+                        total += u64::from(o.amount);
+                        tiles += 1;
+                    }
+                }
+            }
+            total / tiles.max(1)
+        };
+        let near = per_tile(SPAWN_RADIUS * 2, 200);
+        let far = per_tile(900, 1100);
+        assert!(near < 3_000, "near home {near} a tile");
+        assert!(far > near * 4, "{far} a tile far out vs {near} near home");
     }
 
     #[test]

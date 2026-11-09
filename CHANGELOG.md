@@ -11,6 +11,14 @@ release, see "Releasing" in CONTRIBUTING.md.
   chosen item goes ahead, everything else to the sides). Tap a filter
   splitter to pick its item from big item buttons. Each kind has its own
   colour so they are easy to tell apart.
+- **Ore runs out:** the patches round the hub are thin, so the starter
+  iron runs dry in about an hour and a half of a first factory's digging,
+  and ore gets richer the further out a patch lies: about six times as
+  much a tile a thousand tiles away. A drill digs the ore under it and the
+  eight tiles round it, so it runs dry with its patch rather than its tile.
+  Drills running low or mined out show in the problems list, the inspect
+  sheet says how much ore a drill has left, and a toast says when one runs
+  dry.
 - **Fixed:** on an iPhone or iPad (Safari), building anything (usually a
   drill, the first thing placed) stopped the web game, because Safari can't
   vibrate. The game now buzzes only where the browser can.
