@@ -755,6 +755,8 @@ pub struct Hud {
     /// Settings copied from a machine: taps on others like it give them
     /// the same, until Done.
     brush: Option<Brush>,
+    /// How high the inspect sheet may reach: below the goal card.
+    sheet_top: f32,
     /// Orders shipped and missed as last drawn, to toast when one ends.
     orders_seen: Option<(u32, u32)>,
     /// What's stuck, as of the last frame drawn.
@@ -1842,6 +1844,7 @@ impl Hud {
             } else {
                 width
             };
+            self.sheet_top = top + gap;
             self.sheet(view, o, e, [corner[0] - width, corner[1]], width);
             return;
         }
@@ -3135,7 +3138,9 @@ impl Hud {
             "goal.progress",
             &[&(g.index + 1), &view.content.goals.len(), &def.title],
         );
-        let px = fit(o, &text, px, width - 40.0 * u - cw);
+        // Folded, a small "?" says a tap shows how.
+        let more = if self.hint { 0.0 } else { 26.0 * u };
+        let px = fit(o, &text, px, width - 40.0 * u - cw - more);
         // The hint sits inside the card, so goal and hint read as one thing.
         let hint_px = 14.0 * u;
         let line = 20.0 * u;
@@ -3144,8 +3149,6 @@ impl Hud {
         } else {
             Vec::new()
         };
-        // Folded, a small "?" says a tap shows how.
-        let more = if lines.is_empty() { 26.0 * u } else { 0.0 };
         let w = if lines.is_empty() {
             (o.measure(&text, px) + cw + 40.0 * u + more).min(width)
         } else {
@@ -4711,7 +4714,7 @@ impl Hud {
         } else {
             2 + anew as usize + brush.is_some() as usize
         };
-        let button_rows = if buttons > 3 { 2.0 } else { 1.0 };
+        let rows = if buttons > 3 { 2.0 } else { 1.0 };
 
         // Measure the sheet from its rows, bottom up.
         let row = 22.0 * u;
@@ -4744,8 +4747,15 @@ impl Hud {
             + 30.0 * u // title
             + if belt { 0.0 } else { row + 8.0 * u + 6.0 * u } // recipe line and progress
             + pill_rows * 46.0 * u
-            + 44.0 * u * button_rows // buttons
+            + 44.0 * u + (rows - 1.0) * 48.0 * u // buttons
             + pad;
+        // Two rows of buttons only where the sheet still fits on screen;
+        // on a short one Copy settings makes way, as four would not read.
+        let (brush, height) = if rows > 1.0 && at[1] - height < self.sheet_top {
+            (None, height - 48.0 * u)
+        } else {
+            (brush, height)
+        };
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
@@ -5057,7 +5067,7 @@ impl Hud {
                 let (row, col) = (i / per_row, i % per_row);
                 let b = [
                     left + col as f32 * (bw + 8.0 * u),
-                    y + row as f32 * 44.0 * u,
+                    y + row as f32 * 48.0 * u,
                     bw,
                     bh,
                 ];
