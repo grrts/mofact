@@ -129,6 +129,8 @@ unit.seconds = {0}s
 recipe.auto = Auto
 request.none = None
 warehouse.all = All
+keep.none = Take all
+keep.count = Keep {0}
 build.title = Build
 
 # The full game.

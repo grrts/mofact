@@ -12,6 +12,7 @@ fn snapshot() -> Snapshot {
         request: None,
         filter: None,
         held: Vec::new(),
+        keep: 0,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, 0),
@@ -549,6 +550,7 @@ fn a_pole_sheet_shows_its_grid() {
         request: None,
         filter: None,
         held: Vec::new(),
+        keep: 0,
         id: EntityId(9),
         building: "pole".into(),
         pos: TilePos::new(9, 0),
@@ -738,6 +740,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
         request: None,
         filter: None,
         held: Vec::new(),
+        keep: 0,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, y),
@@ -1957,6 +1960,7 @@ fn drills_running_dry_and_mined_out_show_as_problems() {
         request: None,
         filter: None,
         held: Vec::new(),
+        keep: 0,
         id: EntityId(id),
         building: "drill".into(),
         pos: TilePos::new(x, 0),
@@ -2039,6 +2043,17 @@ fn a_warehouse_sheet_shows_what_it_holds_and_picks_what_goes_out() {
         let gear = Hit::SetFilter(EntityId(7), Some("gear".into()));
         let copper = Hit::SetFilter(EntityId(7), Some("copper-plate".into()));
         assert!(f.find(&gear)[0] < f.find(&copper)[0], "most first");
+        // Its safety stock: none chosen yet, and a count to keep back.
+        f.find(&Hit::SetKeep(EntityId(7), 0));
+        assert_eq!(
+            f.tap(centre(f.find(&Hit::SetKeep(EntityId(7), 100)))).1,
+            vec![Action::Send(Command::SetKeep {
+                entity: EntityId(7),
+                keep: 100
+            })]
+        );
+        f.hud.select(Some(EntityId(7)));
+        f.draw(size, scale, &Tool::Hand);
         assert_eq!(
             f.tap(centre(f.find(&copper))).1,
             vec![Action::Send(Command::SetFilter {

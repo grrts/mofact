@@ -330,6 +330,8 @@ enum Hit {
     SetRequest(EntityId, Option<(mofact_core::ids::ItemId, u32)>),
     /// What a filter splitter sends ahead.
     SetFilter(EntityId, Option<mofact_core::ids::ItemId>),
+    /// A warehouse's safety stock.
+    SetKeep(EntityId, u32),
     Turn(EntityId, Dir),
     Remove(EntityId),
     /// The research button: opens or closes the research sheet.
@@ -1022,6 +1024,9 @@ impl Hud {
             Hit::Belt(b) => vec![Action::Belt(b)],
             Hit::SetRequest(entity, request) => {
                 vec![Action::Send(Command::SetRequest { entity, request })]
+            }
+            Hit::SetKeep(entity, keep) => {
+                vec![Action::Send(Command::SetKeep { entity, keep })]
             }
             Hit::SetFilter(entity, filter) => {
                 vec![Action::Send(Command::SetFilter { entity, filter })]
@@ -4149,7 +4154,29 @@ impl Hud {
                 )
             }))
             .collect();
-        self.pills(o, list, at, width, draw)
+        if !warehouse {
+            return self.pills(o, list, at, width, draw);
+        }
+        // A warehouse's safety stock, in the bottom row: what it keeps back
+        // of each item from its arrow and from drones.
+        let labels: Vec<String> = KEEP_COUNTS
+            .iter()
+            .map(|&k| {
+                if k == 0 {
+                    tr("keep.none").to_string()
+                } else {
+                    trf("keep.count", &[&k])
+                }
+            })
+            .collect();
+        let keeps: Vec<Pill> = KEEP_COUNTS
+            .iter()
+            .zip(&labels)
+            .map(|(&k, label)| (label.as_str(), None, e.keep == k, Hit::SetKeep(e.id, k)))
+            .collect();
+        let rows = self.pills(o, keeps, at, width, draw);
+        let pitch = 46.0 * self.unit;
+        rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
     }
 
     /// The inspect sheet for `e`, bottom-left at `at`.
@@ -4584,6 +4611,8 @@ type Pill<'a> = (&'a str, Option<(&'a str, Rgba)>, bool, Hit);
 /// The items a requester chest's sheet offers, and the counts.
 const REQUEST_ITEMS: usize = 11;
 const REQUEST_COUNTS: [u32; 4] = [10, 50, 100, 200];
+/// The safety stocks a warehouse's sheet offers: none, then counts kept back.
+const KEEP_COUNTS: [u32; 5] = [0, 50, 100, 200, 500];
 
 /// The solid items in stock, most first, up to [`REQUEST_ITEMS`], and
 /// `current` after them if it is not among them: what a requester chest or

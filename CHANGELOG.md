@@ -5,6 +5,9 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Warehouse safety stock:** tap a warehouse and pick how many of each
+  item it keeps back (none, 50, 100, 200 or 500). Its arrow and drones
+  only take what it holds above that, so a buffer never runs dry.
 - **More settings:** Settings, from the start menu or the game menu, now
   open a dedicated full-screen menu of their own, with none of the game's
   buttons round it: volume in steps of a quarter, ambient sound

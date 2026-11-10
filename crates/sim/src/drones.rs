@@ -50,6 +50,9 @@ pub struct Chest {
     pub wait: u32,
     /// The one item a warehouse hands out, if it is set to one.
     pub filter: Option<Item>,
+    /// A warehouse's safety stock: how many of each item it keeps back
+    /// from its arrow and from drones.
+    pub keep: u32,
 }
 
 impl Chest {
@@ -318,7 +321,7 @@ impl Sim {
                         Role::Chest {
                             requester: false, ..
                         },
-                    ) => c.count(item),
+                    ) => c.count(item).saturating_sub(c.keep),
                     (Some(State::Hub), _) => self.stock[item as usize],
                     _ => 0,
                 };

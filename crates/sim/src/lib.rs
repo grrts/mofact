@@ -838,6 +838,12 @@ impl Sim {
                     for &(i, n) in &c.items {
                         self.stock[i as usize] += n;
                     }
+                    if c.keep > 0 {
+                        undo.push(Command::SetKeep {
+                            entity: *entity,
+                            keep: c.keep,
+                        });
+                    }
                     if let Some((i, n)) = c.request {
                         undo.push(Command::SetRequest {
                             entity: *entity,
@@ -1077,6 +1083,31 @@ impl Sim {
                     vec![Command::SetFilter {
                         entity: *entity,
                         filter: old.map(|i| self.tables.items[i as usize].clone()),
+                    }],
+                    None,
+                ))
+            }
+            Command::SetKeep { entity, keep } => {
+                let e = *self
+                    .entities
+                    .get(*entity)
+                    .ok_or(CommandError::NoSuchEntity)?;
+                let Role::Chest {
+                    capacity,
+                    warehouse: true,
+                    ..
+                } = self.tables.buildings[e.kind as usize].role
+                else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let Some(Some(State::Chest(c))) = self.states.get_mut(entity.0 as usize) else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let old = std::mem::replace(&mut c.keep, (*keep).min(capacity));
+                Ok((
+                    vec![Command::SetKeep {
+                        entity: *entity,
+                        keep: old,
                     }],
                     None,
                 ))
@@ -1589,10 +1620,15 @@ impl Sim {
                 if c.wait < drones::WAREHOUSE_OUT_EVERY {
                     return;
                 }
+                // Only what it holds above its safety stock goes out.
+                let keep = c.keep;
                 let item = match c.filter {
-                    Some(f) if c.count(f) > 0 => f,
+                    Some(f) if c.count(f) > keep => f,
                     Some(_) => return,
-                    None => c.items[0].0,
+                    None => match c.items.iter().find(|&&(_, n)| n > keep) {
+                        Some(&(i, _)) => i,
+                        None => return,
+                    },
                 };
                 let side = e.dir;
                 let out = fluids::edges(e)
@@ -2429,6 +2465,10 @@ impl Sim {
                         }),
                     ) => Some(self.tables.items[*i as usize].clone()),
                     _ => None,
+                },
+                keep: match &self.states[slot] {
+                    Some(State::Chest(c)) => c.keep,
+                    _ => 0,
                 },
                 held: match &self.states[slot] {
                     Some(State::Chest(c)) => c

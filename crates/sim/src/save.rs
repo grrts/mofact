@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 20;
+pub const VERSION: u16 = 21;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -399,6 +399,13 @@ enum SavedState {
         items: Vec<(ItemId, u32)>,
         filter: Option<ItemId>,
     },
+    /// A warehouse with its safety stock (v21). Older saves wrote
+    /// [`SavedState::Warehouse`], which keeps nothing back.
+    Warehouse2 {
+        items: Vec<(ItemId, u32)>,
+        filter: Option<ItemId>,
+        keep: u32,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -674,7 +681,8 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 rules: DEFAULT_RULES,
             })
         }
-        20 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 21 adds a warehouse's safety stock: a new variant only.
+        20 | 21 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -831,9 +839,10 @@ impl Sim {
                         done: *done,
                     },
                     State::Port { .. } => SavedState::Port,
-                    State::Chest(c) if warehouse => SavedState::Warehouse {
+                    State::Chest(c) if warehouse => SavedState::Warehouse2 {
                         items: c.items.iter().map(|&(i, n)| (item(i), n)).collect(),
                         filter: c.filter.map(item),
+                        keep: c.keep,
                     },
                     State::Chest(c) => SavedState::Chest {
                         items: c.items.iter().map(|&(i, n)| (item(i), n)).collect(),
@@ -1141,6 +1150,7 @@ impl Sim {
                     incoming,
                     wait: 0,
                     filter: None,
+                    keep: 0,
                 }),
                 (
                     SavedState::Warehouse { items, filter },
@@ -1153,6 +1163,26 @@ impl Sim {
                         .filter_map(|(i, n)| Some((item(i, &mut warnings)?, *n)))
                         .collect(),
                     filter: opt(&filter, &mut warnings),
+                    ..Default::default()
+                }),
+                (
+                    SavedState::Warehouse2 {
+                        items,
+                        filter,
+                        keep,
+                    },
+                    Role::Chest {
+                        warehouse: true,
+                        capacity,
+                        ..
+                    },
+                ) => State::Chest(crate::drones::Chest {
+                    items: items
+                        .iter()
+                        .filter_map(|(i, n)| Some((item(i, &mut warnings)?, *n)))
+                        .collect(),
+                    filter: opt(&filter, &mut warnings),
+                    keep: keep.min(*capacity),
                     ..Default::default()
                 }),
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {

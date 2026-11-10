@@ -2732,3 +2732,71 @@ fn the_orders_pace_picked_for_a_game_sets_their_time_and_reward() {
     assert_eq!(open(crate::OrderPace::Normal), Some((600, 120)));
     assert_eq!(open(crate::OrderPace::Hard), Some((400, 180)));
 }
+
+#[test]
+fn a_warehouse_keeps_its_safety_stock_back() {
+    let (mut sim, warehouse, first) = warehouse_test(0);
+    for _ in 0..30 {
+        assert!(sim.feed(first, &item("iron-plate")));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 5);
+    let set = Command::SetKeep {
+        entity: warehouse,
+        keep: 20,
+    };
+    let CommandResult::Applied { undo, .. } = sim.apply(&set) else {
+        panic!("keep refused");
+    };
+    assert_eq!(
+        undo,
+        vec![Command::SetKeep {
+            entity: warehouse,
+            keep: 0
+        }]
+    );
+    // Its arrow hands out only what it holds above 20.
+    belts(&mut sim, 5..=24, 0, Dir::East);
+    run(&mut sim, 20);
+    assert_eq!(stored(&sim, warehouse), vec![(item("iron-plate"), 20)]);
+    assert_eq!(items_on(&sim, |t| t.x > 4), 10);
+
+    // The safety stock survives a save, and is shown.
+    let (loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    let keep = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == warehouse)
+            .unwrap()
+            .keep
+    };
+    assert_eq!(keep(&loaded), 20);
+
+    // Lowered, the rest goes out; taken down, undo keeps the same back.
+    sim.apply(&Command::SetKeep {
+        entity: warehouse,
+        keep: 5,
+    });
+    run(&mut sim, 20);
+    assert_eq!(stored(&sim, warehouse), vec![(item("iron-plate"), 5)]);
+    let CommandResult::Applied { undo, .. } = sim.apply(&Command::Remove { entity: warehouse })
+    else {
+        panic!("remove refused");
+    };
+    assert!(undo.contains(&Command::SetKeep {
+        entity: warehouse,
+        keep: 5
+    }));
+
+    // Only warehouses keep a safety stock.
+    let belt = sim.entity_at(TilePos::new(0, 0)).unwrap();
+    assert_eq!(
+        sim.apply(&Command::SetKeep {
+            entity: belt,
+            keep: 5
+        }),
+        CommandResult::Refused(CommandError::UnknownContent)
+    );
+}
