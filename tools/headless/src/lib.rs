@@ -9,7 +9,7 @@
 //!
 //! A scenario is a RON file in `scenarios/`; see `scenarios/README.md`.
 
-use mofact_core::command::{Command, CommandResult, TrainStop};
+use mofact_core::command::{Command, CommandResult, Condition, TrainStop};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
@@ -49,9 +49,13 @@ pub enum Build {
         dir: Dir,
         #[serde(default)]
         recipe: Option<RecipeId>,
-        /// For a filter splitter, the item it sends ahead.
+        /// For a filter splitter, the item it sends ahead; for a picker,
+        /// the item it takes.
         #[serde(default)]
         filter: Option<ItemId>,
+        /// For a picker, when it runs.
+        #[serde(default)]
+        when: Option<Condition>,
     },
     /// A straight run of belts from (x, y), `len` tiles long, all facing `dir`.
     Belts { x: i32, y: i32, len: u32, dir: Dir },
@@ -173,8 +177,18 @@ pub fn build(content: &Content, s: &Scenario) -> Result<Sim, String> {
                 dir,
                 recipe,
                 filter,
+                when,
             } => {
                 let made = place(&mut sim, building, TilePos::new(*x, *y), *dir, recipe)?;
+                if let (Some(entity), Some(_)) = (made, when) {
+                    let cmd = Command::SetCondition {
+                        entity,
+                        when: when.clone(),
+                    };
+                    if let CommandResult::Refused(e) = sim.apply(&cmd) {
+                        return Err(format!("{}: setting {building}'s condition: {e:?}", s.name));
+                    }
+                }
                 if let (Some(entity), Some(_)) = (made, filter) {
                     let cmd = Command::SetFilter {
                         entity,

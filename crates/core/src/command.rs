@@ -70,6 +70,40 @@ pub enum Command {
     /// A warehouse's safety stock: it hands out, and drones take, each
     /// item only while it holds more than `keep` of it. 0 lets all go.
     SetKeep { entity: EntityId, keep: u32 },
+    /// Choose when a picker runs: only while its store holds at least, or
+    /// fewer than, an amount of an item. `None` runs it always.
+    SetCondition {
+        entity: EntityId,
+        when: Option<Condition>,
+    },
+}
+
+/// When a picker runs: while the store behind it holds at least, or fewer
+/// than, `amount` of `item`.
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Condition {
+    pub item: ItemId,
+    pub compare: Compare,
+    pub amount: u32,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum Compare {
+    /// The store holds `amount` or more.
+    #[default]
+    AtLeast,
+    /// The store holds fewer than `amount`.
+    Below,
+}
+
+impl Condition {
+    /// Whether it holds when the store has `count` of its item.
+    pub fn met(&self, count: u32) -> bool {
+        match self.compare {
+            Compare::AtLeast => count >= self.amount,
+            Compare::Below => count < self.amount,
+        }
+    }
 }
 
 /// One stop on a train's schedule: the train stop at `at`, where it

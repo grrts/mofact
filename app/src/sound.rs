@@ -296,6 +296,7 @@ mod tests {
             filter: None,
             held: Vec::new(),
             keep: 0,
+            when: None,
             id: EntityId(id),
             building: "drill".into(),
             pos: TilePos::new(x, 0),

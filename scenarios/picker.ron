@@ -1,0 +1,26 @@
+// The starter iron line fills a warehouse that hands nothing out of its
+// arrow. A picker on its south side passes plates on to the hub, but only
+// while the warehouse holds at least 20: it keeps 19 back, then passes the
+// full 50 plates a minute the line makes.
+(
+    name: "Picker",
+    stock: [("iron-plate", 100), ("gear", 20), ("brick", 10), ("circuit", 10)],
+    ore: [(19, 27, "iron-ore")],
+    research: ["logistics"],
+    build: [
+        At(building: "drill", x: 19, y: 27, dir: East),
+        Belts(x: 20, y: 27, len: 2, dir: East),
+        At(building: "furnace", x: 22, y: 27, dir: East),
+        Belts(x: 23, y: 27, len: 1, dir: East),
+        // Two tiles a side, from (24, 27); its arrow points north at nothing.
+        At(building: "warehouse", x: 24, y: 27, dir: North),
+        At(building: "picker", x: 24, y: 29, dir: South, filter: Some("iron-plate"),
+            when: Some((item: "iron-plate", compare: AtLeast, amount: 20))),
+        At(building: "hub", x: 23, y: 30, dir: East),
+    ],
+    warmup_seconds: 60,
+    measure_seconds: 180,
+    expect: [
+        (item: "iron-plate", per_minute: 50.0, tolerance: 1.0),
+    ],
+)

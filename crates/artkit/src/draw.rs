@@ -2686,3 +2686,80 @@ pub fn warehouse(c: &mut Canvas, z: f32, fine: bool) {
         }
     }
 }
+
+/// A picker, facing east: a round base with an arm reaching from the west
+/// edge (where it takes from the store behind) to a claw over the east
+/// edge (where it drops onto the belt ahead), and a gauge on the base for
+/// the condition it watches.
+pub fn picker(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z;
+    let sh = z * 0.08;
+    // A short belt stub ahead, so the way out reads at a glance.
+    c.fill_rect(s * 0.62, s * 0.2, s * 0.38, s * 0.6, pal::BELT);
+    shadow(
+        c,
+        rr(
+            s * 0.12 + sh,
+            s * 0.12 + sh * 1.3,
+            s * 0.56,
+            s * 0.76,
+            s * 0.14,
+        ),
+    );
+    fill(
+        c,
+        rr(s * 0.12, s * 0.12, s * 0.56, s * 0.76, s * 0.14),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.16, s * 0.16, s * 0.48, s * 0.68, s * 0.11),
+        pal::MACHINE,
+    );
+    // The arm: from a pivot near the west, out over the east edge.
+    let w = (z * 0.09).max(1.5);
+    c.line(
+        &[(s * 0.12, s * 0.5), (s * 0.4, s * 0.5)],
+        pal::MACHINE_HI,
+        w,
+    );
+    c.line(&[(s * 0.4, s * 0.5), (s * 0.78, s * 0.5)], pal::ACCENT, w);
+    c.fill_circle(s * 0.4, s * 0.5, s * 0.1, pal::MACHINE_EDGE);
+    c.fill_circle(s * 0.4, s * 0.5, s * 0.065, pal::MACHINE_HI);
+    // The claw: two jaws over the belt.
+    let j = (z * 0.05).max(1.0);
+    c.line(
+        &[
+            (s * 0.78, s * 0.38),
+            (s * 0.88, s * 0.38),
+            (s * 0.92, s * 0.44),
+        ],
+        pal::INK,
+        j,
+    );
+    c.line(
+        &[
+            (s * 0.78, s * 0.62),
+            (s * 0.88, s * 0.62),
+            (s * 0.92, s * 0.56),
+        ],
+        pal::INK,
+        j,
+    );
+    c.line(&[(s * 0.78, s * 0.38), (s * 0.78, s * 0.62)], pal::INK, j);
+    // The gauge: a dial with its needle past half, for "at least".
+    let (gx, gy, gr) = (s * 0.4, s * 0.26, s * 0.075);
+    c.fill_circle(gx, gy, gr, pal::INK);
+    c.line(
+        &[(gx, gy), (gx + gr * 0.7, gy - gr * 0.5)],
+        pal::STARVE,
+        (z * 0.025).max(1.0),
+    );
+    let (gy2, gr2) = (s * 0.74, s * 0.06);
+    c.fill_circle(gx, gy2, gr2, pal::CHIP);
+    if fine {
+        for (bx, by) in [(0.2, 0.2), (0.2, 0.8), (0.6, 0.2), (0.6, 0.8)] {
+            bolt(c, bx * s, by * s, s * 0.02);
+        }
+    }
+}

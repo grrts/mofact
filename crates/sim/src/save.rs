@@ -14,7 +14,7 @@ use crate::entities::Entity;
 use crate::rails::{Phase, Train};
 use crate::tables::{Role, Tables};
 use crate::{Crafter, Lab, Sim, State, Tunnel};
-use mofact_core::command::TrainStop;
+use mofact_core::command::{Compare, TrainStop};
 use mofact_core::content::Content;
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{BuildingId, ItemId, RecipeId, ResearchId};
@@ -24,7 +24,7 @@ use std::fmt;
 
 pub const MAGIC: &[u8; 6] = b"MOFACT";
 /// The format this build writes.
-pub const VERSION: u16 = 21;
+pub const VERSION: u16 = 22;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum LoadError {
@@ -406,6 +406,12 @@ enum SavedState {
         filter: Option<ItemId>,
         keep: u32,
     },
+    /// A picker (v22): the one item it takes, and when it runs.
+    Picker {
+        pick: Option<ItemId>,
+        when: Option<(ItemId, Compare, u32)>,
+        wait: u32,
+    },
 }
 
 /// A train. Its route is found again after a load.
@@ -681,8 +687,9 @@ fn migrate(version: u16, payload: &[u8]) -> Result<World, LoadError> {
                 rules: DEFAULT_RULES,
             })
         }
-        // Version 21 adds a warehouse's safety stock: a new variant only.
-        20 | 21 => postcard::from_bytes(payload).map_err(corrupt),
+        // Version 21 adds a warehouse's safety stock, and 22 pickers: new
+        // variants only.
+        20..=22 => postcard::from_bytes(payload).map_err(corrupt),
         v => Err(LoadError::TooNew(v)),
     }
 }
@@ -839,6 +846,11 @@ impl Sim {
                         done: *done,
                     },
                     State::Port { .. } => SavedState::Port,
+                    State::Picker(p) => SavedState::Picker {
+                        pick: p.pick.map(item),
+                        when: p.when.map(|(i, c, n)| (item(i), c, n)),
+                        wait: p.wait,
+                    },
                     State::Chest(c) if warehouse => SavedState::Warehouse2 {
                         items: c.items.iter().map(|&(i, n)| (item(i), n)).collect(),
                         filter: c.filter.map(item),
@@ -1185,6 +1197,14 @@ impl Sim {
                     keep: keep.min(*capacity),
                     ..Default::default()
                 }),
+                (SavedState::Picker { pick, when, wait }, Role::Picker { .. }) => {
+                    State::Picker(crate::Picker {
+                        pick: opt(&pick, &mut warnings),
+                        when: when.and_then(|(i, c, n)| Some((item(&i, &mut warnings)?, c, n))),
+                        wait,
+                        on: false,
+                    })
+                }
                 (SavedState::Train(tr), Role::Train { .. }) => State::Train(Train {
                     cargo: tr
                         .cargo

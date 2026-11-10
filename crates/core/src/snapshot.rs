@@ -67,6 +67,9 @@ pub struct EntityView {
     /// For a warehouse, how many of each item it keeps back: its safety stock.
     #[serde(default)]
     pub keep: u32,
+    /// For a picker, when it runs; `None` always.
+    #[serde(default)]
+    pub when: Option<crate::command::Condition>,
 }
 
 /// The fluid in a pipe segment.
