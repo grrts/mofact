@@ -2004,6 +2004,7 @@ fn drills_running_dry_and_mined_out_show_as_problems() {
 fn a_lab_with_no_research_picked_shows_as_the_cause_of_a_full_assembler() {
     let mut f = Fixture::new();
     let at = |id, x, building: &str, recipe: Option<&str>, state| EntityView {
+        when: None,
         request: None,
         filter: None,
         held: Vec::new(),
