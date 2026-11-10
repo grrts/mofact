@@ -5,6 +5,9 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Rates on the sheet:** a furnace's or assembler's sheet says how many
+  it makes a minute at full speed (such as "Gear · 60/min"), and a
+  drill's how much ore it digs a minute, both with research's boosts.
 - **A smaller header:** a new goal's explanation folds away by itself
   after 25 seconds, leaving one line with the goal, the count and a "?";
   tap the card to read it again. A tool's tip folds to its name after 10

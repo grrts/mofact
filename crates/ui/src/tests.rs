@@ -2397,3 +2397,21 @@ fn a_tools_tip_folds_to_its_name_and_a_tap_opens_it() {
     f.draw((1080, 2340), 3.0, &Tool::Belt);
     assert!(!f.hud.tip_open);
 }
+
+#[test]
+fn the_inspect_sheet_says_what_a_machine_makes_a_minute() {
+    let mut f = Fixture::new();
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.snapshot.entities[1].state = MachineState::Working;
+    f.hud.select(Some(EntityId(2)));
+    let words = |f: &mut Fixture| {
+        f.overlay.keep_words = true;
+        f.draw((1179, 2556), 3.0, &Tool::Hand);
+        f.overlay.words.clone()
+    };
+    // A gear a second at the assembler's speed.
+    assert!(words(&mut f).iter().any(|w| w == "Gear · 60/min"));
+    // Four levels of a 5% crafting boost make it a fifth faster.
+    f.snapshot.research.levels = vec![("lean-assembly".into(), 4)];
+    assert!(words(&mut f).iter().any(|w| w == "Gear · 72/min"));
+}

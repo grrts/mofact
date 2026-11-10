@@ -224,6 +224,22 @@ impl View<'_> {
         levels.iter().find(|(r, _)| r == id).map_or(0, |l| l.1)
     }
 
+    /// How much faster than its base speed repeatable research makes
+    /// machines of a `bonus` work: 1 with none done.
+    fn boost(&self, bonus: Bonus) -> f32 {
+        1.0 + self
+            .content
+            .research
+            .iter()
+            .filter_map(|r| {
+                r.repeat
+                    .filter(|rep| rep.bonus == bonus)
+                    .map(|rep| (r, rep))
+            })
+            .map(|(r, rep)| rep.per_level * self.level(&r.id) as f32)
+            .sum::<f32>()
+    }
+
     /// The unlocked recipes a building can be set to, if it is a crafter.
     fn recipes_for(&self, id: &BuildingId) -> Option<Vec<&RecipeDef>> {
         let BuildingRole::Crafter { categories, .. } = &self.building(id)?.role else {
@@ -4699,16 +4715,22 @@ impl Hud {
                 stacks(&mut self.hits, o, &mut x, &rd.inputs);
                 x += o.text("→", [x, base], px, MUTED) + 8.0 * u;
                 stacks(&mut self.hits, o, &mut x, &rd.outputs);
-                o.text(
-                    &format!(
-                        "{} · {}",
-                        rd.name,
-                        trf("unit.seconds", &[&format!("{:.1}", rd.seconds)])
-                    ),
-                    [x + 4.0 * u, base],
-                    px,
-                    MUTED,
+                // What it makes a minute at full speed: the number to
+                // match belts and machines by.
+                let speed = match def.map(|d| &d.role) {
+                    Some(BuildingRole::Crafter { speed, .. }) => *speed,
+                    _ => 1.0,
+                } * view.boost(Bonus::Crafting);
+                let made = rd.outputs.first().map_or(0, |st| st.count) as f32;
+                let rate = made * speed * 60.0 / rd.seconds.max(1e-3);
+                let text = format!(
+                    "{} · {}",
+                    rd.name,
+                    trf("unit.per_min", &[&per_minute(rate)])
                 );
+                let room = r[0] + r[2] - pad - (x + 4.0 * u);
+                let px = fit(o, &text, px, room.max(1.0));
+                o.text(&text, [x + 4.0 * u, base], px, MUTED);
             } else if recipes.is_some() {
                 let text = tr("inspect.recipe_any");
                 let px = fit(o, text, px, r[2] - 2.0 * pad);
@@ -4995,6 +5017,26 @@ fn picker_line(view: &View, e: &EntityView) -> String {
 
 /// One line on what a building does, for the inspect sheet, when it has no
 /// recipe, fluid or power figures to show instead.
+/// How many ore a drill digs a minute, with research's boost, as "30/min".
+fn mined_per_minute(view: &View, def: Option<&BuildingDef>) -> String {
+    let rate = match def.map(|d| &d.role) {
+        Some(BuildingRole::Miner { seconds_per_ore }) => {
+            60.0 / seconds_per_ore.max(1e-3) * view.boost(Bonus::Mining)
+        }
+        _ => 0.0,
+    };
+    trf("unit.per_min", &[&per_minute(rate)])
+}
+
+/// A rate a minute, as few figures as read well: 7.5, 30, 120.
+fn per_minute(rate: f32) -> String {
+    if rate < 10.0 && (rate - rate.round()).abs() > 0.05 {
+        format!("{rate:.1}")
+    } else {
+        format!("{:.0}", rate)
+    }
+}
+
 fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
     let name = |id: &mofact_core::ids::ItemId| {
         view.content
@@ -5006,8 +5048,16 @@ fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
     match def.map(|d| &d.role) {
         Some(BuildingRole::Miner { .. }) => match (&e.ore, e.ore_left) {
             (_, Some(0)) => tr("inspect.mined_out").into(),
-            (Some(ore), Some(left)) => trf("inspect.mines_left", &[&name(ore), &left]),
-            (Some(ore), None) => trf("inspect.mines", &[&name(ore)]),
+            (Some(ore), Some(left)) => format!(
+                "{} · {}",
+                trf("inspect.mines_left", &[&name(ore), &left]),
+                mined_per_minute(view, def)
+            ),
+            (Some(ore), None) => format!(
+                "{} · {}",
+                trf("inspect.mines", &[&name(ore)]),
+                mined_per_minute(view, def)
+            ),
             (None, _) => tr("inspect.drill").into(),
         },
         Some(BuildingRole::Lab { .. }) => {
