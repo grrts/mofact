@@ -5,6 +5,11 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Copy settings:** a machine's sheet has Copy settings when it has any
+  (a recipe, a filter, a warehouse's item and safety stock, a requester's
+  request, a picker's item and condition). Then each tap on another like
+  it gives it the same, until Done; an assembler's recipe also goes onto
+  assemblers of other tiers that can make it.
 - **Rates on the sheet:** a furnace's or assembler's sheet says how many
   it makes a minute at full speed (such as "Gear · 60/min"), and a
   drill's how much ore it digs a minute, both with research's boosts.

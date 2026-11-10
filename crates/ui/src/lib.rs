@@ -343,6 +343,123 @@ pub enum Action {
     ForgetBlueprint(usize),
 }
 
+/// One machine's settings, copied to give to others like it with a tap
+/// each: its recipe, the item it filters or picks, what it keeps back,
+/// asks drones for, and when it runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Brush {
+    pub building: BuildingId,
+    pub recipe: Option<RecipeId>,
+    pub filter: Option<ItemId>,
+    pub keep: u32,
+    pub request: Option<(ItemId, u32)>,
+    pub when: Option<Condition>,
+}
+
+impl Brush {
+    /// The settings of `e`, if it has any worth copying.
+    pub fn of(content: &Content, e: &EntityView) -> Option<Self> {
+        let def = content.buildings.iter().find(|b| b.id == e.building)?;
+        let has = match &def.role {
+            BuildingRole::Crafter { .. }
+            | BuildingRole::Warehouse { .. }
+            | BuildingRole::RequesterChest { .. }
+            | BuildingRole::Picker { .. } => true,
+            BuildingRole::Splitter { mode } => *mode == SplitMode::Filter,
+            _ => false,
+        };
+        has.then(|| Self {
+            building: e.building.clone(),
+            recipe: e.recipe.clone(),
+            filter: e.filter.clone(),
+            keep: e.keep,
+            request: e.request.clone(),
+            when: e.when.clone(),
+        })
+    }
+
+    /// Whether `e` takes these settings: the same kind of building, or
+    /// a crafter of another tier that can make the recipe.
+    pub fn matches(&self, content: &Content, e: &EntityView) -> bool {
+        if e.building == self.building {
+            return true;
+        }
+        let Some(r) = &self.recipe else {
+            return false;
+        };
+        let category = content
+            .recipes
+            .iter()
+            .find(|d| &d.id == r)
+            .map(|d| &d.category);
+        content.buildings.iter().any(|b| {
+            b.id == e.building
+                && matches!(&b.role, BuildingRole::Crafter { categories, .. }
+                    if category.is_some_and(|c| categories.contains(c)))
+        })
+    }
+
+    /// The commands that give `e` these settings, leaving alone those it
+    /// already has: none if it doesn't take them.
+    pub fn commands(&self, content: &Content, e: &EntityView) -> Vec<Command> {
+        let entity = e.id;
+        let mut out = Vec::new();
+        if !self.matches(content, e) {
+            return out;
+        }
+        if e.building != self.building {
+            if e.recipe != self.recipe {
+                out.push(Command::SetRecipe {
+                    entity,
+                    recipe: self.recipe.clone(),
+                });
+            }
+            return out;
+        }
+        let Some(def) = content.buildings.iter().find(|b| b.id == e.building) else {
+            return out;
+        };
+        match &def.role {
+            BuildingRole::Crafter { .. } if e.recipe != self.recipe => {
+                out.push(Command::SetRecipe {
+                    entity,
+                    recipe: self.recipe.clone(),
+                })
+            }
+            BuildingRole::RequesterChest { .. } if e.request != self.request => {
+                out.push(Command::SetRequest {
+                    entity,
+                    request: self.request.clone(),
+                })
+            }
+            BuildingRole::Splitter { .. }
+            | BuildingRole::Warehouse { .. }
+            | BuildingRole::Picker { .. } => {
+                if e.filter != self.filter {
+                    out.push(Command::SetFilter {
+                        entity,
+                        filter: self.filter.clone(),
+                    });
+                }
+                if matches!(def.role, BuildingRole::Warehouse { .. }) && e.keep != self.keep {
+                    out.push(Command::SetKeep {
+                        entity,
+                        keep: self.keep,
+                    });
+                }
+                if matches!(def.role, BuildingRole::Picker { .. }) && e.when != self.when {
+                    out.push(Command::SetCondition {
+                        entity,
+                        when: self.when.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+}
+
 /// A control on screen, and what tapping it does.
 #[derive(Clone, Debug, PartialEq)]
 enum Hit {
@@ -365,6 +482,10 @@ enum Hit {
     Remove(EntityId),
     /// The inspect sheet's "Build another": this building, facing, recipe.
     Pipette(BuildingId, Dir, Option<RecipeId>),
+    /// The inspect sheet's "Copy settings": take these in hand, and the
+    /// tip's Done that puts them away.
+    CopySettings(Box<Brush>),
+    BrushDone,
     /// The research button: opens or closes the research sheet.
     Research,
     /// Set what labs work on.
@@ -626,6 +747,9 @@ pub struct Hud {
     /// to the tool's name after [`HINT_FOR`]. Whether a tap opened it again.
     tip_seen: Option<(Tool, Instant)>,
     tip_open: bool,
+    /// Settings copied from a machine: taps on others like it give them
+    /// the same, until Done.
+    brush: Option<Brush>,
     /// Orders shipped and missed as last drawn, to toast when one ends.
     orders_seen: Option<(u32, u32)>,
     /// What's stuck, as of the last frame drawn.
@@ -667,6 +791,11 @@ impl Hud {
     }
 
     /// The entity the inspect sheet is showing.
+    /// The settings being pasted onto machines with taps, if any.
+    pub fn brush(&self) -> Option<&Brush> {
+        self.brush.as_ref()
+    }
+
     pub fn selected(&self) -> Option<EntityId> {
         self.selected
     }
@@ -1086,6 +1215,16 @@ impl Hud {
                 self.selected = None;
                 vec![Action::Send(Command::Remove { entity })]
             }
+            Hit::CopySettings(brush) => {
+                self.brush = Some(*brush);
+                self.selected = None;
+                self.more = false;
+                vec![Action::Tool(Tool::Hand)]
+            }
+            Hit::BrushDone => {
+                self.brush = None;
+                Vec::new()
+            }
             Hit::Pipette(building, dir, recipe) => {
                 self.selected = None;
                 self.more = false;
@@ -1451,6 +1590,10 @@ impl Hud {
 
     /// Lay out and paint the HUD for this frame.
     pub fn draw(&mut self, view: &View, o: &mut Overlay) {
+        // Settings are pasted with the hand; any other tool puts them away.
+        if *view.tool != Tool::Hand {
+            self.brush = None;
+        }
         self.hits.clear();
         o.prefer_chinese(i18n::lang() == i18n::Lang::ZhHans);
         let (w, h) = (view.size.0 as f32, view.size.1 as f32);
@@ -1613,7 +1756,8 @@ impl Hud {
         }
         // With the hand and a goal on screen, the goal card already says
         // what to do next; the general tip would only push the map down.
-        let hand_with_goal = *view.tool == Tool::Hand && view.snapshot.goal.is_some();
+        let hand_with_goal =
+            *view.tool == Tool::Hand && view.snapshot.goal.is_some() && self.brush.is_none();
         if selected.is_none()
             && train.is_none()
             && !self.research
@@ -1873,6 +2017,15 @@ impl Hud {
     /// will do and how to stop.
     fn tip(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) {
         let u = self.unit;
+        // Pasting settings: say so, with a Done to stop.
+        if let Some(b) = &self.brush {
+            let name = view
+                .building(&b.building)
+                .map_or(b.building.as_str(), |d| d.name.as_str());
+            let text = trf("tip.brush", &[&i18n::in_sentence(name)]);
+            self.done_chip(o, &text, at, width, TEXT, Hit::Block, Hit::BrushDone);
+            return;
+        }
         let Some(slot) = self.current.filter(|_| *view.tool != Tool::Hand) else {
             let r = chip(o, tip(view.tool), at, width, u, TEXT);
             self.hits.push((r, Hit::Block));
@@ -1906,12 +2059,28 @@ impl Hud {
         } else {
             TEXT
         };
+        self.done_chip(o, &text, at, width, ink, Hit::Tip, Hit::Done);
+    }
+
+    /// A tip card with a Done button beside it.
+    #[allow(clippy::too_many_arguments)]
+    fn done_chip(
+        &mut self,
+        o: &mut Overlay,
+        text: &str,
+        at: [f32; 2],
+        width: f32,
+        ink: Rgba,
+        card_hit: Hit,
+        done_hit: Hit,
+    ) {
+        let u = self.unit;
         let px = 15.0 * u;
         let done = tr("button.done");
         let bw = o.measure(done, px) + 28.0 * u;
         let gap = 8.0 * u;
-        let card = chip(o, &text, at, width - bw - gap, u, ink);
-        self.hits.push((card, Hit::Tip));
+        let card = chip(o, text, at, width - bw - gap, u, ink);
+        self.hits.push((card, card_hit));
         let bottom = card[1] + card[3];
         let h = (bottom - at[1]).max(40.0 * u).min(52.0 * u);
         let r = [at[0] + width - bw, at[1], bw, h];
@@ -1922,7 +2091,7 @@ impl Hud {
             px,
             TEXT,
         );
-        self.hits.push((r, Hit::Done));
+        self.hits.push((r, done_hit));
     }
 
     /// Undo and redo buttons in the bottom-left corner of the free area, when
@@ -4507,6 +4676,16 @@ impl Hud {
         let recipes = view.recipes_for(&e.building);
         let recipe = e.recipe.as_ref().and_then(|r| view.recipe_def(r));
 
+        // Settings to copy onto others like it, and how many rows the
+        // buttons take: two of two once there are four.
+        let brush = Brush::of(view.content, e);
+        let buttons = if hub {
+            0
+        } else {
+            2 + anew as usize + brush.is_some() as usize
+        };
+        let button_rows = if buttons > 3 { 2.0 } else { 1.0 };
+
         // Measure the sheet from its rows, bottom up.
         let row = 22.0 * u;
         let set = |id| Hit::SetRecipe(e.id, id);
@@ -4538,7 +4717,7 @@ impl Hud {
             + 30.0 * u // title
             + if belt { 0.0 } else { row + 8.0 * u + 6.0 * u } // recipe line and progress
             + pill_rows * 46.0 * u
-            + 44.0 * u // buttons
+            + 44.0 * u * button_rows // buttons
             + pad;
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
@@ -4836,11 +5015,25 @@ impl Hud {
                     TEXT,
                 ));
             }
+            if let Some(b) = brush {
+                buttons.push((
+                    tr("button.copy_settings"),
+                    Hit::CopySettings(Box::new(b)),
+                    TEXT,
+                ));
+            }
             buttons.push((tr("tool.remove"), Hit::Remove(e.id), palette::STARVE));
-            let n = buttons.len() as f32;
+            let per_row = if buttons.len() > 3 { 2 } else { buttons.len() };
+            let n = per_row as f32;
             let bw = (r[2] - 2.0 * pad - 8.0 * u * (n - 1.0)) / n;
             for (i, (label, hit, ink)) in buttons.into_iter().enumerate() {
-                let b = [left + i as f32 * (bw + 8.0 * u), y, bw, bh];
+                let (row, col) = (i / per_row, i % per_row);
+                let b = [
+                    left + col as f32 * (bw + 8.0 * u),
+                    y + row as f32 * 44.0 * u,
+                    bw,
+                    bh,
+                ];
                 o.panel([b[0], b[1]], [bw, bh], 10.0 * u, RAISED);
                 let px = fit(o, label, 15.0 * u, bw - 12.0 * u);
                 let lw = o.measure(label, px);

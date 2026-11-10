@@ -1043,6 +1043,19 @@ impl Game {
                 }
                 self.built.update(&latest);
                 let here = self.built.at(tile);
+                // Pasting settings: a tap gives them to what it lands on.
+                if let (true, Some(brush)) = (hand, self.hud.brush()) {
+                    let target = here.and_then(|o| latest.entities.iter().find(|e| e.id == o.id));
+                    if let Some(e) = target {
+                        let commands = brush.commands(&self.content, e);
+                        if commands.is_empty() && !brush.matches(&self.content, e) {
+                            self.hud.toast(tr("toast.brush_other"));
+                        } else {
+                            self.sim.send_all(commands);
+                        }
+                    }
+                    return;
+                }
                 // A signal, stop or train in hand goes on the track; the tap builds, not inspects.
                 if placing && here.is_some() && self.controls.builder.places_on(here) {
                     return;

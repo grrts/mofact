@@ -2415,3 +2415,46 @@ fn the_inspect_sheet_says_what_a_machine_makes_a_minute() {
     f.snapshot.research.levels = vec![("lean-assembly".into(), 4)];
     assert!(words(&mut f).iter().any(|w| w == "Gear · 72/min"));
 }
+
+#[test]
+fn settings_copied_from_one_machine_go_onto_others_like_it() {
+    let mut f = Fixture::new();
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.hud.select(Some(EntityId(2)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let brush = Brush::of(&f.content, &f.snapshot.entities[1]).expect("a recipe to copy");
+    let copy = f.find(&Hit::CopySettings(Box::new(brush.clone())));
+    assert_eq!(f.tap(centre(copy)).1, vec![Action::Tool(Tool::Hand)]);
+    assert_eq!(f.hud.brush(), Some(&brush));
+    assert_eq!(f.hud.selected(), None);
+
+    // Another assembler on wire takes gear; one on gear already needs nothing.
+    let mut other = f.snapshot.entities[1].clone();
+    other.id = EntityId(7);
+    other.recipe = Some("wire".into());
+    assert_eq!(
+        brush.commands(&f.content, &other),
+        vec![Command::SetRecipe {
+            entity: EntityId(7),
+            recipe: Some("gear".into())
+        }]
+    );
+    other.recipe = Some("gear".into());
+    assert!(brush.commands(&f.content, &other).is_empty());
+    assert!(brush.matches(&f.content, &other));
+    // A belt, or a furnace that can't make gears, doesn't take it.
+    let belt = f.snapshot.entities[2].clone();
+    assert!(!brush.matches(&f.content, &belt));
+    other.building = "furnace".into();
+    assert!(!brush.matches(&f.content, &other));
+
+    // The tip says what to tap, and Done puts the settings away.
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let done = f.find(&Hit::BrushDone);
+    f.tap(centre(done));
+    assert_eq!(f.hud.brush(), None);
+    // Picking up any other tool does too.
+    f.hud.brush = Some(brush);
+    f.draw((1179, 2556), 3.0, &Tool::Belt);
+    assert_eq!(f.hud.brush(), None);
+}

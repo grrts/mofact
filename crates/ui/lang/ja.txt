@@ -36,6 +36,8 @@ tip.warehouse = タップで設置。ベルトはどの面からでも入り、�
 tip.picker = 保管庫・チェスト・ハブに背を向けてタップで設置。タップすると取る物と条件を選べます。
 tip.place = タップで設置。レシピを選ぶか、届いた物から自動で選ばせます。
 tip.remove = タップかドラッグで印を付け、指を離すと撤去。元に戻すで復元できます。
+tip.brush = ほかの{0}をタップすると同じ設定になります。
+toast.brush_other = それにはこの設定を使えません。
 
 button.done = 完了
 button.undo = ← 元に戻す
@@ -43,6 +45,7 @@ button.redo = やり直す →
 button.cancel = キャンセル
 button.rotate = 回転
 button.another = もう一つ建てる
+button.copy_settings = 設定をコピー
 
 menu.title = ゲーム
 menu.new_game_in_slot = スロット{0}で新しいゲーム
