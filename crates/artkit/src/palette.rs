@@ -66,11 +66,13 @@ pub const CONCRETE: Rgba = [0x4d, 0x52, 0x57, 0xff];
 /// assembler stands out from the first kind: teal for tier 2, violet for 3.
 pub const TIER: [Rgba; 2] = [[0x3f, 0xc1, 0xb0, 0xff], [0xa8, 0x7c, 0xf0, 0xff]];
 /// The housing of each kind of splitter past the plain one, so they are
-/// told apart at a glance: teal three-way, violet priority, rust filter.
-pub const SPLIT: [Rgba; 3] = [
+/// told apart at a glance: teal three-way, violet priority, rust filter,
+/// and a mustard merger.
+pub const SPLIT: [Rgba; 4] = [
     [0x2f, 0x8f, 0x84, 0xff],
     [0x6c, 0x52, 0xa8, 0xff],
     [0xa0, 0x5c, 0x2c, 0xff],
+    [0xb8, 0x93, 0x2e, 0xff],
 ];
 /// A lab's glass dome.
 pub const GLASS: Rgba = [0x7f, 0xc8, 0xe6, 0xff];

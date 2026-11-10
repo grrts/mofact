@@ -21,7 +21,7 @@
     (
         id: "logistics", name: "Logistics", tier: 1,
         cost: [(item: "survey-pack", count: 1)], units: 10, seconds: 10.0,
-        buildings: ["splitter", "underground-belt", "three-way-splitter", "priority-splitter", "filter-splitter", "warehouse", "picker"],
+        buildings: ["splitter", "underground-belt", "three-way-splitter", "priority-splitter", "filter-splitter", "merger", "warehouse", "picker"],
     ),
     (
         id: "express-belts", name: "Express belts", tier: 2, requires: ["fast-belts", "logistics"],
