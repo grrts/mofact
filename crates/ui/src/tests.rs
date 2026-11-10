@@ -88,6 +88,7 @@ struct Fixture {
     crash: bool,
     selection: usize,
     blueprints: Vec<mofact_input::Blueprint>,
+    home: Option<[f32; 2]>,
 }
 
 impl Fixture {
@@ -120,6 +121,7 @@ impl Fixture {
             crash: false,
             selection: 0,
             blueprints: Vec::new(),
+            home: None,
         }
     }
 
@@ -142,6 +144,7 @@ impl Fixture {
             crash: self.crash,
             selection: self.selection,
             blueprints: &self.blueprints,
+            home: self.home,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -2457,4 +2460,18 @@ fn settings_copied_from_one_machine_go_onto_others_like_it() {
     f.hud.brush = Some(brush);
     f.draw((1179, 2556), 3.0, &Tool::Belt);
     assert_eq!(f.hud.brush(), None);
+}
+
+#[test]
+fn a_button_brings_the_camera_home_once_the_hub_is_out_of_sight() {
+    let mut f = Fixture::new();
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Home(_))));
+    f.home = Some([1.5, 1.5]);
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let home = f.find(&Hit::Home([1.5, 1.5]));
+    assert_eq!(f.tap(centre(home)).1, vec![Action::Focus([1.5, 1.5])]);
+    // With a tool in hand that corner is the rotate button's.
+    f.draw((1179, 2556), 3.0, &Tool::Belt);
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Home(_))));
 }

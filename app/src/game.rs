@@ -808,6 +808,7 @@ impl Game {
             crash: self.crash.is_some(),
             selection: builder.selection.len(),
             blueprints: &self.blueprints,
+            home: home(&self.content, &self.controls.camera, target.size(), &latest),
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -1789,4 +1790,26 @@ mod pacing {
         assert_eq!(count(false), 60);
         assert_eq!(count(true), 30);
     }
+}
+
+/// The hub's middle in tiles, if the camera has lost sight of it.
+fn home(
+    content: &Content,
+    cam: &CameraControl,
+    (w, h): (u32, u32),
+    latest: &mofact_core::snapshot::Snapshot,
+) -> Option<[f32; 2]> {
+    let hub = content
+        .buildings
+        .iter()
+        .find(|b| b.role == mofact_core::content::BuildingRole::Hub)?;
+    let e = latest.entities.iter().find(|e| e.building == hub.id)?;
+    let mid = [
+        e.pos.x as f32 + f32::from(hub.size.0) / 2.0,
+        e.pos.y as f32 + f32::from(hub.size.1) / 2.0,
+    ];
+    let [x0, y0] = cam.world_at([0.0, 0.0]);
+    let [x1, y1] = cam.world_at([w as f32, h as f32]);
+    let seen = (x0..=x1).contains(&mid[0]) && (y0..=y1).contains(&mid[1]);
+    (!seen).then_some(mid)
 }

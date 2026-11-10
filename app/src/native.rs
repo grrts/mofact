@@ -775,6 +775,7 @@ fn screenshots(
             crash: false,
             selection: 0,
             blueprints: &[],
+            home: None,
         };
         hud.draw(&view, &mut overlay);
         let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -847,6 +848,7 @@ fn screenshots(
                 crash: false,
                 selection: 0,
                 blueprints: &[],
+                home: None,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -977,6 +979,7 @@ fn screenshots(
                 crash: sheet == "menu",
                 selection: 0,
                 blueprints: &[],
+                home: None,
             };
             hud.draw(&view, &mut overlay);
             let pixels = renderer.capture(&gpu, size, &camera, &scene, Some(&overlay), FLOOR);
@@ -1088,6 +1091,7 @@ fn store_shots(
                 crash: false,
                 selection: 0,
                 blueprints: &[],
+                home: None,
             };
             hud.draw(&view, overlay);
         });

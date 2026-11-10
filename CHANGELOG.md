@@ -5,6 +5,9 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Back to the hub:** once the hub is out of sight, a round button with
+  the hub on it shows in the bottom-right corner; one tap brings the
+  camera back.
 - **Belt upgrades:** drawing a belt over belts of another tier swaps them
   for the one in hand along the path, keeping the line's shape; each old
   belt is paid back as it goes. Only as many as the stock pays for are

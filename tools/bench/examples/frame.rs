@@ -58,6 +58,7 @@ fn main() {
                 crash: false,
                 selection: 0,
                 blueprints: &[],
+                home: None,
             };
             hud.draw(&view, &mut overlay);
             h += t.elapsed().as_secs_f64();

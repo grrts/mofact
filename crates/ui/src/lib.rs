@@ -138,6 +138,9 @@ pub struct View<'a> {
     pub selection: usize,
     /// The blueprint library.
     pub blueprints: &'a [mofact_input::Blueprint],
+    /// The hub's middle, in tiles, while it is off screen: a button
+    /// brings the camera back to it.
+    pub home: Option<[f32; 2]>,
 }
 
 /// Whether this is the demo, and how buying the full game is going.
@@ -580,6 +583,8 @@ enum Hit {
     TitleBuy,
     /// The tool's tip: a tap opens its words again, or folds them.
     Tip,
+    /// The button that brings the camera back to the hub, at this point.
+    Home([f32; 2]),
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -1221,6 +1226,7 @@ impl Hud {
                 self.more = false;
                 vec![Action::Tool(Tool::Hand)]
             }
+            Hit::Home(at) => vec![Action::Focus(at)],
             Hit::BrushDone => {
                 self.brush = None;
                 Vec::new()
@@ -1867,6 +1873,27 @@ impl Hud {
             );
             self.hits.push((r, Hit::Rotate));
             right = r[0] - gap;
+        }
+        // Lost out on the land: one tap brings the camera home.
+        if let (Tool::Hand, Some(home), false) = (view.tool, view.home, self.map) {
+            let d = 52.0 * u;
+            let r = [right - d, corner[1] - d, d, d];
+            o.panel([r[0], r[1]], [d, d], d / 2.0, PANEL);
+            let hub = view
+                .content
+                .buildings
+                .iter()
+                .find(|b| b.role == BuildingRole::Hub);
+            if let Some((sprite, t)) = hub.and_then(|b| view.look.building(&b.id)) {
+                let icon = 30.0 * u;
+                o.icon(
+                    sprite,
+                    [r[0] + (d - icon) / 2.0, r[1] + (d - icon) / 2.0],
+                    icon,
+                    t,
+                );
+            }
+            self.hits.push((r, Hit::Home(home)));
         }
         if let Some(recipes) = placing.and_then(|b| view.recipes_for(b)) {
             self.recipe_picker(
