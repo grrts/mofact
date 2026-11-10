@@ -125,6 +125,7 @@ browser.none = Nothing makes or uses this yet.
 browser.made_by = MADE BY
 browser.used_in = USED IN
 browser.research = RESEARCH
+browser.more = +{0} more
 browser.to_make = TO MAKE
 list.join = {0}, {1}
 unit.per_min = {0}/min

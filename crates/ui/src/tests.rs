@@ -1202,6 +1202,34 @@ fn the_recipe_browser_works_out_machines_for_a_rate_even_on_a_small_phone_held_s
 }
 
 #[test]
+fn a_pack_names_the_research_it_pays_for_at_a_size_that_reads() {
+    // Engineering packs pay for dozens of studies: the browser names what
+    // is left, what can start now first, and counts the rest, rather than
+    // shrinking every name onto one unreadable line.
+    let mut f = Fixture::new();
+    f.hud.browse("engineering-pack".into());
+    for (size, scale) in [((1080, 2340), 3.0), ((1334, 750), 2.0)] {
+        f.overlay.keep_words = true;
+        f.draw(size, scale, &Tool::Hand);
+        let at = f
+            .overlay
+            .words
+            .iter()
+            .position(|w| w.contains("Fast belts"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "the first study it pays for is named: {:?}",
+                    f.overlay.words
+                )
+            });
+        let line = &f.overlay.words[at];
+        assert!(line.contains("more"), "the rest are counted: {line:?}");
+        let h = f.overlay.runs[at].0[3];
+        assert!(h >= 8.0 * scale, "the line reads: {h} px tall at x{scale}");
+    }
+}
+
+#[test]
 fn the_skyhook_sheet_shows_what_its_stage_still_needs() {
     let mut f = Fixture::new();
     let mut sky = f.snapshot.entities[1].clone();

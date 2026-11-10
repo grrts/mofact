@@ -3223,7 +3223,10 @@ impl Hud {
         // The calculator's lines, in browser rows, if there is room for them
         // and one recipe that makes the item: the plan matters more than a
         // second way to make it.
+        // What research an item pays for is fitted first: for a science pack
+        // it is the whole point, so it never falls off a phone.
         let plan_rows = (lines as f32 * line / row).ceil() as usize;
+        let nr = usize::from(!research.is_empty() && take(&mut budget, 1) > 0);
         let np = if chips.is_empty() || budget < plan_rows + 3 {
             0
         } else {
@@ -3231,7 +3234,6 @@ impl Hud {
         };
         let nm = take(&mut budget, made.len());
         let nu = take(&mut budget, used.len());
-        let nr = usize::from(!research.is_empty() && take(&mut budget, 1) > 0);
         let sections = [nm, np, nu, nr].iter().filter(|&&n| n > 0).count() as f32;
         let rows = (nm + nu + nr) as f32
             + if np > 0 {
@@ -3308,8 +3310,7 @@ impl Hud {
         }
         if nr > 0 {
             header(o, &mut y, tr("browser.research"));
-            let names: Vec<&str> = research.iter().map(|r| r.name.as_str()).collect();
-            let text = i18n::join(&names);
+            let text = research_line(view, o, &research, 14.0 * u, r[2] - 2.0 * pad);
             let px = fit(o, &text, 14.0 * u, r[2] - 2.0 * pad);
             o.text(&text, [left, y + row / 2.0], px, TEXT);
         }
@@ -5011,6 +5012,44 @@ fn tip(tool: &Tool) -> &'static str {
 }
 
 /// The largest size up to `px` at which `text` fits in `width`.
+/// The research an item pays for, as one line that fits `width` at `px`:
+/// what is left to study, what can be started now first, and "+N more"
+/// for the rest. A pack that pays for dozens of studies still reads.
+fn research_line(
+    view: &View,
+    o: &Overlay,
+    research: &[&ResearchDef],
+    px: f32,
+    width: f32,
+) -> String {
+    let left = |r: &&&ResearchDef| !view.done(&r.id) || r.repeat.is_some();
+    let mut list: Vec<&ResearchDef> = research.iter().filter(left).copied().collect();
+    if list.is_empty() {
+        list = research.to_vec();
+    }
+    // Stable: the tree's order within what is ready and what is not.
+    list.sort_by_key(|r| !view.research_ready(r));
+    let names: Vec<&str> = list.iter().map(|r| r.name.as_str()).collect();
+    let line = |n: usize| {
+        let shown = i18n::join(&names[..n]);
+        if n == names.len() {
+            shown
+        } else {
+            let more = trf("browser.more", &[&(names.len() - n)]);
+            if n == 0 {
+                more
+            } else {
+                format!("{shown} {more}")
+            }
+        }
+    };
+    let mut n = names.len();
+    while n > 1 && o.measure(&line(n), px) > width {
+        n -= 1;
+    }
+    line(n)
+}
+
 fn fit(o: &Overlay, text: &str, px: f32, width: f32) -> f32 {
     let w = o.measure(text, px);
     if w <= width {

@@ -113,6 +113,7 @@ browser.none = Nada faz ou usa isto ainda.
 browser.made_by = FEITO POR
 browser.used_in = USADO EM
 browser.research = PESQUISA
+browser.more = +{0} outras
 browser.to_make = PARA FAZER
 list.join = {0}, {1}
 unit.per_min = {0}/min

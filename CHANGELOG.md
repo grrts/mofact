@@ -5,6 +5,10 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **What a science pack is for:** tapping a pack such as the engineering
+  pack now names the research it still pays for, the ones you can start
+  first, at a size that reads, with "+N more" for the rest. It shows on a
+  phone too, ahead of the recipes that use the item.
 - **Assemblers feeding labs:** an assembler feeding a slower lab no longer
   reads "output full" the whole time once its output tops up; it shows
   that only while it is actually waiting, and crafts again as soon as the

@@ -113,6 +113,7 @@ browser.none = 目前没有东西生产或使用它。
 browser.made_by = 生产方式
 browser.used_in = 用途
 browser.research = 研究
+browser.more = 还有{0}项
 browser.to_make = 生产所需
 list.join = {0}、{1}
 unit.per_min = {0}/分钟
