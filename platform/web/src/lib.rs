@@ -642,7 +642,7 @@ pub async fn start(canvas: String) -> Result<(), JsValue> {
                 s.save();
             }
             s.hush(hidden);
-            s.game.sim.set_paused(hidden);
+            s.game.set_background(hidden);
         })?;
     }
     {

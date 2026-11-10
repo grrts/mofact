@@ -57,7 +57,7 @@ impl App {
         if !self.background {
             self.background = true;
             self.game.target = None;
-            self.game.sim.set_paused(true);
+            self.game.set_background(true);
         }
     }
 
@@ -69,7 +69,7 @@ impl App {
             self.game.target =
                 Some(Target::new(&self.game.gpu, surface, w, h).map_err(|e| e.to_string())?);
             self.background = false;
-            self.game.sim.set_paused(false);
+            self.game.set_background(false);
         }
         Ok(())
     }

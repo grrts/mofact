@@ -2475,3 +2475,38 @@ fn a_button_brings_the_camera_home_once_the_hub_is_out_of_sight() {
     f.draw((1179, 2556), 3.0, &Tool::Belt);
     assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Home(_))));
 }
+
+#[test]
+fn the_game_menu_pauses_the_factory_and_a_chip_sets_it_going() {
+    let mut f = Fixture::new();
+    f.hud.open_menu(None);
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let pause = f.find(&Hit::Pause);
+    assert_eq!(f.tap(centre(pause)).1, vec![Action::Pause(true)]);
+    assert!(f.hud.paused());
+    assert!(!f.hud.menu_open(), "the menu makes way for the paused factory");
+    // A chip says so, and a tap on it plays on.
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let chip = f.find(&Hit::Pause);
+    assert_eq!(f.tap(centre(chip)).1, vec![Action::Pause(false)]);
+    assert!(!f.hud.paused());
+}
+
+#[test]
+fn a_short_screen_keeps_copy_settings_and_rotate_moves_up() {
+    let mut f = Fixture::new();
+    f.snapshot.goal = Some(mofact_core::snapshot::GoalView {
+        index: 0,
+        have: 3,
+        need: 10,
+    });
+    f.hud.select(Some(EntityId(2)));
+    // A small phone held sideways.
+    f.draw((1136, 640), 2.0, &Tool::Hand);
+    let brush = Brush::of(&f.content, &f.snapshot.entities[1]).unwrap();
+    f.find(&Hit::CopySettings(Box::new(brush)));
+    f.find(&Hit::Pipette("assembler".into(), Dir::East, None));
+    let turn = f.find(&Hit::Turn(EntityId(2), Dir::East));
+    let close = f.find(&Hit::Close);
+    assert!((turn[1] - close[1]).abs() < 1.0, "beside the close button");
+}

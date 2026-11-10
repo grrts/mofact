@@ -5,6 +5,13 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Pause:** the game menu has Pause beside Settings (Space on a
+  keyboard). While paused, nothing in the factory moves and a "Paused"
+  chip under the goal card sets it going again with a tap. Going to the
+  background and back keeps a paused game paused.
+- **Copy settings on short screens:** on a small phone held sideways,
+  Rotate moves up beside the sheet's close button as a round arrow, so
+  Build another, Copy settings and Remove all keep their place.
 - **Back to the hub:** once the hub is out of sight, a round button with
   the hub on it shows in the bottom-right corner; one tap brings the
   camera back.
