@@ -2800,3 +2800,150 @@ fn a_warehouse_keeps_its_safety_stock_back() {
         CommandResult::Refused(CommandError::UnknownContent)
     );
 }
+
+/// A warehouse holding 30 iron plates and 10 copper, with a picker at
+/// (5, 1) facing east, its back to the warehouse, and belts east of it.
+fn picker_test() -> (Sim, EntityId, EntityId) {
+    let (mut sim, warehouse, first) = warehouse_test(0);
+    for k in 0..40 {
+        let i = if k % 4 == 3 {
+            "copper-plate"
+        } else {
+            "iron-plate"
+        };
+        assert!(sim.feed(first, &item(i)));
+        run(&mut sim, 1);
+    }
+    run(&mut sim, 10);
+    let picker = place(&mut sim, "picker", 5, 1, Dir::East, None);
+    belts(&mut sim, 6..=40, 1, Dir::East);
+    (sim, warehouse, picker)
+}
+
+fn count_of(held: &[(ItemId, u32)], i: &str) -> u32 {
+    held.iter().find(|h| h.0 == item(i)).map_or(0, |h| h.1)
+}
+
+#[test]
+fn a_picker_takes_from_a_warehouse_only_while_its_condition_holds() {
+    let (mut sim, warehouse, picker) = picker_test();
+    assert_eq!(count_of(&stored(&sim, warehouse), "iron-plate"), 30);
+    let when = Condition {
+        item: item("iron-plate"),
+        compare: Compare::AtLeast,
+        amount: 25,
+    };
+    let set = Command::SetCondition {
+        entity: picker,
+        when: Some(when.clone()),
+    };
+    let CommandResult::Applied { undo, .. } = sim.apply(&set) else {
+        panic!("condition refused");
+    };
+    assert_eq!(
+        undo,
+        vec![Command::SetCondition {
+            entity: picker,
+            when: None
+        }]
+    );
+    assert!(matches!(
+        sim.apply(&Command::SetFilter {
+            entity: picker,
+            filter: Some(item("iron-plate")),
+        }),
+        CommandResult::Applied { .. }
+    ));
+    run(&mut sim, 300);
+    // It takes while 25 or more are left, so it stops at 24.
+    let held = stored(&sim, warehouse);
+    assert_eq!(count_of(&held, "iron-plate"), 24, "{held:?}");
+    assert_eq!(count_of(&held, "copper-plate"), 10);
+    assert_eq!(items_on(&sim, |t| t.x > 5), 6);
+    let view = |sim: &Sim| {
+        sim.snapshot()
+            .entities
+            .into_iter()
+            .find(|e| e.id == picker)
+            .unwrap()
+    };
+    assert_eq!(view(&sim).state, MachineState::Idle, "waiting shows idle");
+    assert_eq!(view(&sim).when, Some(when.clone()));
+
+    // A save keeps its item and condition.
+    let (mut loaded, warnings) = Sim::load(&content(), &sim.save()).unwrap();
+    assert!(warnings.is_empty(), "{warnings:?}");
+    assert_eq!(view(&loaded).when, Some(when));
+    assert_eq!(view(&loaded).filter, Some(item("iron-plate")));
+
+    // Counting copper instead, while below 20, it runs on: it takes iron
+    // until the warehouse has none left.
+    loaded.apply(&Command::SetCondition {
+        entity: picker,
+        when: Some(Condition {
+            item: item("copper-plate"),
+            compare: Compare::Below,
+            amount: 20,
+        }),
+    });
+    run(&mut loaded, 600);
+    let held = stored(&loaded, warehouse);
+    assert_eq!(count_of(&held, "iron-plate"), 0, "{held:?}");
+    assert_eq!(
+        count_of(&held, "copper-plate"),
+        10,
+        "set to iron, it takes no copper"
+    );
+
+    // Taken down, its undo sets it up the same way again.
+    let CommandResult::Applied { undo, .. } = loaded.apply(&Command::Remove { entity: picker })
+    else {
+        panic!("remove refused");
+    };
+    assert!(undo.contains(&Command::SetFilter {
+        entity: picker,
+        filter: Some(item("iron-plate")),
+    }));
+    assert!(undo.iter().any(|c| matches!(
+        c,
+        Command::SetCondition { entity, when: Some(w) }
+            if *entity == picker && w.compare == Compare::Below && w.amount == 20
+    )));
+}
+
+#[test]
+fn a_picker_set_to_anything_empties_a_warehouse_and_can_take_from_the_hub() {
+    let (mut sim, warehouse, _) = picker_test();
+    run(&mut sim, 900);
+    assert!(stored(&sim, warehouse).is_empty());
+    assert_eq!(items_on(&sim, |t| t.x > 5), 40);
+
+    // From the hub it takes the one item it is set to, out of the stock,
+    // while the stock holds at least the amount.
+    let mut sim = logistics();
+    place(&mut sim, "hub", 0, 0, Dir::East, None);
+    let (x, y) = (3, 1);
+    let picker = place(&mut sim, "picker", x, y, Dir::East, None);
+    belts(&mut sim, x + 1..=x + 30, y, Dir::East);
+    sim.set_stock(&item("gear"), 12);
+    run(&mut sim, 60);
+    assert_eq!(
+        sim.stock(&item("gear")),
+        12,
+        "set to nothing, it takes nothing from the hub"
+    );
+    sim.apply(&Command::SetFilter {
+        entity: picker,
+        filter: Some(item("gear")),
+    });
+    sim.apply(&Command::SetCondition {
+        entity: picker,
+        when: Some(Condition {
+            item: item("gear"),
+            compare: Compare::AtLeast,
+            amount: 5,
+        }),
+    });
+    run(&mut sim, 300);
+    assert_eq!(sim.stock(&item("gear")), 4);
+}

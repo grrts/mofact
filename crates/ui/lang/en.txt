@@ -37,6 +37,7 @@ tip.drone_port = Tap to place next to a pole. Its drones carry between chests an
 tip.provider_chest = Tap to place where a belt ends. Drones take what it holds to requester chests.
 tip.requester_chest = Tap to place, then tap it to pick what drones should bring.
 tip.warehouse = Tap to place. Belts in on any side, items out of its arrow. Tap it to pick one item to send out.
+tip.picker = Tap to place with its back to a warehouse, chest or the hub. Tap it to choose what it takes and when.
 tip.place = Tap to place. Pick a recipe, or let it pick from what arrives.
 tip.remove = Tap or drag to mark, lift to remove. Undo brings things back.
 
@@ -131,6 +132,10 @@ request.none = None
 warehouse.all = All
 keep.none = Take all
 keep.count = Keep {0}
+picker.any = Any item
+picker.always = Always
+picker.at_least = While at least
+picker.below = While below
 build.title = Build
 
 # The full game.
@@ -190,6 +195,10 @@ inspect.requester = Pick what drones should bring it
 inspect.requests = Drones keep {0} {1} in it
 inspect.warehouse = Holds {0}/{1}
 inspect.warehouse_empty = Empty: belts fill it from any side but its arrow
+inspect.picker_no_store = Turn its back to a warehouse, chest or the hub to take from it
+inspect.picker_always = Takes from the store behind it onto the belt ahead
+inspect.picker_on = {0}: {1} there, runs while {2}
+inspect.picker_off = {0}: {1} there, waits for {2}
 state.idle = Idle
 state.working = Working
 state.starved = Starved

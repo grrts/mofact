@@ -13,6 +13,7 @@ fn snapshot() -> Snapshot {
         filter: None,
         held: Vec::new(),
         keep: 0,
+        when: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, 0),
@@ -551,6 +552,7 @@ fn a_pole_sheet_shows_its_grid() {
         filter: None,
         held: Vec::new(),
         keep: 0,
+        when: None,
         id: EntityId(9),
         building: "pole".into(),
         pos: TilePos::new(9, 0),
@@ -741,6 +743,7 @@ fn the_problems_list_takes_the_camera_to_each_problem_in_turn() {
         filter: None,
         held: Vec::new(),
         keep: 0,
+        when: None,
         id: EntityId(id),
         building: building.into(),
         pos: TilePos::new(x, y),
@@ -1961,6 +1964,7 @@ fn drills_running_dry_and_mined_out_show_as_problems() {
         filter: None,
         held: Vec::new(),
         keep: 0,
+        when: None,
         id: EntityId(id),
         building: "drill".into(),
         pos: TilePos::new(x, 0),
@@ -2171,4 +2175,82 @@ fn the_settings_sheet_and_new_game_rules_fit_a_small_phone_either_way_in_every_l
         }
     }
     i18n::set_lang(i18n::Lang::En);
+}
+
+#[test]
+fn a_picker_sheet_sets_what_it_takes_and_when_it_runs() {
+    use mofact_core::command::{Compare, Condition};
+    let mut f = Fixture::new();
+    let mut w = f.snapshot.entities[2].clone();
+    w.id = EntityId(7);
+    w.building = "warehouse".into();
+    w.pos = TilePos::new(8, 0);
+    w.held = vec![("copper-plate".into(), 2), ("gear".into(), 300)];
+    let mut p = w.clone();
+    p.id = EntityId(8);
+    p.building = "picker".into();
+    p.pos = TilePos::new(10, 1);
+    p.dir = Dir::East;
+    p.held = Vec::new();
+    f.snapshot.entities.push(w);
+    f.snapshot.entities.push(p);
+    f.hud.select(Some(EntityId(8)));
+    for (size, scale) in [((1280, 720), 1.0), ((750, 1334), 2.0)] {
+        let n = f.snapshot.entities.len() - 1;
+        f.snapshot.entities[n].when = None;
+        f.draw(size, scale, &Tool::Hand);
+        // Anything, or one of what the warehouse behind it holds.
+        f.find(&Hit::SetFilter(EntityId(8), None));
+        f.find(&Hit::SetFilter(EntityId(8), Some("gear".into())));
+        f.find(&Hit::SetCondition(EntityId(8), None));
+        // "While at least" starts counting the store's first item.
+        let at_least = Some(Condition {
+            item: "gear".into(),
+            compare: Compare::AtLeast,
+            amount: 10,
+        });
+        assert_eq!(
+            f.tap(centre(
+                f.find(&Hit::SetCondition(EntityId(8), at_least.clone()))
+            ))
+            .1,
+            vec![Action::Send(Command::SetCondition {
+                entity: EntityId(8),
+                when: at_least,
+            })]
+        );
+        // With a condition: copper below 3, the item and amount steps show.
+        let below = Condition {
+            item: "copper-plate".into(),
+            compare: Compare::Below,
+            amount: 3,
+        };
+        f.snapshot.entities[n].when = Some(below.clone());
+        f.hud.select(Some(EntityId(8)));
+        f.draw(size, scale, &Tool::Hand);
+        f.find(&Hit::SetCondition(
+            EntityId(8),
+            Some(Condition {
+                item: "gear".into(),
+                ..below.clone()
+            }),
+        ));
+        let up = Hit::SetCondition(
+            EntityId(8),
+            Some(Condition {
+                amount: 4,
+                ..below.clone()
+            }),
+        );
+        f.find(&up);
+        // Stepping down stops at nothing, never below.
+        f.find(&Hit::SetCondition(
+            EntityId(8),
+            Some(Condition {
+                amount: 0,
+                ..below.clone()
+            }),
+        ));
+        f.hud.select(Some(EntityId(8)));
+    }
 }
