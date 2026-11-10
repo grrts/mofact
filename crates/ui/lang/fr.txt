@@ -96,6 +96,7 @@ trouble.starved = attend des intrants
 trouble.blocked = sortie pleine
 trouble.empty = vide
 trouble.idle = sans recette
+trouble.no_research = aucune recherche choisie
 trouble.mined_out = minerai épuisé
 trouble.low_ore = minerai presque épuisé
 

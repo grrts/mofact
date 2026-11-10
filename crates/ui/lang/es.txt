@@ -96,6 +96,7 @@ trouble.starved = esperando material
 trouble.blocked = salida llena
 trouble.empty = vacío
 trouble.idle = sin receta
+trouble.no_research = sin investigación elegida
 trouble.mined_out = sin mineral
 trouble.low_ore = queda poco mineral
 

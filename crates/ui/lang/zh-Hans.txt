@@ -96,6 +96,7 @@ trouble.starved = 等待原料
 trouble.blocked = 输出已满
 trouble.empty = 空
 trouble.idle = 无配方
+trouble.no_research = 未选择研究
 trouble.mined_out = 矿石已采完
 trouble.low_ore = 矿石快采完了
 

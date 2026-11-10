@@ -24,6 +24,9 @@ pub enum Trouble {
     EmptyPipe,
     /// A crafter with no recipe and nothing arriving to pick one.
     Idle,
+    /// A lab with no research picked: the assemblers feeding it fill up
+    /// and read output full, so the list names the lab as the cause.
+    NoResearch,
     /// A drill still digging, with little ore left in reach.
     LowOre,
 }
@@ -93,6 +96,7 @@ pub fn find(view: &View) -> Vec<Problem> {
         );
         let crafter = matches!(def.role, BuildingRole::Crafter { .. });
         let drill = matches!(def.role, BuildingRole::Miner { .. });
+        let lab = matches!(def.role, BuildingRole::Lab { .. });
         let trouble = match e.state {
             _ if drill && e.ore_left == Some(0) => Trouble::MinedOut,
             MachineState::Working if drill && e.ore_left.is_some_and(|n| n < LOW_ORE) => {
@@ -110,6 +114,7 @@ pub fn find(view: &View) -> Vec<Problem> {
             MachineState::Starved => Trouble::Starved,
             MachineState::Blocked => Trouble::Blocked,
             MachineState::Idle if crafter => Trouble::Idle,
+            MachineState::Idle if lab => Trouble::NoResearch,
             _ => continue,
         };
         let here = (e.id, centre(e));
@@ -126,6 +131,7 @@ pub fn find(view: &View) -> Vec<Problem> {
                     Trouble::EmptyPipe => "trouble.empty",
                     Trouble::MinedOut => "trouble.mined_out",
                     Trouble::LowOre => "trouble.low_ore",
+                    Trouble::NoResearch => "trouble.no_research",
                     _ => "trouble.idle",
                 });
                 out.push(Problem {
