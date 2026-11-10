@@ -284,6 +284,38 @@ fn the_inspect_sheet_sets_recipes_turns_and_removes() {
 }
 
 #[test]
+fn the_inspect_sheet_takes_another_like_it_in_hand() {
+    let mut f = Fixture::new();
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.snapshot.entities[1].dir = Dir::South;
+    f.hud.select(Some(EntityId(2)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let another = f.find(&Hit::Pipette(
+        "assembler".into(),
+        Dir::South,
+        Some("gear".into()),
+    ));
+    assert_eq!(
+        f.tap(centre(another)).1,
+        vec![Action::Pipette {
+            building: "assembler".into(),
+            dir: Dir::South,
+            recipe: Some("gear".into()),
+        }]
+    );
+    assert_eq!(f.hud.selected(), None, "the sheet makes way for building");
+
+    // There is only one hub.
+    f.hud.select(Some(EntityId(1)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    assert!(!f
+        .hud
+        .hits
+        .iter()
+        .any(|(_, h)| matches!(h, Hit::Pipette(..))));
+}
+
+#[test]
 fn the_train_sheet_sets_up_a_schedule_by_touch() {
     use mofact_core::command::TrainStop;
     let mut f = Fixture::new();

@@ -5,6 +5,9 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Build another:** a building's sheet has a Build another button that
+  puts the same building in hand, facing the same way and on the same
+  recipe, so a second furnace on copper or a matching belt tier is one tap.
 - **What a science pack is for:** tapping a pack such as the engineering
   pack now names the research it still pays for, the ones you can start
   first, at a size that reads, with "+N more" for the rest. It shows on a

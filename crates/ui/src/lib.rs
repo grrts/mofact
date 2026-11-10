@@ -246,6 +246,13 @@ pub enum Action {
     Recipe(Option<RecipeId>),
     /// Choose the belt tier the belt tool lays.
     Belt(BuildingId),
+    /// Take a building like one already built in hand: the same kind,
+    /// facing the same way, on the same recipe (`None` for auto).
+    Pipette {
+        building: BuildingId,
+        dir: Dir,
+        recipe: Option<RecipeId>,
+    },
     /// Send a command to the simulation.
     Send(Command),
     /// A tap on the world with the hand tool, at this screen point: inspect what's there.
@@ -336,6 +343,8 @@ enum Hit {
     SetCondition(EntityId, Option<Condition>),
     Turn(EntityId, Dir),
     Remove(EntityId),
+    /// The inspect sheet's "Build another": this building, facing, recipe.
+    Pipette(BuildingId, Dir, Option<RecipeId>),
     /// The research button: opens or closes the research sheet.
     Research,
     /// Set what labs work on.
@@ -1046,6 +1055,15 @@ impl Hud {
             Hit::Remove(entity) => {
                 self.selected = None;
                 vec![Action::Send(Command::Remove { entity })]
+            }
+            Hit::Pipette(building, dir, recipe) => {
+                self.selected = None;
+                self.more = false;
+                vec![Action::Pipette {
+                    building,
+                    dir,
+                    recipe,
+                }]
             }
             Hit::Research => {
                 self.research = !self.research;
@@ -4343,6 +4361,11 @@ impl Hud {
         let pad = 16.0 * u;
         let def = view.building(&e.building);
         let hub = def.is_some_and(|d| d.role == BuildingRole::Hub);
+        // Whether another like it can be built: anything open but the hub
+        // and a megaproject, of which there is one.
+        let anew = def.is_some_and(|d| {
+            !matches!(d.role, BuildingRole::Hub | BuildingRole::Megaproject { .. })
+        }) && view.building_open(&e.building);
         // Belts, splitters and underground belts only carry: nothing to show
         // but the controls. Splitters of other modes say what they do.
         let belt = def.is_some_and(|d| {
@@ -4721,14 +4744,20 @@ impl Hud {
             y += band;
         }
 
-        // Rotate and remove.
+        // Rotate, build another like it, and remove.
         if !hub {
             let bh = 40.0 * u;
-            let bw = (r[2] - 2.0 * pad - 8.0 * u) / 2.0;
-            let buttons = [
-                (tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT),
-                (tr("tool.remove"), Hit::Remove(e.id), palette::STARVE),
-            ];
+            let mut buttons = vec![(tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT)];
+            if anew {
+                buttons.push((
+                    tr("button.another"),
+                    Hit::Pipette(e.building.clone(), e.dir, e.recipe.clone()),
+                    TEXT,
+                ));
+            }
+            buttons.push((tr("tool.remove"), Hit::Remove(e.id), palette::STARVE));
+            let n = buttons.len() as f32;
+            let bw = (r[2] - 2.0 * pad - 8.0 * u * (n - 1.0)) / n;
             for (i, (label, hit, ink)) in buttons.into_iter().enumerate() {
                 let b = [left + i as f32 * (bw + 8.0 * u), y, bw, bh];
                 o.panel([b[0], b[1]], [bw, bh], 10.0 * u, RAISED);

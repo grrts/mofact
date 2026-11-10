@@ -42,6 +42,7 @@ button.undo = ← 撤销
 button.redo = 重做 →
 button.cancel = 取消
 button.rotate = 旋转
+button.another = 再建一个
 
 menu.title = 游戏
 menu.new_game_in_slot = 在存档位 {0} 开始新游戏

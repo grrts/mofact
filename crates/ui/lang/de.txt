@@ -42,6 +42,7 @@ button.undo = ← Zurück
 button.redo = Wieder →
 button.cancel = Abbrechen
 button.rotate = Drehen
+button.another = Nochmal bauen
 
 menu.title = Spiel
 menu.new_game_in_slot = Neues Spiel in Platz {0}

@@ -42,6 +42,7 @@ button.undo = ← 元に戻す
 button.redo = やり直す →
 button.cancel = キャンセル
 button.rotate = 回転
+button.another = もう一つ建てる
 
 menu.title = ゲーム
 menu.new_game_in_slot = スロット{0}で新しいゲーム

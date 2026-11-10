@@ -42,6 +42,7 @@ button.undo = ← Annuler
 button.redo = Rétablir →
 button.cancel = Annuler
 button.rotate = Tourner
+button.another = Construire pareil
 
 menu.title = Partie
 menu.new_game_in_slot = Nouvelle partie {0}

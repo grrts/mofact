@@ -42,6 +42,7 @@ button.undo = ← Deshacer
 button.redo = Rehacer →
 button.cancel = Cancelar
 button.rotate = Girar
+button.another = Construir otro
 
 menu.title = Partida
 menu.new_game_in_slot = Nueva partida en la ranura {0}

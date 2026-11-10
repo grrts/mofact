@@ -869,6 +869,37 @@ impl Game {
         self.controls.builder.set_tool(tool);
     }
 
+    /// Take a building like one already built in hand: belts with the
+    /// belt tool at their tier, anything else facing the same way on the
+    /// same recipe.
+    fn pipette(
+        &mut self,
+        building: mofact_core::ids::BuildingId,
+        dir: mofact_core::geom::Dir,
+        recipe: Option<mofact_core::ids::RecipeId>,
+    ) {
+        let role = self
+            .content
+            .buildings
+            .iter()
+            .find(|b| b.id == building)
+            .map(|b| &b.role);
+        let b = &mut self.controls.builder;
+        if matches!(role, Some(mofact_core::content::BuildingRole::Belt { .. })) {
+            b.belt = building;
+            b.set_tool(Tool::Belt);
+        } else {
+            if matches!(
+                role,
+                Some(mofact_core::content::BuildingRole::Crafter { .. })
+            ) {
+                b.recipe = recipe;
+            }
+            b.set_tool(Tool::Place(building));
+        }
+        b.dir = dir;
+    }
+
     /// Do what the HUD asks.
     /// What the building in hand still needs, for a refusal that says so:
     /// "A Lab needs 10 Brick, 5 Circuit more."
@@ -919,6 +950,11 @@ impl Game {
             Action::Rotate => self.controls.builder.rotate(),
             Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
             Action::Belt(belt) => self.controls.builder.belt = belt,
+            Action::Pipette {
+                building,
+                dir,
+                recipe,
+            } => self.pipette(building, dir, recipe),
             Action::Send(command) => self.sim.send(command),
             Action::Undo => self.sim.undo(),
             Action::MenuOpened => self.requests.push(Request::Refresh),

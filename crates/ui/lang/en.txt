@@ -48,6 +48,7 @@ button.undo = ← Undo
 button.redo = Redo →
 button.cancel = Cancel
 button.rotate = Rotate
+button.another = Build another
 
 # The game menu.
 menu.title = Game
