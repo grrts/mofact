@@ -113,6 +113,7 @@ browser.none = Nichts stellt das her oder braucht es bisher.
 browser.made_by = HERGESTELLT VON
 browser.used_in = VERWENDET IN
 browser.research = FORSCHUNG
+browser.more = +{0} weitere
 browser.to_make = HERSTELLEN
 list.join = {0}, {1}
 unit.per_min = {0}/min

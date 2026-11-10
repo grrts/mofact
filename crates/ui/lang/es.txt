@@ -113,6 +113,7 @@ browser.none = Nada fabrica ni usa esto todavía.
 browser.made_by = LO FABRICA
 browser.used_in = SE USA EN
 browser.research = INVESTIGACIÓN
+browser.more = +{0} más
 browser.to_make = PARA FABRICAR
 list.join = {0}, {1}
 unit.per_min = {0}/min

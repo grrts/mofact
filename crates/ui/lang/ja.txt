@@ -113,6 +113,7 @@ browser.none = これを作る物も使う物もまだありません。
 browser.made_by = 作る方法
 browser.used_in = 使い道
 browser.research = 研究
+browser.more = ほか{0}件
 browser.to_make = 生産に必要な数
 list.join = {0}、{1}
 unit.per_min = {0}/分
