@@ -104,6 +104,7 @@ trouble.starved = waiting for input
 trouble.blocked = output full
 trouble.empty = empty
 trouble.idle = no recipe
+trouble.no_research = no research picked
 trouble.mined_out = ore ran out
 trouble.low_ore = ore running low
 

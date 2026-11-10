@@ -645,6 +645,68 @@ fn labs_turn_packs_into_research() {
     let _ = asm2;
 }
 
+/// An assembler straight into a lab twice as slow as it: the lab takes a
+/// pack every ten seconds and the assembler makes one in five, so it waits
+/// on its output half the time and crafts the other half.
+#[test]
+fn an_assembler_feeding_a_slower_lab_is_only_output_full_while_it_waits() {
+    let mut sim = Sim::with_content(&content());
+    for (i, n) in [
+        ("iron-plate", 200),
+        ("copper-plate", 200),
+        ("wire", 20),
+        ("brick", 50),
+        ("gear", 50),
+        ("circuit", 50),
+    ] {
+        sim.add_stock(&item(i), n);
+    }
+    let asm = place(&mut sim, "assembler", 0, 0, Dir::East, Some("survey-pack"));
+    place(&mut sim, "lab", 1, 0, Dir::East, None);
+    place(&mut sim, "pole", 1, 1, Dir::East, None);
+    place(&mut sim, "wind-turbine", 2, 1, Dir::East, None);
+    let pick = Command::SetResearch {
+        research: Some("motors".into()),
+    };
+    sim.complete_research(&"steel-working".into());
+    assert!(matches!(sim.apply(&pick), CommandResult::Applied { .. }));
+    let state = |sim: &Sim| {
+        let snap = sim.snapshot();
+        snap.entities.iter().find(|e| e.id == asm).unwrap().state
+    };
+    // Long enough for the lab and the assembler's output to fill up.
+    for _ in 0..120 {
+        sim.feed(asm, &item("copper-plate"));
+        sim.feed(asm, &item("gear"));
+        run(&mut sim, 1);
+    }
+    let before = sim.snapshot().research.progress.0;
+    let (mut working, mut blocked) = (0, 0);
+    for _ in 0..40 * mofact_core::TICKS_PER_SECOND {
+        sim.feed(asm, &item("copper-plate"));
+        sim.feed(asm, &item("gear"));
+        sim.step();
+        match state(&sim) {
+            MachineState::Working => working += 1,
+            MachineState::Blocked => blocked += 1,
+            s => panic!("the assembler is {s:?}"),
+        }
+    }
+    let after = sim.snapshot().research.progress.0;
+    assert_eq!(
+        after - before,
+        4,
+        "the lab runs flat out: a unit every 10 s"
+    );
+    // It used to read output full the whole time once its output topped up,
+    // crafting or not.
+    let all = working + blocked;
+    assert!(
+        (all * 2 / 5..=all * 3 / 5).contains(&working),
+        "crafting about half the time: {working} of {all} ticks"
+    );
+}
+
 #[test]
 fn research_survives_a_save_and_old_saves_still_load() {
     let mut sim = lab_line();

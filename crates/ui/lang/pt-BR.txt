@@ -94,6 +94,7 @@ trouble.starved = esperando insumos
 trouble.blocked = saída cheia
 trouble.empty = vazio
 trouble.idle = sem receita
+trouble.no_research = nenhuma pesquisa escolhida
 trouble.mined_out = minério esgotado
 trouble.low_ore = minério acabando
 

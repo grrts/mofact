@@ -94,6 +94,7 @@ trouble.starved = 材料待ち
 trouble.blocked = 出力がいっぱい
 trouble.empty = 空
 trouble.idle = レシピなし
+trouble.no_research = 研究なし
 trouble.mined_out = 鉱石がなくなった
 trouble.low_ore = 鉱石が残りわずか
 

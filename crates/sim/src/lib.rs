@@ -1880,7 +1880,11 @@ impl Sim {
                 } else {
                     c.idle += 1;
                 }
-                c.blocked = if full { c.blocked + 1 } else { 0 };
+                // Only a machine kept from crafting by its output counts as
+                // blocked: one feeding a slower lab or belt that has just
+                // taken a product is at work again, though its output still
+                // holds the next few.
+                c.blocked = if full && !c.working { c.blocked + 1 } else { 0 };
                 // Each output goes out its own side, so a by-product can't
                 // run back into an input line or onto the product's belt. One
                 // solid leaves each side per tick, onto any tile along it.

@@ -1997,6 +1997,56 @@ fn drills_running_dry_and_mined_out_show_as_problems() {
 }
 
 #[test]
+fn a_lab_with_no_research_picked_shows_as_the_cause_of_a_full_assembler() {
+    let mut f = Fixture::new();
+    let at = |id, x, building: &str, recipe: Option<&str>, state| EntityView {
+        request: None,
+        filter: None,
+        held: Vec::new(),
+        keep: 0,
+        id: EntityId(id),
+        building: building.into(),
+        pos: TilePos::new(x, 0),
+        dir: Dir::East,
+        recipe: recipe.map(Into::into),
+        ore: None,
+        ore_left: None,
+        grid: None,
+        exit: false,
+        fluid: None,
+        links: 0,
+        state,
+        progress: 0.0,
+    };
+    f.snapshot.entities = vec![
+        at(
+            1,
+            0,
+            "assembler",
+            Some("survey-pack"),
+            MachineState::Blocked,
+        ),
+        at(2, 1, "lab", None, MachineState::Idle),
+        at(3, 2, "lab", None, MachineState::Working),
+    ];
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    let lines: Vec<_> = f
+        .hud
+        .found
+        .iter()
+        .map(|p| (p.trouble, p.at.len(), p.label.clone()))
+        .collect();
+    use problems::Trouble as T;
+    assert_eq!(
+        lines,
+        vec![
+            (T::Blocked, 1, "Assembler · output full".to_string()),
+            (T::NoResearch, 1, "Lab · no research picked".to_string()),
+        ]
+    );
+}
+
+#[test]
 fn the_order_card_counts_down_and_a_shipped_order_says_so() {
     use mofact_core::snapshot::OrderView;
     let mut f = Fixture::new();

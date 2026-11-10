@@ -94,6 +94,7 @@ trouble.starved = wartet auf Nachschub
 trouble.blocked = Ausgang voll
 trouble.empty = leer
 trouble.idle = kein Rezept
+trouble.no_research = keine Forschung gewählt
 trouble.mined_out = Erz erschöpft
 trouble.low_ore = Erz wird knapp
 
