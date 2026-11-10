@@ -878,6 +878,13 @@ fn the_goal_card_shows_how_far_along_and_says_when_a_goal_is_met() {
     assert_eq!(text, "Goal met! Next: Have 3 drills");
     assert!(f.hud.hint);
 
+    // Read, the hint folds itself away so the header stays small.
+    f.hud.hint_opened = Instant::now().checked_sub(GOAL_HINT_FOR);
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(!f.hud.hint, "the hint makes room once read");
+    f.tap(centre(f.find(&Hit::Goal)));
+    assert!(f.hud.hint, "and a tap brings it back");
+
     // All done: no card.
     f.snapshot.goal = None;
     f.draw((1080, 2340), 3.0, &Tool::Hand);
@@ -2364,4 +2371,29 @@ fn a_picker_sheet_sets_what_it_takes_and_when_it_runs() {
         ));
         f.hud.select(Some(EntityId(8)));
     }
+}
+
+#[test]
+fn a_tools_tip_folds_to_its_name_and_a_tap_opens_it() {
+    let mut f = Fixture::new();
+    let tool = Tool::Place("furnace".into());
+    f.draw((1080, 2340), 3.0, &tool);
+    let open = f.find(&Hit::Tip);
+    let (_, at) = f.hud.tip_seen.clone().expect("the tip names the tool");
+    assert!(at.elapsed() < HINT_FOR, "a new tool's tip is open");
+    // Later, it folds to the tool's name; a tap opens it again.
+    f.hud.tip_seen = Some((tool.clone(), Instant::now().checked_sub(HINT_FOR).unwrap()));
+    f.draw((1080, 2340), 3.0, &tool);
+    let folded = f.find(&Hit::Tip);
+    assert!(
+        folded[2] < open[2] && folded[3] <= open[3],
+        "{folded:?} vs {open:?}"
+    );
+    f.tap(centre(folded));
+    assert!(f.hud.tip_open);
+    f.draw((1080, 2340), 3.0, &tool);
+    assert_eq!(f.find(&Hit::Tip), open);
+    // Another tool starts fresh, folded once it has been read.
+    f.draw((1080, 2340), 3.0, &Tool::Belt);
+    assert!(!f.hud.tip_open);
 }

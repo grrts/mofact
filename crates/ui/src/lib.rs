@@ -49,6 +49,10 @@ const CHIP_H: f32 = 36.0;
 /// A finger that moves further than this (in points) is dragging, not tapping.
 const TAP_SLOP: f32 = 12.0;
 const TOAST_FOR: Duration = Duration::from_millis(2500);
+/// How long a new tool's tip stays open by itself.
+const HINT_FOR: Duration = Duration::from_secs(10);
+/// How long a new goal's hint stays open by itself: time to read it twice.
+const GOAL_HINT_FOR: Duration = Duration::from_secs(25);
 /// A finger held still on the world this long opens the radial build menu.
 pub const LONG_PRESS: Duration = Duration::from_millis(450);
 
@@ -437,6 +441,8 @@ enum Hit {
     TitleLoad,
     TitleSettings,
     TitleBuy,
+    /// The tool's tip: a tap opens its words again, or folds them.
+    Tip,
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -596,6 +602,14 @@ pub struct Hud {
     /// Whether the goal card shows how to meet it, and the goal it last showed.
     hint: bool,
     goal_seen: Option<u16>,
+    /// When a new goal's hint opened: it folds itself away after
+    /// [`GOAL_HINT_FOR`], so the header stays small. A tap on the card
+    /// brings it back.
+    hint_opened: Option<Instant>,
+    /// The tool the tip last named and when it was picked: the tip folds
+    /// to the tool's name after [`HINT_FOR`]. Whether a tap opened it again.
+    tip_seen: Option<(Tool, Instant)>,
+    tip_open: bool,
     /// Orders shipped and missed as last drawn, to toast when one ends.
     orders_seen: Option<(u32, u32)>,
     /// What's stuck, as of the last frame drawn.
@@ -1129,6 +1143,11 @@ impl Hud {
             }
             Hit::Goal => {
                 self.hint = !self.hint;
+                self.hint_opened = None;
+                Vec::new()
+            }
+            Hit::Tip => {
+                self.tip_open = !self.tip_open;
                 Vec::new()
             }
             Hit::Sound => {
@@ -1849,11 +1868,23 @@ impl Hud {
                 .map_or(tr("tip.build"), |d| d.name.as_str()),
             _ => tr(TOOLS[slot].0),
         };
-        let what = match view.tool {
-            Tool::Select if view.selection > 0 => trf("tip.selected", &[&view.selection]),
-            _ => tip(view.tool).to_string(),
+        // A new tool's tip stays open a while, then folds to its name.
+        if self.tip_seen.as_ref().is_none_or(|(t, _)| t != view.tool) {
+            self.tip_seen = Some((view.tool.clone(), Instant::now()));
+            self.tip_open = false;
+        }
+        let fresh = self
+            .tip_seen
+            .as_ref()
+            .is_some_and(|(_, at)| at.elapsed() < HINT_FOR);
+        let text = match view.tool {
+            Tool::Select if view.selection > 0 => trf(
+                "tip.named",
+                &[&name, &trf("tip.selected", &[&view.selection])],
+            ),
+            _ if fresh || self.tip_open => trf("tip.named", &[&name, &tip(view.tool)]),
+            _ => format!("{name} ?"),
         };
-        let text = trf("tip.named", &[&name, &what]);
         let ink = if *view.tool == Tool::Remove {
             palette::STARVE
         } else {
@@ -1864,7 +1895,7 @@ impl Hud {
         let bw = o.measure(done, px) + 28.0 * u;
         let gap = 8.0 * u;
         let card = chip(o, &text, at, width - bw - gap, u, ink);
-        self.hits.push((card, Hit::Block));
+        self.hits.push((card, Hit::Tip));
         let bottom = card[1] + card[3];
         let h = (bottom - at[1]).max(40.0 * u).min(52.0 * u);
         let r = [at[0] + width - bw, at[1], bw, h];
@@ -2875,6 +2906,14 @@ impl Hud {
             }
             self.goal_seen = Some(g.index);
             self.hint = true;
+            self.hint_opened = Some(Instant::now());
+        }
+        // Once read, the hint makes room for the factory.
+        if let Some(at) = self.hint_opened {
+            if at.elapsed() >= GOAL_HINT_FOR {
+                self.hint = false;
+                self.hint_opened = None;
+            }
         }
         let h = 44.0 * u;
         let px = 14.0 * u;
@@ -2893,8 +2932,10 @@ impl Hud {
         } else {
             Vec::new()
         };
+        // Folded, a small "?" says a tap shows how.
+        let more = if lines.is_empty() { 26.0 * u } else { 0.0 };
         let w = if lines.is_empty() {
-            (o.measure(&text, px) + cw + 40.0 * u).min(width)
+            (o.measure(&text, px) + cw + 40.0 * u + more).min(width)
         } else {
             width
         };
@@ -2902,8 +2943,26 @@ impl Hud {
         o.panel(at, [w, total], 10.0 * u, RAISED);
         let base = at[1] + (h - 6.0 * u + o.cap_height(px)) / 2.0;
         o.text(&text, [at[0] + 14.0 * u, base], px, palette::ACCENT);
-        o.text(&count, [at[0] + w - 14.0 * u - cw, base], 14.0 * u, MUTED);
-        let bar = w - 28.0 * u;
+        o.text(
+            &count,
+            [at[0] + w - 14.0 * u - cw - more, base],
+            14.0 * u,
+            MUTED,
+        );
+        if more > 0.0 {
+            let d = 18.0 * u;
+            let c = [at[0] + w - 10.0 * u - d, at[1] + (h - 6.0 * u - d) / 2.0];
+            o.panel(c, [d, d], d / 2.0, PANEL);
+            let qpx = 12.0 * u;
+            let qw = o.measure("?", qpx);
+            o.text(
+                "?",
+                [c[0] + (d - qw) / 2.0, c[1] + (d + o.cap_height(qpx)) / 2.0],
+                qpx,
+                MUTED,
+            );
+        }
+        let bar = w - 28.0 * u - more;
         let done = g.have as f32 / g.need.max(1) as f32;
         o.panel(
             [at[0] + 14.0 * u, at[1] + h - 9.0 * u],

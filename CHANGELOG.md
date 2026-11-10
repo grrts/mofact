@@ -5,6 +5,10 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **A smaller header:** a new goal's explanation folds away by itself
+  after 25 seconds, leaving one line with the goal, the count and a "?";
+  tap the card to read it again. A tool's tip folds to its name after 10
+  seconds the same way, and a tap on it opens it again.
 - **Build another:** a building's sheet has a Build another button that
   puts the same building in hand, facing the same way and on the same
   recipe, so a second furnace on copper or a matching belt tier is one tap.
