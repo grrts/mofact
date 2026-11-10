@@ -106,6 +106,10 @@ pub enum Role {
         requester: bool,
         warehouse: bool,
     },
+    /// A picker hands one item on every `every` ticks at most.
+    Picker {
+        every: u32,
+    },
 }
 
 impl Role {
@@ -289,6 +293,11 @@ impl Tables {
                     capacity: *capacity,
                     requester: false,
                     warehouse: true,
+                },
+                BuildingRole::Picker { per_second } => Role::Picker {
+                    every: (TICKS_PER_SECOND as f32 / per_second.max(0.1))
+                        .round()
+                        .max(1.0) as u32,
                 },
                 BuildingRole::Megaproject { stages } => Role::Mega {
                     stages: stages.iter().map(|st| stacks(&t, &st.needs)).collect(),

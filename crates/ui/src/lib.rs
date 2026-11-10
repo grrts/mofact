@@ -12,7 +12,7 @@
 //! bottom edge; in landscape it stands on the right edge, where a right thumb
 //! rests. The rotate button, recipe pills and inspect sheet sit next to it.
 
-use mofact_core::command::Command;
+use mofact_core::command::{Command, Compare, Condition};
 use mofact_core::content::{
     Bonus, BuildingDef, BuildingRole, Content, RecipeDef, ResearchDef, SplitMode, Stack,
 };
@@ -332,6 +332,8 @@ enum Hit {
     SetFilter(EntityId, Option<mofact_core::ids::ItemId>),
     /// A warehouse's safety stock.
     SetKeep(EntityId, u32),
+    /// When a picker runs.
+    SetCondition(EntityId, Option<Condition>),
     Turn(EntityId, Dir),
     Remove(EntityId),
     /// The research button: opens or closes the research sheet.
@@ -1030,6 +1032,9 @@ impl Hud {
             }
             Hit::SetFilter(entity, filter) => {
                 vec![Action::Send(Command::SetFilter { entity, filter })]
+            }
+            Hit::SetCondition(entity, when) => {
+                vec![Action::Send(Command::SetCondition { entity, when })]
             }
             Hit::SetRecipe(entity, recipe) => {
                 vec![Action::Send(Command::SetRecipe { entity, recipe })]
@@ -4179,6 +4184,158 @@ impl Hud {
         rows + self.pills(o, list, [at[0], at[1] - rows as f32 * pitch], width, draw)
     }
 
+    /// A picker's pills, top to bottom: what it takes (anything, or one
+    /// item the store behind it holds); always, or only while the store
+    /// holds at least or fewer than an amount; and with a condition, the
+    /// item it counts and the amount, stepped up and down. Returns the rows.
+    #[allow(clippy::too_many_arguments)]
+    fn picker_pills(
+        &mut self,
+        o: &mut Overlay,
+        view: &View,
+        e: &EntityView,
+        at: [f32; 2],
+        width: f32,
+        draw: bool,
+    ) -> usize {
+        let held = store_of(view, e).map(|(_, held)| held).unwrap_or_default();
+        let pick = e.filter.as_ref();
+        let mut takes: Vec<&ItemId> = held.iter().take(REQUEST_ITEMS).map(|h| h.0).collect();
+        if let Some(i) = pick {
+            if !takes.contains(&i) {
+                takes.push(i);
+            }
+        }
+        let take_list: Vec<Pill> = std::iter::once((
+            tr("picker.any"),
+            None,
+            pick.is_none(),
+            Hit::SetFilter(e.id, None),
+        ))
+        .chain(takes.iter().map(|i| {
+            (
+                "",
+                view.look.item(i),
+                pick == Some(*i),
+                Hit::SetFilter(e.id, Some((*i).clone())),
+            )
+        }))
+        .collect();
+        // What a condition counts: what the store holds, or with nothing
+        // there yet, what the player has.
+        let when = e.when.as_ref();
+        let mut counts: Vec<&ItemId> = if takes.is_empty() {
+            solid_items(view, None)
+        } else {
+            takes.clone()
+        };
+        if let Some(c) = when {
+            if !counts.contains(&&c.item) {
+                counts.push(&c.item);
+            }
+        }
+        let first = when
+            .map(|c| c.item.clone())
+            .or_else(|| pick.cloned())
+            .or_else(|| counts.first().map(|i| (*i).clone()));
+        let amount = when.map_or(PICKER_AMOUNT, |c| c.amount);
+        let set = |compare| {
+            Hit::SetCondition(
+                e.id,
+                first.clone().map(|item| Condition {
+                    item,
+                    compare,
+                    amount,
+                }),
+            )
+        };
+        let modes: Vec<Pill> = vec![
+            (
+                tr("picker.always"),
+                None,
+                when.is_none(),
+                Hit::SetCondition(e.id, None),
+            ),
+            (
+                tr("picker.at_least"),
+                None,
+                when.is_some_and(|c| c.compare == Compare::AtLeast),
+                set(Compare::AtLeast),
+            ),
+            (
+                tr("picker.below"),
+                None,
+                when.is_some_and(|c| c.compare == Compare::Below),
+                set(Compare::Below),
+            ),
+        ];
+        let pitch = 46.0 * self.unit;
+        let mut rows = 0;
+        if let Some(c) = when {
+            // The amount: steps down, the amount itself, steps up.
+            let shown = c.amount.to_string();
+            let labels: Vec<String> = PICKER_STEPS
+                .iter()
+                .map(|d| {
+                    if *d < 0 {
+                        format!("−{}", -d)
+                    } else {
+                        format!("+{d}")
+                    }
+                })
+                .collect();
+            let step = |d: i64| {
+                let n = (i64::from(c.amount) + d).clamp(0, i64::from(PICKER_MAX)) as u32;
+                Hit::SetCondition(
+                    e.id,
+                    Some(Condition {
+                        amount: n,
+                        ..c.clone()
+                    }),
+                )
+            };
+            let (down, up) = PICKER_STEPS.split_at(PICKER_STEPS.len() / 2);
+            let amounts: Vec<Pill> = down
+                .iter()
+                .zip(&labels)
+                .map(|(d, l)| (l.as_str(), None, false, step(*d)))
+                .chain(std::iter::once((shown.as_str(), None, true, Hit::Block)))
+                .chain(
+                    up.iter()
+                        .zip(&labels[down.len()..])
+                        .map(|(d, l)| (l.as_str(), None, false, step(*d))),
+                )
+                .collect();
+            rows += self.pills(o, amounts, at, width, draw);
+            let items: Vec<Pill> = counts
+                .iter()
+                .map(|i| {
+                    (
+                        "",
+                        view.look.item(i),
+                        &c.item == *i,
+                        Hit::SetCondition(
+                            e.id,
+                            Some(Condition {
+                                item: (*i).clone(),
+                                ..c.clone()
+                            }),
+                        ),
+                    )
+                })
+                .collect();
+            rows += self.pills(o, items, [at[0], at[1] - rows as f32 * pitch], width, draw);
+        }
+        rows += self.pills(o, modes, [at[0], at[1] - rows as f32 * pitch], width, draw);
+        rows + self.pills(
+            o,
+            take_list,
+            [at[0], at[1] - rows as f32 * pitch],
+            width,
+            draw,
+        )
+    }
+
     /// The inspect sheet for `e`, bottom-left at `at`.
     fn sheet(&mut self, view: &View, o: &mut Overlay, e: &EntityView, at: [f32; 2], width: f32) {
         let u = self.unit;
@@ -4268,8 +4425,11 @@ impl Hud {
             ) as f32
         });
         let requester = def.is_some_and(|d| matches!(d.role, BuildingRole::RequesterChest { .. }));
+        let picker = def.is_some_and(|d| matches!(d.role, BuildingRole::Picker { .. }));
         let pill_rows = if requester {
             self.request_picker(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
+        } else if picker {
+            self.picker_pills(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
         } else if filter {
             self.filter_picker(o, view, e, [0.0, 0.0], width - 2.0 * pad, false) as f32
         } else {
@@ -4426,6 +4586,10 @@ impl Hud {
                             .push(([start, y, x - start, row], Hit::Item(item.clone())));
                     }
                 }
+            } else if picker {
+                let text = picker_line(view, e);
+                let px = fit(o, &text, px, r[2] - 2.0 * pad);
+                o.text(&text, [x, base], px, MUTED);
             } else if e.state == MachineState::NoPower {
                 // Say how to fix it, not just that it's wrong.
                 let text = if grid.is_none() {
@@ -4520,6 +4684,19 @@ impl Hud {
         if filter {
             let band = pill_rows * 46.0 * u;
             self.filter_picker(
+                o,
+                view,
+                e,
+                [left, y + band - 6.0 * u],
+                r[2] - 2.0 * pad,
+                true,
+            );
+            y += band;
+        }
+
+        if picker {
+            let band = pill_rows * 46.0 * u;
+            self.picker_pills(
                 o,
                 view,
                 e,
@@ -4664,6 +4841,69 @@ fn held_items<'a>(
     items
 }
 
+/// The amount a new picker condition starts at.
+const PICKER_AMOUNT: u32 = 10;
+/// The steps a picker's amount pills take it down and up by.
+const PICKER_STEPS: [i64; 4] = [-10, -1, 1, 10];
+/// The most a picker can count to (the simulation's limit too).
+const PICKER_MAX: u32 = 99_999;
+
+/// The store a picker takes from: the warehouse, chest or hub on the tile
+/// behind it, and what it holds there, most first (for the hub, the
+/// player's stock).
+fn store_of<'a>(
+    view: &'a View,
+    e: &EntityView,
+) -> Option<(&'a EntityView, Vec<(&'a ItemId, u32)>)> {
+    let back = e.pos.step(e.dir.opposite());
+    let store = view.snapshot.entities.iter().find(|s| {
+        view.building(&s.building).is_some_and(|d| {
+            let (w, h) = (i32::from(d.size.0), i32::from(d.size.1));
+            back.x >= s.pos.x && back.x < s.pos.x + w && back.y >= s.pos.y && back.y < s.pos.y + h
+        })
+    })?;
+    let role = &view.building(&store.building)?.role;
+    let mut held: Vec<(&ItemId, u32)> = match role {
+        BuildingRole::Hub => view.snapshot.stock.iter().map(|(i, n)| (i, *n)).collect(),
+        BuildingRole::Warehouse { .. }
+        | BuildingRole::ProviderChest { .. }
+        | BuildingRole::RequesterChest { .. } => store.held.iter().map(|(i, n)| (i, *n)).collect(),
+        _ => return None,
+    };
+    held.retain(|h| h.1 > 0);
+    held.sort_by_key(|h| std::cmp::Reverse(h.1));
+    Some((store, held))
+}
+
+/// A picker's line on its sheet: where it takes from, and when it runs.
+fn picker_line(view: &View, e: &EntityView) -> String {
+    let Some((_, held)) = store_of(view, e) else {
+        return tr("inspect.picker_no_store").into();
+    };
+    match &e.when {
+        None => tr("inspect.picker_always").into(),
+        Some(c) => {
+            let name = view
+                .content
+                .items
+                .iter()
+                .find(|i| i.id == c.item)
+                .map_or(c.item.as_str().to_owned(), |i| i.name.clone());
+            let have = held.iter().find(|h| *h.0 == c.item).map_or(0, |h| h.1);
+            let key = if c.met(have) {
+                "inspect.picker_on"
+            } else {
+                "inspect.picker_off"
+            };
+            let sign = match c.compare {
+                Compare::AtLeast => "≥",
+                Compare::Below => "<",
+            };
+            trf(key, &[&name, &have, &format!("{sign} {}", c.amount)])
+        }
+    }
+}
+
 /// One line on what a building does, for the inspect sheet, when it has no
 /// recipe, fluid or power figures to show instead.
 fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
@@ -4762,6 +5002,7 @@ fn tip(tool: &Tool) -> &'static str {
             "provider-chest" => "tip.provider_chest",
             "requester-chest" => "tip.requester_chest",
             "warehouse" => "tip.warehouse",
+            "picker" => "tip.picker",
             _ => "tip.place",
         },
     })

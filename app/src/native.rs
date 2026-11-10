@@ -890,6 +890,7 @@ fn screenshots(
             "large-text",
             "title",
             "settings",
+            "picker",
         ];
         // As a fresh install sees it: the demo, with the price known.
         let store = mofact_ui::StoreView {
@@ -912,6 +913,17 @@ fn screenshots(
                         .iter()
                         .find(|e| e.building.as_str() == "assembler");
                     match asm {
+                        Some(e) => hud.select(Some(e.id)),
+                        None => continue,
+                    }
+                }
+                // A world with a picker shows its sheet.
+                "picker" => {
+                    let picker = latest
+                        .entities
+                        .iter()
+                        .find(|e| e.building.as_str() == "picker");
+                    match picker {
                         Some(e) => hud.select(Some(e.id)),
                         None => continue,
                     }

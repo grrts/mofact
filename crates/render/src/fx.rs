@@ -231,6 +231,7 @@ mod tests {
             filter: None,
             held: Vec::new(),
             keep: 0,
+            when: None,
             id: EntityId(id),
             building: building.into(),
             pos: TilePos::new(x, y),

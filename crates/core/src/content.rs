@@ -212,6 +212,12 @@ pub enum BuildingRole {
     Warehouse {
         capacity: u32,
     },
+    /// A picker: takes items one at a time from the warehouse, chest or hub
+    /// behind it and puts them on the belt ahead, `per_second` at most, only
+    /// while its condition on what the store behind it holds is met.
+    Picker {
+        per_second: f32,
+    },
     /// The game's last build (T54): takes the items of each stage in turn
     /// from belts, and when the last stage is in, the factory has won.
     Megaproject {

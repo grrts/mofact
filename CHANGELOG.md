@@ -13,6 +13,14 @@ release, see "Releasing" in CONTRIBUTING.md.
 - **Warehouse safety stock:** tap a warehouse and pick how many of each
   item it keeps back (none, 50, 100, 200 or 500). Its arrow and drones
   only take what it holds above that, so a buffer never runs dry.
+- **Pickers:** Logistics also unlocks the picker, a small arm that takes
+  items from the warehouse, chest or hub behind it and puts them on the
+  belt ahead. Tap it to choose what it takes (anything, or one item) and
+  when it runs: always, or only while the store holds at least, or fewer
+  than, an amount of an item you pick, stepped with +/− buttons. So a line
+  can stop pulling copper once fewer than 3 are left. It never takes a
+  warehouse's safety stock. Save format 22.
+
 - **More settings:** Settings, from the start menu or the game menu, now
   open a dedicated full-screen menu of their own, with none of the game's
   buttons round it: volume in steps of a quarter, ambient sound

@@ -40,7 +40,7 @@ pub use thread::SimHandle;
 
 use entities::{Entities, Entity};
 use fluids::Fluids;
-use mofact_core::command::{Command, CommandError, CommandResult};
+use mofact_core::command::{Command, CommandError, CommandResult, Compare, Condition};
 use mofact_core::content::{Bonus, Content, Repeat, SplitMode};
 use mofact_core::geom::{Dir, TilePos};
 use mofact_core::ids::{EntityId, ItemId};
@@ -134,12 +134,28 @@ enum State {
     },
     /// A provider or requester chest (T49).
     Chest(drones::Chest),
+    /// A picker, taking from the store behind it while its condition holds.
+    Picker(Picker),
     Radar {
         prog: u32,
         ring: i32,
         done: bool,
     },
 }
+
+/// A picker: the one item it takes (or whatever the store holds), when it
+/// runs, ticks since it last handed an item on, and whether its condition
+/// held when it last looked.
+#[derive(Clone, Debug, Default)]
+struct Picker {
+    pick: Option<Item>,
+    when: Option<(Item, Compare, u32)>,
+    wait: u32,
+    on: bool,
+}
+
+/// The most a picker's condition can count to.
+pub const MAX_CONDITION: u32 = 99_999;
 
 /// One end of an underground belt.
 #[derive(Clone, Debug, Default)]
@@ -833,6 +849,21 @@ impl Sim {
                         filter: Some(self.tables.items[*i as usize].clone()),
                     });
                 }
+                // Undo sets a picker the same way again.
+                if let Some(State::Picker(p)) = &self.states[entity.0 as usize] {
+                    if let Some(i) = p.pick {
+                        undo.push(Command::SetFilter {
+                            entity: *entity,
+                            filter: Some(self.tables.items[i as usize].clone()),
+                        });
+                    }
+                    if p.when.is_some() {
+                        undo.push(Command::SetCondition {
+                            entity: *entity,
+                            when: self.condition(p),
+                        });
+                    }
+                }
                 // A chest's contents go back to the stock; undo asks for the same again.
                 if let Some(State::Chest(c)) = &self.states[entity.0 as usize] {
                     for &(i, n) in &c.items {
@@ -1065,7 +1096,7 @@ impl Sim {
                     } | Role::Chest {
                         warehouse: true,
                         ..
-                    }
+                    } | Role::Picker { .. }
                 ) {
                     return Err(CommandError::UnknownContent);
                 }
@@ -1076,6 +1107,7 @@ impl Sim {
                 let f = match self.states.get_mut(entity.0 as usize) {
                     Some(Some(State::Splitter { filter: f, .. })) => f,
                     Some(Some(State::Chest(c))) => &mut c.filter,
+                    Some(Some(State::Picker(p))) => &mut p.pick,
                     _ => return Err(CommandError::UnknownContent),
                 };
                 let old = std::mem::replace(f, new);
@@ -1108,6 +1140,37 @@ impl Sim {
                     vec![Command::SetKeep {
                         entity: *entity,
                         keep: old,
+                    }],
+                    None,
+                ))
+            }
+            Command::SetCondition { entity, when } => {
+                if self.entities.get(*entity).is_none() {
+                    return Err(CommandError::NoSuchEntity);
+                }
+                let new = match when {
+                    Some(c) => Some((
+                        self.tables
+                            .item(&c.item)
+                            .ok_or(CommandError::UnknownContent)?,
+                        c.compare,
+                        c.amount.min(MAX_CONDITION),
+                    )),
+                    None => None,
+                };
+                let Some(Some(State::Picker(p))) = self.states.get_mut(entity.0 as usize) else {
+                    return Err(CommandError::UnknownContent);
+                };
+                let old = std::mem::replace(&mut p.when, new);
+                let undo = old.map(|(i, compare, amount)| Condition {
+                    item: self.tables.items[i as usize].clone(),
+                    compare,
+                    amount,
+                });
+                Ok((
+                    vec![Command::SetCondition {
+                        entity: *entity,
+                        when: undo,
                     }],
                     None,
                 ))
@@ -1272,6 +1335,7 @@ impl Sim {
             Role::Train { .. } => State::Train(rails::Train::default()),
             Role::Port { .. } => State::Port { charging: false },
             Role::Chest { .. } => State::Chest(drones::Chest::default()),
+            Role::Picker { .. } => State::Picker(Picker::default()),
             Role::Radar { .. } => State::Radar {
                 prog: 0,
                 ring: 0,
@@ -1644,6 +1708,26 @@ impl Sim {
                             let held = c.items.remove(k);
                             c.items.push(held);
                         }
+                    }
+                }
+            }
+            // A picker takes from the store behind it onto what is ahead,
+            // only while its condition holds.
+            State::Picker(p) => {
+                let Role::Picker { every } = self.tables.buildings[e.kind as usize].role else {
+                    return;
+                };
+                p.wait = p.wait.saturating_add(1);
+                if p.wait < every {
+                    return;
+                }
+                let back = e.pos.step(e.dir.opposite());
+                let (item, on) = self.pickable(back, p);
+                p.on = on;
+                if let (Some(item), true) = (item, on) {
+                    if self.push(front, item, e.dir) {
+                        self.take_from(back, item);
+                        p.wait = 0;
                     }
                 }
             }
@@ -2073,6 +2157,65 @@ impl Sim {
         self.push(e.pos, item, e.dir)
     }
 
+    /// What a picker would take from the store on `tile` (a warehouse,
+    /// chest or the hub), and whether its condition holds there now. A
+    /// picker set to nothing takes whatever a chest holds first; from the
+    /// hub it must be set to an item.
+    fn pickable(&self, tile: TilePos, p: &Picker) -> (Option<Item>, bool) {
+        let Some(id) = self.entities.at(tile) else {
+            return (None, false);
+        };
+        let state = self.states[id.0 as usize].as_ref();
+        let count = |i: Item| match state {
+            Some(State::Chest(c)) => c.count(i),
+            Some(State::Hub) => self.stock[i as usize],
+            _ => 0,
+        };
+        // It never takes a warehouse's safety stock, but its condition
+        // counts all of it.
+        let spare = |i: Item| match state {
+            Some(State::Chest(c)) => c.count(i).saturating_sub(c.keep),
+            _ => count(i),
+        };
+        let item = match (state, p.pick) {
+            (Some(State::Chest(_) | State::Hub), Some(i)) => Some(i).filter(|&i| spare(i) > 0),
+            (Some(State::Chest(c)), None) => c.items.iter().find(|x| x.1 > c.keep).map(|x| x.0),
+            (Some(State::Hub), None) => None,
+            _ => return (None, false),
+        };
+        let on = p.when.is_none_or(|(i, compare, amount)| match compare {
+            Compare::AtLeast => count(i) >= amount,
+            Compare::Below => count(i) < amount,
+        });
+        (item, on)
+    }
+
+    /// Take one `item` from the store on `tile`, for a picker.
+    fn take_from(&mut self, tile: TilePos, item: Item) {
+        let Some(id) = self.entities.at(tile) else {
+            return;
+        };
+        match self.states[id.0 as usize].as_mut() {
+            Some(State::Chest(c)) => {
+                c.take(item, 1);
+            }
+            Some(State::Hub) => {
+                let n = &mut self.stock[item as usize];
+                *n = n.saturating_sub(1);
+            }
+            _ => {}
+        }
+    }
+
+    /// A picker's condition, by item id.
+    fn condition(&self, p: &Picker) -> Option<Condition> {
+        p.when.map(|(i, compare, amount)| Condition {
+            item: self.tables.items[i as usize].clone(),
+            compare,
+            amount,
+        })
+    }
+
     /// Hand `item`, travelling in `dir`, to whatever is on `tile`.
     fn push(&mut self, tile: TilePos, item: Item, dir: Dir) -> bool {
         let Some(id) = self.entities.at(tile) else {
@@ -2118,6 +2261,7 @@ impl Sim {
             | State::Stop { .. }
             | State::Train(_)
             | State::Radar { .. }
+            | State::Picker(_)
             | State::Port { .. } => false,
             // A provider chest takes from belts on any side; a warehouse
             // from any side but the one it hands out of.
@@ -2412,6 +2556,7 @@ impl Sim {
                 }
                 Some(State::Port { charging: true }) => (MachineState::Working, 0.0, None),
                 Some(State::Port { .. }) => (MachineState::Idle, 0.0, None),
+                Some(State::Picker(p)) if !p.on => (MachineState::Idle, 0.0, None),
                 Some(State::Chest(c)) if c.items.is_empty() => (MachineState::Idle, 0.0, None),
                 _ => (MachineState::Working, 0.0, None),
             };
@@ -2466,13 +2611,18 @@ impl Sim {
                         }
                         | State::Chest(drones::Chest {
                             filter: Some(i), ..
-                        }),
+                        })
+                        | State::Picker(Picker { pick: Some(i), .. }),
                     ) => Some(self.tables.items[*i as usize].clone()),
                     _ => None,
                 },
                 keep: match &self.states[slot] {
                     Some(State::Chest(c)) => c.keep,
                     _ => 0,
+                },
+                when: match &self.states[slot] {
+                    Some(State::Picker(p)) => self.condition(p),
+                    _ => None,
                 },
                 held: match &self.states[slot] {
                     Some(State::Chest(c)) => c

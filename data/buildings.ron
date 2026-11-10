@@ -31,6 +31,10 @@
     // it holds is not the hub's stock.
     (id: "warehouse", name: "Warehouse", size: (2, 2), role: Warehouse(capacity: 1600),
         cost: [(item: "iron-plate", count: 20), (item: "gear", count: 10), (item: "brick", count: 10)]),
+    // Takes from the warehouse, chest or hub behind it onto the belt ahead,
+    // only while its condition on that store holds.
+    (id: "picker", name: "Picker", size: (1, 1), role: Picker(per_second: 7.5),
+        cost: [(item: "circuit", count: 3), (item: "gear", count: 3), (item: "iron-plate", count: 3)]),
     // Place an entrance, then an exit up to 5 tiles on, facing the same way.
     (id: "underground-belt", name: "Underground belt", size: (1, 1),
         role: Underground(tiles_per_second: 6.0, reach: 5),
