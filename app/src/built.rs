@@ -11,6 +11,8 @@ pub struct Built {
     /// Footprint size and whether it's a belt, the hub, track, per building.
     kinds: HashMap<BuildingId, ((u8, u8), bool, bool, bool)>,
     tiles: HashMap<TilePos, Occupant>,
+    /// What each entity is.
+    buildings: HashMap<mofact_core::ids::EntityId, BuildingId>,
     tick: Option<u64>,
     /// The generated map, for the trees the remove tool can clear.
     pub world: Option<mofact_world::WorldGen>,
@@ -35,6 +37,7 @@ impl Built {
         Self {
             kinds,
             tiles: HashMap::new(),
+            buildings: HashMap::new(),
             tick: None,
             world: None,
             cleared: Default::default(),
@@ -49,10 +52,12 @@ impl Built {
         self.tick = Some(snap.tick);
         self.cleared = snap.cleared.clone();
         self.tiles.clear();
+        self.buildings.clear();
         for e in &snap.entities {
             let Some(&((w, h), belt, hub, track)) = self.kinds.get(&e.building) else {
                 continue;
             };
+            self.buildings.insert(e.id, e.building.clone());
             let occupant = Occupant {
                 id: e.id,
                 belt,
@@ -73,6 +78,10 @@ impl Built {
 impl Ground for Built {
     fn at(&self, tile: TilePos) -> Option<Occupant> {
         self.tiles.get(&tile).copied()
+    }
+
+    fn building(&self, id: mofact_core::ids::EntityId) -> Option<BuildingId> {
+        self.buildings.get(&id).cloned()
     }
 
     fn tree(&self, tile: TilePos) -> bool {

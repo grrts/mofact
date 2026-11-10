@@ -10,6 +10,7 @@ use crate::ore::OreMap;
 use crate::shop::Purchase;
 use crate::slots::{Request, Store};
 use crate::sound::Sound;
+use mofact_core::command::Command;
 use mofact_core::content::Content;
 use mofact_core::geom::TilePos;
 use mofact_input::{Blueprint, CameraControl, Controls, Ground, Pointer, Tool};
@@ -1209,6 +1210,82 @@ impl Game {
         true
     }
 
+    /// Belts swapped for another tier come as a `Remove` and a `Place` on
+    /// its tile: keep only the swaps the stock pays for, counting what
+    /// each old belt gives back, so a swap never leaves a gap. Says what
+    /// is short when some are left out.
+    fn affordable_swaps(&mut self, commands: Vec<Command>) -> Vec<Command> {
+        let latest = self.sim.latest();
+        let swaps = commands.windows(2).any(|w| {
+            matches!(
+                (&w[0], &w[1]),
+                (Command::Remove { .. }, Command::Place { .. })
+            )
+        });
+        if !swaps {
+            return commands;
+        }
+        let mut stock: std::collections::HashMap<_, u32> = latest.stock.iter().cloned().collect();
+        let cost = |b: &mofact_core::ids::BuildingId| {
+            self.content
+                .buildings
+                .iter()
+                .find(|d| &d.id == b)
+                .map_or(Vec::new(), |d| d.cost.clone())
+        };
+        let kind = |id| {
+            latest
+                .entities
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.building.clone())
+        };
+        let mut out = Vec::with_capacity(commands.len());
+        let mut short = false;
+        let mut it = commands.into_iter().peekable();
+        while let Some(c) = it.next() {
+            let swap = match (&c, it.peek()) {
+                (Command::Remove { entity }, Some(Command::Place { building, .. })) => {
+                    Some((kind(*entity), building.clone()))
+                }
+                _ => None,
+            };
+            let Some((old, new)) = swap else {
+                if let Command::Place { building, .. } = &c {
+                    for st in cost(building) {
+                        let have = stock.entry(st.item).or_default();
+                        *have = have.saturating_sub(st.count);
+                    }
+                }
+                out.push(c);
+                continue;
+            };
+            let place = it.next().expect("peeked");
+            let mut after = stock.clone();
+            for st in old.as_ref().map(cost).unwrap_or_default() {
+                *after.entry(st.item).or_default() += st.count;
+            }
+            let pays = cost(&new).iter().all(|st| {
+                let have = after.entry(st.item.clone()).or_default();
+                let ok = *have >= st.count;
+                *have = have.saturating_sub(st.count);
+                ok
+            });
+            if pays {
+                stock = after;
+                out.push(c);
+                out.push(place);
+            } else {
+                short = true;
+            }
+        }
+        if short {
+            let text = self.short_of();
+            self.hud.toast(text);
+        }
+        out
+    }
+
     /// A pointer event goes to the HUD first, then to the camera and build tools.
     pub fn handle(&mut self, p: Pointer) {
         self.touched = Instant::now();
@@ -1222,7 +1299,9 @@ impl Game {
         if !taken {
             self.built.update(&self.sim.latest());
             // Everything one gesture builds is one undo step.
-            self.sim.send_all(self.controls.handle(p, &self.built));
+            let commands = self.controls.handle(p, &self.built);
+            let commands = self.affordable_swaps(commands);
+            self.sim.send_all(commands);
         }
     }
 }

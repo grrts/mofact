@@ -5,6 +5,11 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Belt upgrades:** drawing a belt over belts of another tier swaps them
+  for the one in hand along the path, keeping the line's shape; each old
+  belt is paid back as it goes. Only as many as the stock pays for are
+  swapped, so a line is never left with a gap, and the toast says what
+  is short. One undo puts them all back.
 - **Copy settings:** a machine's sheet has Copy settings when it has any
   (a recipe, a filter, a warehouse's item and safety stock, a requester's
   request, a picker's item and condition). Then each tap on another like
