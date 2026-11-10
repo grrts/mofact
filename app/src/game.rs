@@ -10,6 +10,7 @@ use crate::ore::OreMap;
 use crate::shop::Purchase;
 use crate::slots::{Request, Store};
 use crate::sound::Sound;
+use mofact_core::command::Command;
 use mofact_core::content::Content;
 use mofact_core::geom::TilePos;
 use mofact_input::{Blueprint, CameraControl, Controls, Ground, Pointer, Tool};
@@ -807,6 +808,7 @@ impl Game {
             crash: self.crash.is_some(),
             selection: builder.selection.len(),
             blueprints: &self.blueprints,
+            home: home(&self.content, &self.controls.camera, target.size(), &latest),
         };
         self.hud.draw(&view, &mut self.overlay);
         target.draw(
@@ -869,6 +871,37 @@ impl Game {
         self.controls.builder.set_tool(tool);
     }
 
+    /// Take a building like one already built in hand: belts with the
+    /// belt tool at their tier, anything else facing the same way on the
+    /// same recipe.
+    fn pipette(
+        &mut self,
+        building: mofact_core::ids::BuildingId,
+        dir: mofact_core::geom::Dir,
+        recipe: Option<mofact_core::ids::RecipeId>,
+    ) {
+        let role = self
+            .content
+            .buildings
+            .iter()
+            .find(|b| b.id == building)
+            .map(|b| &b.role);
+        let b = &mut self.controls.builder;
+        if matches!(role, Some(mofact_core::content::BuildingRole::Belt { .. })) {
+            b.belt = building;
+            b.set_tool(Tool::Belt);
+        } else {
+            if matches!(
+                role,
+                Some(mofact_core::content::BuildingRole::Crafter { .. })
+            ) {
+                b.recipe = recipe;
+            }
+            b.set_tool(Tool::Place(building));
+        }
+        b.dir = dir;
+    }
+
     /// Do what the HUD asks.
     /// What the building in hand still needs, for a refusal that says so:
     /// "A Lab needs 10 Brick, 5 Circuit more."
@@ -919,6 +952,11 @@ impl Game {
             Action::Rotate => self.controls.builder.rotate(),
             Action::Recipe(recipe) => self.controls.builder.recipe = recipe,
             Action::Belt(belt) => self.controls.builder.belt = belt,
+            Action::Pipette {
+                building,
+                dir,
+                recipe,
+            } => self.pipette(building, dir, recipe),
             Action::Send(command) => self.sim.send(command),
             Action::Undo => self.sim.undo(),
             Action::MenuOpened => self.requests.push(Request::Refresh),
@@ -1007,6 +1045,19 @@ impl Game {
                 }
                 self.built.update(&latest);
                 let here = self.built.at(tile);
+                // Pasting settings: a tap gives them to what it lands on.
+                if let (true, Some(brush)) = (hand, self.hud.brush()) {
+                    let target = here.and_then(|o| latest.entities.iter().find(|e| e.id == o.id));
+                    if let Some(e) = target {
+                        let commands = brush.commands(&self.content, e);
+                        if commands.is_empty() && !brush.matches(&self.content, e) {
+                            self.hud.toast(tr("toast.brush_other"));
+                        } else {
+                            self.sim.send_all(commands);
+                        }
+                    }
+                    return;
+                }
                 // A signal, stop or train in hand goes on the track; the tap builds, not inspects.
                 if placing && here.is_some() && self.controls.builder.places_on(here) {
                     return;
@@ -1160,6 +1211,82 @@ impl Game {
         true
     }
 
+    /// Belts swapped for another tier come as a `Remove` and a `Place` on
+    /// its tile: keep only the swaps the stock pays for, counting what
+    /// each old belt gives back, so a swap never leaves a gap. Says what
+    /// is short when some are left out.
+    fn affordable_swaps(&mut self, commands: Vec<Command>) -> Vec<Command> {
+        let latest = self.sim.latest();
+        let swaps = commands.windows(2).any(|w| {
+            matches!(
+                (&w[0], &w[1]),
+                (Command::Remove { .. }, Command::Place { .. })
+            )
+        });
+        if !swaps {
+            return commands;
+        }
+        let mut stock: std::collections::HashMap<_, u32> = latest.stock.iter().cloned().collect();
+        let cost = |b: &mofact_core::ids::BuildingId| {
+            self.content
+                .buildings
+                .iter()
+                .find(|d| &d.id == b)
+                .map_or(Vec::new(), |d| d.cost.clone())
+        };
+        let kind = |id| {
+            latest
+                .entities
+                .iter()
+                .find(|e| e.id == id)
+                .map(|e| e.building.clone())
+        };
+        let mut out = Vec::with_capacity(commands.len());
+        let mut short = false;
+        let mut it = commands.into_iter().peekable();
+        while let Some(c) = it.next() {
+            let swap = match (&c, it.peek()) {
+                (Command::Remove { entity }, Some(Command::Place { building, .. })) => {
+                    Some((kind(*entity), building.clone()))
+                }
+                _ => None,
+            };
+            let Some((old, new)) = swap else {
+                if let Command::Place { building, .. } = &c {
+                    for st in cost(building) {
+                        let have = stock.entry(st.item).or_default();
+                        *have = have.saturating_sub(st.count);
+                    }
+                }
+                out.push(c);
+                continue;
+            };
+            let place = it.next().expect("peeked");
+            let mut after = stock.clone();
+            for st in old.as_ref().map(cost).unwrap_or_default() {
+                *after.entry(st.item).or_default() += st.count;
+            }
+            let pays = cost(&new).iter().all(|st| {
+                let have = after.entry(st.item.clone()).or_default();
+                let ok = *have >= st.count;
+                *have = have.saturating_sub(st.count);
+                ok
+            });
+            if pays {
+                stock = after;
+                out.push(c);
+                out.push(place);
+            } else {
+                short = true;
+            }
+        }
+        if short {
+            let text = self.short_of();
+            self.hud.toast(text);
+        }
+        out
+    }
+
     /// A pointer event goes to the HUD first, then to the camera and build tools.
     pub fn handle(&mut self, p: Pointer) {
         self.touched = Instant::now();
@@ -1173,7 +1300,9 @@ impl Game {
         if !taken {
             self.built.update(&self.sim.latest());
             // Everything one gesture builds is one undo step.
-            self.sim.send_all(self.controls.handle(p, &self.built));
+            let commands = self.controls.handle(p, &self.built);
+            let commands = self.affordable_swaps(commands);
+            self.sim.send_all(commands);
         }
     }
 }
@@ -1636,6 +1765,28 @@ fn power_marks(
             [0x1b, 0x1f, 0x24, 0xff],
         );
     }
+}
+
+/// The hub's middle in tiles, if the camera has lost sight of it.
+fn home(
+    content: &Content,
+    cam: &CameraControl,
+    (w, h): (u32, u32),
+    latest: &mofact_core::snapshot::Snapshot,
+) -> Option<[f32; 2]> {
+    let hub = content
+        .buildings
+        .iter()
+        .find(|b| b.role == mofact_core::content::BuildingRole::Hub)?;
+    let e = latest.entities.iter().find(|e| e.building == hub.id)?;
+    let mid = [
+        e.pos.x as f32 + f32::from(hub.size.0) / 2.0,
+        e.pos.y as f32 + f32::from(hub.size.1) / 2.0,
+    ];
+    let [x0, y0] = cam.world_at([0.0, 0.0]);
+    let [x1, y1] = cam.world_at([w as f32, h as f32]);
+    let seen = (x0..=x1).contains(&mid[0]) && (y0..=y1).contains(&mid[1]);
+    (!seen).then_some(mid)
 }
 
 #[cfg(test)]

@@ -32,6 +32,11 @@ pub trait Ground {
     fn tree(&self, _tile: TilePos) -> bool {
         false
     }
+    /// What kind of building an entity is, so a belt of another tier can
+    /// be told apart and swapped for the one in hand.
+    fn building(&self, _id: EntityId) -> Option<BuildingId> {
+        None
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -286,6 +291,20 @@ impl Builder {
                 let last = path.len() - 1;
                 for (i, &(tile, dir)) in path.iter().enumerate() {
                     match ground.at(tile) {
+                        // A belt of another tier is swapped for the one in
+                        // hand, along the path; the last keeps its way, as
+                        // a drag that ends on a belt joins it.
+                        Some(o)
+                            if o.belt && ground.building(o.id).is_some_and(|b| b != self.belt) =>
+                        {
+                            out.push(Command::Remove { entity: o.id });
+                            out.push(Command::Place {
+                                building: self.belt.clone(),
+                                pos: tile,
+                                dir: if i == last && last > 0 { o.dir } else { dir },
+                                recipe: None,
+                            });
+                        }
                         // Belts the path crosses turn to follow it; a drag that ends on
                         // a belt joins it rather than turning it.
                         Some(o) if o.belt && o.dir != dir && (i < last || last == 0) => {
@@ -516,11 +535,14 @@ mod tests {
     use std::collections::HashMap;
 
     #[derive(Default)]
-    struct Map(HashMap<TilePos, Occupant>);
+    struct Map(HashMap<TilePos, Occupant>, HashMap<EntityId, BuildingId>);
 
     impl Ground for Map {
         fn at(&self, t: TilePos) -> Option<Occupant> {
             self.0.get(&t).copied()
+        }
+        fn building(&self, id: EntityId) -> Option<BuildingId> {
+            self.1.get(&id).cloned()
         }
     }
 
@@ -594,6 +616,48 @@ mod tests {
                 }
             )),
             "the drag ends on belt 8, so it joins it: {cmds:?}"
+        );
+    }
+
+    #[test]
+    fn drawing_a_faster_belt_over_a_slower_one_swaps_it() {
+        let (mut b, mut map) = (Builder::default(), Map::default());
+        // A slow belt at 1 going north, a fast one at 2 already, and a slow
+        // one at 3 where the drag ends.
+        for (x, id, kind) in [(1, 7, "belt"), (2, 8, "fast-belt"), (3, 9, "belt")] {
+            map.0.insert(t(x, 0), belt(id, Dir::North));
+            map.1.insert(EntityId(id), kind.into());
+        }
+        b.set_tool(Tool::Belt);
+        b.belt = "fast-belt".into();
+        b.start(t(0, 0), &map);
+        b.drag(t(3, 0), &map);
+        let cmds = b.end(&map);
+        let place = |x, dir| Command::Place {
+            building: "fast-belt".into(),
+            pos: t(x, 0),
+            dir,
+            recipe: None,
+        };
+        assert_eq!(
+            cmds,
+            vec![
+                place(0, Dir::East),
+                Command::Remove {
+                    entity: EntityId(7)
+                },
+                place(1, Dir::East),
+                // Already the tier in hand: only turned to follow the path.
+                Command::Rotate {
+                    entity: EntityId(8),
+                    dir: Dir::East
+                },
+                // The end of the drag joins the belt, keeping its way.
+                Command::Remove {
+                    entity: EntityId(9)
+                },
+                place(3, Dir::North),
+            ]
         );
     }
 

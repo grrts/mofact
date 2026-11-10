@@ -36,12 +36,16 @@ tip.warehouse = Toque para colocar. Esteiras entram por qualquer lado e os itens
 tip.picker = Toque para colocar de costas para um armazém, baú ou o centro. Toque nele para escolher o que pega e quando.
 tip.place = Toque para colocar. Escolha uma receita ou deixe que ela escolha pelo que chega.
 tip.remove = Toque ou arraste para marcar, solte para remover. Desfazer traz tudo de volta.
+tip.brush = Toque em outros {0} para dar a eles os mesmos ajustes.
+toast.brush_other = Isso não aceita esses ajustes.
 
 button.done = Pronto
 button.undo = ← Desfazer
 button.redo = Refazer →
 button.cancel = Cancelar
 button.rotate = Girar
+button.another = Construir outro
+button.copy_settings = Copiar ajustes
 
 menu.title = Jogo
 menu.new_game_in_slot = Novo jogo no espaço {0}

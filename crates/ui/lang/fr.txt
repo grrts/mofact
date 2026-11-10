@@ -36,12 +36,16 @@ tip.warehouse = Touchez pour placer. Les tapis entrent de tous côtés, les obje
 tip.picker = Touchez pour placer, dos à un entrepôt, un coffre ou au hub. Touchez-le pour choisir ce qu'il prend et quand.
 tip.place = Touchez pour placer. Choisissez une recette, ou laissez-la choisir selon ce qui arrive.
 tip.remove = Touchez ou glissez pour marquer, relâchez pour retirer. Annuler remet tout en place.
+tip.brush = Touchez d'autres {0} pour leur donner les mêmes réglages.
+toast.brush_other = Ce bâtiment n'accepte pas ces réglages.
 
 button.done = OK
 button.undo = ← Annuler
 button.redo = Rétablir →
 button.cancel = Annuler
 button.rotate = Tourner
+button.another = Construire pareil
+button.copy_settings = Copier les réglages
 
 menu.title = Partie
 menu.new_game_in_slot = Nouvelle partie {0}

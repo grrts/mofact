@@ -36,12 +36,16 @@ tip.warehouse = Platzieren. Bänder liefern von jeder Seite, Waren gehen am Pfei
 tip.picker = Platzieren, mit dem Rücken zu Lagerhaus, Kiste oder Hub. Antippen, um zu wählen, was er nimmt und wann.
 tip.place = Tippen zum Platzieren. Wähle ein Rezept oder lass die Maschine nach dem Eingang wählen.
 tip.remove = Tippen oder ziehen zum Markieren, loslassen zum Abreißen. Rückgängig holt alles zurück.
+tip.brush = Tippe auf weitere {0}, um ihnen dieselben Einstellungen zu geben.
+toast.brush_other = Das nimmt diese Einstellungen nicht an.
 
 button.done = Fertig
 button.undo = ← Zurück
 button.redo = Wieder →
 button.cancel = Abbrechen
 button.rotate = Drehen
+button.another = Nochmal bauen
+button.copy_settings = Einstellungen kopieren
 
 menu.title = Spiel
 menu.new_game_in_slot = Neues Spiel in Platz {0}

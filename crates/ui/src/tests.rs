@@ -88,6 +88,7 @@ struct Fixture {
     crash: bool,
     selection: usize,
     blueprints: Vec<mofact_input::Blueprint>,
+    home: Option<[f32; 2]>,
 }
 
 impl Fixture {
@@ -120,6 +121,7 @@ impl Fixture {
             crash: false,
             selection: 0,
             blueprints: Vec::new(),
+            home: None,
         }
     }
 
@@ -142,6 +144,7 @@ impl Fixture {
             crash: self.crash,
             selection: self.selection,
             blueprints: &self.blueprints,
+            home: self.home,
         };
         self.overlay.clear();
         self.hud.draw(&view, &mut self.overlay);
@@ -281,6 +284,38 @@ fn the_inspect_sheet_sets_recipes_turns_and_removes() {
         })]
     );
     assert_eq!(f.hud.selected(), None);
+}
+
+#[test]
+fn the_inspect_sheet_takes_another_like_it_in_hand() {
+    let mut f = Fixture::new();
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.snapshot.entities[1].dir = Dir::South;
+    f.hud.select(Some(EntityId(2)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let another = f.find(&Hit::Pipette(
+        "assembler".into(),
+        Dir::South,
+        Some("gear".into()),
+    ));
+    assert_eq!(
+        f.tap(centre(another)).1,
+        vec![Action::Pipette {
+            building: "assembler".into(),
+            dir: Dir::South,
+            recipe: Some("gear".into()),
+        }]
+    );
+    assert_eq!(f.hud.selected(), None, "the sheet makes way for building");
+
+    // There is only one hub.
+    f.hud.select(Some(EntityId(1)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    assert!(!f
+        .hud
+        .hits
+        .iter()
+        .any(|(_, h)| matches!(h, Hit::Pipette(..))));
 }
 
 #[test]
@@ -845,6 +880,13 @@ fn the_goal_card_shows_how_far_along_and_says_when_a_goal_is_met() {
     let (text, _, _) = f.hud.toast.clone().expect("a toast");
     assert_eq!(text, "Goal met! Next: Have 3 drills");
     assert!(f.hud.hint);
+
+    // Read, the hint folds itself away so the header stays small.
+    f.hud.hint_opened = Instant::now().checked_sub(GOAL_HINT_FOR);
+    f.draw((1080, 2340), 3.0, &Tool::Hand);
+    assert!(!f.hud.hint, "the hint makes room once read");
+    f.tap(centre(f.find(&Hit::Goal)));
+    assert!(f.hud.hint, "and a tap brings it back");
 
     // All done: no card.
     f.snapshot.goal = None;
@@ -2332,4 +2374,104 @@ fn a_picker_sheet_sets_what_it_takes_and_when_it_runs() {
         ));
         f.hud.select(Some(EntityId(8)));
     }
+}
+
+#[test]
+fn a_tools_tip_folds_to_its_name_and_a_tap_opens_it() {
+    let mut f = Fixture::new();
+    let tool = Tool::Place("furnace".into());
+    f.draw((1080, 2340), 3.0, &tool);
+    let open = f.find(&Hit::Tip);
+    let (_, at) = f.hud.tip_seen.clone().expect("the tip names the tool");
+    assert!(at.elapsed() < HINT_FOR, "a new tool's tip is open");
+    // Later, it folds to the tool's name; a tap opens it again.
+    f.hud.tip_seen = Some((tool.clone(), Instant::now().checked_sub(HINT_FOR).unwrap()));
+    f.draw((1080, 2340), 3.0, &tool);
+    let folded = f.find(&Hit::Tip);
+    assert!(
+        folded[2] < open[2] && folded[3] <= open[3],
+        "{folded:?} vs {open:?}"
+    );
+    f.tap(centre(folded));
+    assert!(f.hud.tip_open);
+    f.draw((1080, 2340), 3.0, &tool);
+    assert_eq!(f.find(&Hit::Tip), open);
+    // Another tool starts fresh, folded once it has been read.
+    f.draw((1080, 2340), 3.0, &Tool::Belt);
+    assert!(!f.hud.tip_open);
+}
+
+#[test]
+fn the_inspect_sheet_says_what_a_machine_makes_a_minute() {
+    let mut f = Fixture::new();
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.snapshot.entities[1].state = MachineState::Working;
+    f.hud.select(Some(EntityId(2)));
+    let words = |f: &mut Fixture| {
+        f.overlay.keep_words = true;
+        f.draw((1179, 2556), 3.0, &Tool::Hand);
+        f.overlay.words.clone()
+    };
+    // A gear a second at the assembler's speed.
+    assert!(words(&mut f).iter().any(|w| w == "Gear · 60/min"));
+    // Four levels of a 5% crafting boost make it a fifth faster.
+    f.snapshot.research.levels = vec![("lean-assembly".into(), 4)];
+    assert!(words(&mut f).iter().any(|w| w == "Gear · 72/min"));
+}
+
+#[test]
+fn settings_copied_from_one_machine_go_onto_others_like_it() {
+    let mut f = Fixture::new();
+    f.snapshot.entities[1].recipe = Some("gear".into());
+    f.hud.select(Some(EntityId(2)));
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let brush = Brush::of(&f.content, &f.snapshot.entities[1]).expect("a recipe to copy");
+    let copy = f.find(&Hit::CopySettings(Box::new(brush.clone())));
+    assert_eq!(f.tap(centre(copy)).1, vec![Action::Tool(Tool::Hand)]);
+    assert_eq!(f.hud.brush(), Some(&brush));
+    assert_eq!(f.hud.selected(), None);
+
+    // Another assembler on wire takes gear; one on gear already needs nothing.
+    let mut other = f.snapshot.entities[1].clone();
+    other.id = EntityId(7);
+    other.recipe = Some("wire".into());
+    assert_eq!(
+        brush.commands(&f.content, &other),
+        vec![Command::SetRecipe {
+            entity: EntityId(7),
+            recipe: Some("gear".into())
+        }]
+    );
+    other.recipe = Some("gear".into());
+    assert!(brush.commands(&f.content, &other).is_empty());
+    assert!(brush.matches(&f.content, &other));
+    // A belt, or a furnace that can't make gears, doesn't take it.
+    let belt = f.snapshot.entities[2].clone();
+    assert!(!brush.matches(&f.content, &belt));
+    other.building = "furnace".into();
+    assert!(!brush.matches(&f.content, &other));
+
+    // The tip says what to tap, and Done puts the settings away.
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let done = f.find(&Hit::BrushDone);
+    f.tap(centre(done));
+    assert_eq!(f.hud.brush(), None);
+    // Picking up any other tool does too.
+    f.hud.brush = Some(brush);
+    f.draw((1179, 2556), 3.0, &Tool::Belt);
+    assert_eq!(f.hud.brush(), None);
+}
+
+#[test]
+fn a_button_brings_the_camera_home_once_the_hub_is_out_of_sight() {
+    let mut f = Fixture::new();
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Home(_))));
+    f.home = Some([1.5, 1.5]);
+    f.draw((1179, 2556), 3.0, &Tool::Hand);
+    let home = f.find(&Hit::Home([1.5, 1.5]));
+    assert_eq!(f.tap(centre(home)).1, vec![Action::Focus([1.5, 1.5])]);
+    // With a tool in hand that corner is the rotate button's.
+    f.draw((1179, 2556), 3.0, &Tool::Belt);
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Home(_))));
 }

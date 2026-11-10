@@ -36,12 +36,16 @@ tip.warehouse = Toca para colocar. Las cintas entran por cualquier lado y los ob
 tip.picker = Toca para colocar de espaldas a un almacén, cofre o al centro. Tócalo para elegir qué toma y cuándo.
 tip.place = Toca para colocar. Elige una receta o deja que elija según lo que llega.
 tip.remove = Toca o arrastra para marcar, suelta para quitar. Deshacer lo devuelve todo.
+tip.brush = Toca otros {0} para darles los mismos ajustes.
+toast.brush_other = Eso no admite estos ajustes.
 
 button.done = Listo
 button.undo = ← Deshacer
 button.redo = Rehacer →
 button.cancel = Cancelar
 button.rotate = Girar
+button.another = Construir otro
+button.copy_settings = Copiar ajustes
 
 menu.title = Partida
 menu.new_game_in_slot = Nueva partida en la ranura {0}

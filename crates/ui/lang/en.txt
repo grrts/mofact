@@ -41,6 +41,8 @@ tip.warehouse = Tap to place. Belts in on any side, items out of its arrow. Tap 
 tip.picker = Tap to place with its back to a warehouse, chest or the hub. Tap it to choose what it takes and when.
 tip.place = Tap to place. Pick a recipe, or let it pick from what arrives.
 tip.remove = Tap or drag to mark, lift to remove. Undo brings things back.
+tip.brush = Tap another {0} to give it the same settings.
+toast.brush_other = That doesn't take these settings.
 
 # Buttons used in several places.
 button.done = Done
@@ -48,6 +50,8 @@ button.undo = ← Undo
 button.redo = Redo →
 button.cancel = Cancel
 button.rotate = Rotate
+button.another = Build another
+button.copy_settings = Copy settings
 
 # The game menu.
 menu.title = Game

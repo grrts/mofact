@@ -36,12 +36,16 @@ tip.warehouse = 点击放置。传送带可从任意一面送入，物品从箭�
 tip.picker = 背对存货库、箱子或枢纽点击放置。点它可选择取什么、何时取。
 tip.place = 点击放置。选择配方，或让它根据送来的物品自动选择。
 tip.remove = 点击或拖动标记，松手即拆除。撤销可以恢复。
+tip.brush = 点按其他{0}，给它们相同的设置。
+toast.brush_other = 它不能使用这种设置。
 
 button.done = 完成
 button.undo = ← 撤销
 button.redo = 重做 →
 button.cancel = 取消
 button.rotate = 旋转
+button.another = 再建一个
+button.copy_settings = 复制设置
 
 menu.title = 游戏
 menu.new_game_in_slot = 在存档位 {0} 开始新游戏

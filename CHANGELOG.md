@@ -5,6 +5,29 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Back to the hub:** once the hub is out of sight, a round button with
+  the hub on it shows in the bottom-right corner; one tap brings the
+  camera back.
+- **Belt upgrades:** drawing a belt over belts of another tier swaps them
+  for the one in hand along the path, keeping the line's shape; each old
+  belt is paid back as it goes. Only as many as the stock pays for are
+  swapped, so a line is never left with a gap, and the toast says what
+  is short. One undo puts them all back.
+- **Copy settings:** a machine's sheet has Copy settings when it has any
+  (a recipe, a filter, a warehouse's item and safety stock, a requester's
+  request, a picker's item and condition). Then each tap on another like
+  it gives it the same, until Done; an assembler's recipe also goes onto
+  assemblers of other tiers that can make it.
+- **Rates on the sheet:** a furnace's or assembler's sheet says how many
+  it makes a minute at full speed (such as "Gear · 60/min"), and a
+  drill's how much ore it digs a minute, both with research's boosts.
+- **A smaller header:** a new goal's explanation folds away by itself
+  after 25 seconds, leaving one line with the goal, the count and a "?";
+  tap the card to read it again. A tool's tip folds to its name after 10
+  seconds the same way, and a tap on it opens it again.
+- **Build another:** a building's sheet has a Build another button that
+  puts the same building in hand, facing the same way and on the same
+  recipe, so a second furnace on copper or a matching belt tier is one tap.
 - **What a science pack is for:** tapping a pack such as the engineering
   pack now names the research it still pays for, the ones you can start
   first, at a size that reads, with "+N more" for the rest. It shows on a

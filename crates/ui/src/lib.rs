@@ -49,6 +49,10 @@ const CHIP_H: f32 = 36.0;
 /// A finger that moves further than this (in points) is dragging, not tapping.
 const TAP_SLOP: f32 = 12.0;
 const TOAST_FOR: Duration = Duration::from_millis(2500);
+/// How long a new tool's tip stays open by itself.
+const HINT_FOR: Duration = Duration::from_secs(10);
+/// How long a new goal's hint stays open by itself: time to read it twice.
+const GOAL_HINT_FOR: Duration = Duration::from_secs(25);
 /// A finger held still on the world this long opens the radial build menu.
 pub const LONG_PRESS: Duration = Duration::from_millis(450);
 
@@ -134,6 +138,9 @@ pub struct View<'a> {
     pub selection: usize,
     /// The blueprint library.
     pub blueprints: &'a [mofact_input::Blueprint],
+    /// The hub's middle, in tiles, while it is off screen: a button
+    /// brings the camera back to it.
+    pub home: Option<[f32; 2]>,
 }
 
 /// Whether this is the demo, and how buying the full game is going.
@@ -220,6 +227,22 @@ impl View<'_> {
         levels.iter().find(|(r, _)| r == id).map_or(0, |l| l.1)
     }
 
+    /// How much faster than its base speed repeatable research makes
+    /// machines of a `bonus` work: 1 with none done.
+    fn boost(&self, bonus: Bonus) -> f32 {
+        1.0 + self
+            .content
+            .research
+            .iter()
+            .filter_map(|r| {
+                r.repeat
+                    .filter(|rep| rep.bonus == bonus)
+                    .map(|rep| (r, rep))
+            })
+            .map(|(r, rep)| rep.per_level * self.level(&r.id) as f32)
+            .sum::<f32>()
+    }
+
     /// The unlocked recipes a building can be set to, if it is a crafter.
     fn recipes_for(&self, id: &BuildingId) -> Option<Vec<&RecipeDef>> {
         let BuildingRole::Crafter { categories, .. } = &self.building(id)?.role else {
@@ -246,6 +269,13 @@ pub enum Action {
     Recipe(Option<RecipeId>),
     /// Choose the belt tier the belt tool lays.
     Belt(BuildingId),
+    /// Take a building like one already built in hand: the same kind,
+    /// facing the same way, on the same recipe (`None` for auto).
+    Pipette {
+        building: BuildingId,
+        dir: Dir,
+        recipe: Option<RecipeId>,
+    },
     /// Send a command to the simulation.
     Send(Command),
     /// A tap on the world with the hand tool, at this screen point: inspect what's there.
@@ -316,6 +346,123 @@ pub enum Action {
     ForgetBlueprint(usize),
 }
 
+/// One machine's settings, copied to give to others like it with a tap
+/// each: its recipe, the item it filters or picks, what it keeps back,
+/// asks drones for, and when it runs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Brush {
+    pub building: BuildingId,
+    pub recipe: Option<RecipeId>,
+    pub filter: Option<ItemId>,
+    pub keep: u32,
+    pub request: Option<(ItemId, u32)>,
+    pub when: Option<Condition>,
+}
+
+impl Brush {
+    /// The settings of `e`, if it has any worth copying.
+    pub fn of(content: &Content, e: &EntityView) -> Option<Self> {
+        let def = content.buildings.iter().find(|b| b.id == e.building)?;
+        let has = match &def.role {
+            BuildingRole::Crafter { .. }
+            | BuildingRole::Warehouse { .. }
+            | BuildingRole::RequesterChest { .. }
+            | BuildingRole::Picker { .. } => true,
+            BuildingRole::Splitter { mode } => *mode == SplitMode::Filter,
+            _ => false,
+        };
+        has.then(|| Self {
+            building: e.building.clone(),
+            recipe: e.recipe.clone(),
+            filter: e.filter.clone(),
+            keep: e.keep,
+            request: e.request.clone(),
+            when: e.when.clone(),
+        })
+    }
+
+    /// Whether `e` takes these settings: the same kind of building, or
+    /// a crafter of another tier that can make the recipe.
+    pub fn matches(&self, content: &Content, e: &EntityView) -> bool {
+        if e.building == self.building {
+            return true;
+        }
+        let Some(r) = &self.recipe else {
+            return false;
+        };
+        let category = content
+            .recipes
+            .iter()
+            .find(|d| &d.id == r)
+            .map(|d| &d.category);
+        content.buildings.iter().any(|b| {
+            b.id == e.building
+                && matches!(&b.role, BuildingRole::Crafter { categories, .. }
+                    if category.is_some_and(|c| categories.contains(c)))
+        })
+    }
+
+    /// The commands that give `e` these settings, leaving alone those it
+    /// already has: none if it doesn't take them.
+    pub fn commands(&self, content: &Content, e: &EntityView) -> Vec<Command> {
+        let entity = e.id;
+        let mut out = Vec::new();
+        if !self.matches(content, e) {
+            return out;
+        }
+        if e.building != self.building {
+            if e.recipe != self.recipe {
+                out.push(Command::SetRecipe {
+                    entity,
+                    recipe: self.recipe.clone(),
+                });
+            }
+            return out;
+        }
+        let Some(def) = content.buildings.iter().find(|b| b.id == e.building) else {
+            return out;
+        };
+        match &def.role {
+            BuildingRole::Crafter { .. } if e.recipe != self.recipe => {
+                out.push(Command::SetRecipe {
+                    entity,
+                    recipe: self.recipe.clone(),
+                })
+            }
+            BuildingRole::RequesterChest { .. } if e.request != self.request => {
+                out.push(Command::SetRequest {
+                    entity,
+                    request: self.request.clone(),
+                })
+            }
+            BuildingRole::Splitter { .. }
+            | BuildingRole::Warehouse { .. }
+            | BuildingRole::Picker { .. } => {
+                if e.filter != self.filter {
+                    out.push(Command::SetFilter {
+                        entity,
+                        filter: self.filter.clone(),
+                    });
+                }
+                if matches!(def.role, BuildingRole::Warehouse { .. }) && e.keep != self.keep {
+                    out.push(Command::SetKeep {
+                        entity,
+                        keep: self.keep,
+                    });
+                }
+                if matches!(def.role, BuildingRole::Picker { .. }) && e.when != self.when {
+                    out.push(Command::SetCondition {
+                        entity,
+                        when: self.when.clone(),
+                    });
+                }
+            }
+            _ => {}
+        }
+        out
+    }
+}
+
 /// A control on screen, and what tapping it does.
 #[derive(Clone, Debug, PartialEq)]
 enum Hit {
@@ -336,6 +483,12 @@ enum Hit {
     SetCondition(EntityId, Option<Condition>),
     Turn(EntityId, Dir),
     Remove(EntityId),
+    /// The inspect sheet's "Build another": this building, facing, recipe.
+    Pipette(BuildingId, Dir, Option<RecipeId>),
+    /// The inspect sheet's "Copy settings": take these in hand, and the
+    /// tip's Done that puts them away.
+    CopySettings(Box<Brush>),
+    BrushDone,
     /// The research button: opens or closes the research sheet.
     Research,
     /// Set what labs work on.
@@ -428,6 +581,10 @@ enum Hit {
     TitleLoad,
     TitleSettings,
     TitleBuy,
+    /// The tool's tip: a tap opens its words again, or folds them.
+    Tip,
+    /// The button that brings the camera back to the hub, at this point.
+    Home([f32; 2]),
     /// A panel: it takes the touch, so nothing builds underneath.
     Block,
 }
@@ -587,6 +744,19 @@ pub struct Hud {
     /// Whether the goal card shows how to meet it, and the goal it last showed.
     hint: bool,
     goal_seen: Option<u16>,
+    /// When a new goal's hint opened: it folds itself away after
+    /// [`GOAL_HINT_FOR`], so the header stays small. A tap on the card
+    /// brings it back.
+    hint_opened: Option<Instant>,
+    /// The tool the tip last named and when it was picked: the tip folds
+    /// to the tool's name after [`HINT_FOR`]. Whether a tap opened it again.
+    tip_seen: Option<(Tool, Instant)>,
+    tip_open: bool,
+    /// Settings copied from a machine: taps on others like it give them
+    /// the same, until Done.
+    brush: Option<Brush>,
+    /// How high the inspect sheet may reach: below the goal card.
+    sheet_top: f32,
     /// Orders shipped and missed as last drawn, to toast when one ends.
     orders_seen: Option<(u32, u32)>,
     /// What's stuck, as of the last frame drawn.
@@ -628,6 +798,11 @@ impl Hud {
     }
 
     /// The entity the inspect sheet is showing.
+    /// The settings being pasted onto machines with taps, if any.
+    pub fn brush(&self) -> Option<&Brush> {
+        self.brush.as_ref()
+    }
+
     pub fn selected(&self) -> Option<EntityId> {
         self.selected
     }
@@ -1047,6 +1222,26 @@ impl Hud {
                 self.selected = None;
                 vec![Action::Send(Command::Remove { entity })]
             }
+            Hit::CopySettings(brush) => {
+                self.brush = Some(*brush);
+                self.selected = None;
+                self.more = false;
+                vec![Action::Tool(Tool::Hand)]
+            }
+            Hit::Home(at) => vec![Action::Focus(at)],
+            Hit::BrushDone => {
+                self.brush = None;
+                Vec::new()
+            }
+            Hit::Pipette(building, dir, recipe) => {
+                self.selected = None;
+                self.more = false;
+                vec![Action::Pipette {
+                    building,
+                    dir,
+                    recipe,
+                }]
+            }
             Hit::Research => {
                 self.research = !self.research;
                 self.page = 0;
@@ -1111,6 +1306,11 @@ impl Hud {
             }
             Hit::Goal => {
                 self.hint = !self.hint;
+                self.hint_opened = None;
+                Vec::new()
+            }
+            Hit::Tip => {
+                self.tip_open = !self.tip_open;
                 Vec::new()
             }
             Hit::Sound => {
@@ -1398,6 +1598,10 @@ impl Hud {
 
     /// Lay out and paint the HUD for this frame.
     pub fn draw(&mut self, view: &View, o: &mut Overlay) {
+        // Settings are pasted with the hand; any other tool puts them away.
+        if *view.tool != Tool::Hand {
+            self.brush = None;
+        }
         self.hits.clear();
         o.prefer_chinese(i18n::lang() == i18n::Lang::ZhHans);
         let (w, h) = (view.size.0 as f32, view.size.1 as f32);
@@ -1560,7 +1764,8 @@ impl Hud {
         }
         // With the hand and a goal on screen, the goal card already says
         // what to do next; the general tip would only push the map down.
-        let hand_with_goal = *view.tool == Tool::Hand && view.snapshot.goal.is_some();
+        let hand_with_goal =
+            *view.tool == Tool::Hand && view.snapshot.goal.is_some() && self.brush.is_none();
         if selected.is_none()
             && train.is_none()
             && !self.research
@@ -1639,6 +1844,7 @@ impl Hud {
             } else {
                 width
             };
+            self.sheet_top = top + gap;
             self.sheet(view, o, e, [corner[0] - width, corner[1]], width);
             return;
         }
@@ -1670,6 +1876,27 @@ impl Hud {
             );
             self.hits.push((r, Hit::Rotate));
             right = r[0] - gap;
+        }
+        // Lost out on the land: one tap brings the camera home.
+        if let (Tool::Hand, Some(home), false) = (view.tool, view.home, self.map) {
+            let d = 52.0 * u;
+            let r = [right - d, corner[1] - d, d, d];
+            o.panel([r[0], r[1]], [d, d], d / 2.0, PANEL);
+            let hub = view
+                .content
+                .buildings
+                .iter()
+                .find(|b| b.role == BuildingRole::Hub);
+            if let Some((sprite, t)) = hub.and_then(|b| view.look.building(&b.id)) {
+                let icon = 30.0 * u;
+                o.icon(
+                    sprite,
+                    [r[0] + (d - icon) / 2.0, r[1] + (d - icon) / 2.0],
+                    icon,
+                    t,
+                );
+            }
+            self.hits.push((r, Hit::Home(home)));
         }
         if let Some(recipes) = placing.and_then(|b| view.recipes_for(b)) {
             self.recipe_picker(
@@ -1820,6 +2047,15 @@ impl Hud {
     /// will do and how to stop.
     fn tip(&mut self, view: &View, o: &mut Overlay, at: [f32; 2], width: f32) {
         let u = self.unit;
+        // Pasting settings: say so, with a Done to stop.
+        if let Some(b) = &self.brush {
+            let name = view
+                .building(&b.building)
+                .map_or(b.building.as_str(), |d| d.name.as_str());
+            let text = trf("tip.brush", &[&i18n::in_sentence(name)]);
+            self.done_chip(o, &text, at, width, TEXT, Hit::Block, Hit::BrushDone);
+            return;
+        }
         let Some(slot) = self.current.filter(|_| *view.tool != Tool::Hand) else {
             let r = chip(o, tip(view.tool), at, width, u, TEXT);
             self.hits.push((r, Hit::Block));
@@ -1831,22 +2067,50 @@ impl Hud {
                 .map_or(tr("tip.build"), |d| d.name.as_str()),
             _ => tr(TOOLS[slot].0),
         };
-        let what = match view.tool {
-            Tool::Select if view.selection > 0 => trf("tip.selected", &[&view.selection]),
-            _ => tip(view.tool).to_string(),
+        // A new tool's tip stays open a while, then folds to its name.
+        if self.tip_seen.as_ref().is_none_or(|(t, _)| t != view.tool) {
+            self.tip_seen = Some((view.tool.clone(), Instant::now()));
+            self.tip_open = false;
+        }
+        let fresh = self
+            .tip_seen
+            .as_ref()
+            .is_some_and(|(_, at)| at.elapsed() < HINT_FOR);
+        let text = match view.tool {
+            Tool::Select if view.selection > 0 => trf(
+                "tip.named",
+                &[&name, &trf("tip.selected", &[&view.selection])],
+            ),
+            _ if fresh || self.tip_open => trf("tip.named", &[&name, &tip(view.tool)]),
+            _ => format!("{name} ?"),
         };
-        let text = trf("tip.named", &[&name, &what]);
         let ink = if *view.tool == Tool::Remove {
             palette::STARVE
         } else {
             TEXT
         };
+        self.done_chip(o, &text, at, width, ink, Hit::Tip, Hit::Done);
+    }
+
+    /// A tip card with a Done button beside it.
+    #[allow(clippy::too_many_arguments)]
+    fn done_chip(
+        &mut self,
+        o: &mut Overlay,
+        text: &str,
+        at: [f32; 2],
+        width: f32,
+        ink: Rgba,
+        card_hit: Hit,
+        done_hit: Hit,
+    ) {
+        let u = self.unit;
         let px = 15.0 * u;
         let done = tr("button.done");
         let bw = o.measure(done, px) + 28.0 * u;
         let gap = 8.0 * u;
-        let card = chip(o, &text, at, width - bw - gap, u, ink);
-        self.hits.push((card, Hit::Block));
+        let card = chip(o, text, at, width - bw - gap, u, ink);
+        self.hits.push((card, card_hit));
         let bottom = card[1] + card[3];
         let h = (bottom - at[1]).max(40.0 * u).min(52.0 * u);
         let r = [at[0] + width - bw, at[1], bw, h];
@@ -1857,7 +2121,7 @@ impl Hud {
             px,
             TEXT,
         );
-        self.hits.push((r, Hit::Done));
+        self.hits.push((r, done_hit));
     }
 
     /// Undo and redo buttons in the bottom-left corner of the free area, when
@@ -2857,6 +3121,14 @@ impl Hud {
             }
             self.goal_seen = Some(g.index);
             self.hint = true;
+            self.hint_opened = Some(Instant::now());
+        }
+        // Once read, the hint makes room for the factory.
+        if let Some(at) = self.hint_opened {
+            if at.elapsed() >= GOAL_HINT_FOR {
+                self.hint = false;
+                self.hint_opened = None;
+            }
         }
         let h = 44.0 * u;
         let px = 14.0 * u;
@@ -2866,7 +3138,9 @@ impl Hud {
             "goal.progress",
             &[&(g.index + 1), &view.content.goals.len(), &def.title],
         );
-        let px = fit(o, &text, px, width - 40.0 * u - cw);
+        // Folded, a small "?" says a tap shows how.
+        let more = if self.hint { 0.0 } else { 26.0 * u };
+        let px = fit(o, &text, px, width - 40.0 * u - cw - more);
         // The hint sits inside the card, so goal and hint read as one thing.
         let hint_px = 14.0 * u;
         let line = 20.0 * u;
@@ -2876,7 +3150,7 @@ impl Hud {
             Vec::new()
         };
         let w = if lines.is_empty() {
-            (o.measure(&text, px) + cw + 40.0 * u).min(width)
+            (o.measure(&text, px) + cw + 40.0 * u + more).min(width)
         } else {
             width
         };
@@ -2884,8 +3158,26 @@ impl Hud {
         o.panel(at, [w, total], 10.0 * u, RAISED);
         let base = at[1] + (h - 6.0 * u + o.cap_height(px)) / 2.0;
         o.text(&text, [at[0] + 14.0 * u, base], px, palette::ACCENT);
-        o.text(&count, [at[0] + w - 14.0 * u - cw, base], 14.0 * u, MUTED);
-        let bar = w - 28.0 * u;
+        o.text(
+            &count,
+            [at[0] + w - 14.0 * u - cw - more, base],
+            14.0 * u,
+            MUTED,
+        );
+        if more > 0.0 {
+            let d = 18.0 * u;
+            let c = [at[0] + w - 10.0 * u - d, at[1] + (h - 6.0 * u - d) / 2.0];
+            o.panel(c, [d, d], d / 2.0, PANEL);
+            let qpx = 12.0 * u;
+            let qw = o.measure("?", qpx);
+            o.text(
+                "?",
+                [c[0] + (d - qw) / 2.0, c[1] + (d + o.cap_height(qpx)) / 2.0],
+                qpx,
+                MUTED,
+            );
+        }
+        let bar = w - 28.0 * u - more;
         let done = g.have as f32 / g.need.max(1) as f32;
         o.panel(
             [at[0] + 14.0 * u, at[1] + h - 9.0 * u],
@@ -4343,6 +4635,11 @@ impl Hud {
         let pad = 16.0 * u;
         let def = view.building(&e.building);
         let hub = def.is_some_and(|d| d.role == BuildingRole::Hub);
+        // Whether another like it can be built: anything open but the hub
+        // and a megaproject, of which there is one.
+        let anew = def.is_some_and(|d| {
+            !matches!(d.role, BuildingRole::Hub | BuildingRole::Megaproject { .. })
+        }) && view.building_open(&e.building);
         // Belts, splitters and underground belts only carry: nothing to show
         // but the controls. Splitters of other modes say what they do.
         let belt = def.is_some_and(|d| {
@@ -4409,6 +4706,16 @@ impl Hud {
         let recipes = view.recipes_for(&e.building);
         let recipe = e.recipe.as_ref().and_then(|r| view.recipe_def(r));
 
+        // Settings to copy onto others like it, and how many rows the
+        // buttons take: two of two once there are four.
+        let brush = Brush::of(view.content, e);
+        let buttons = if hub {
+            0
+        } else {
+            2 + anew as usize + brush.is_some() as usize
+        };
+        let rows = if buttons > 3 { 2.0 } else { 1.0 };
+
         // Measure the sheet from its rows, bottom up.
         let row = 22.0 * u;
         let set = |id| Hit::SetRecipe(e.id, id);
@@ -4440,8 +4747,15 @@ impl Hud {
             + 30.0 * u // title
             + if belt { 0.0 } else { row + 8.0 * u + 6.0 * u } // recipe line and progress
             + pill_rows * 46.0 * u
-            + 44.0 * u // buttons
+            + 44.0 * u + (rows - 1.0) * 48.0 * u // buttons
             + pad;
+        // Two rows of buttons only where the sheet still fits on screen;
+        // on a short one Copy settings makes way, as four would not read.
+        let (brush, height) = if rows > 1.0 && at[1] - height < self.sheet_top {
+            (None, height - 48.0 * u)
+        } else {
+            (brush, height)
+        };
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
@@ -4617,16 +4931,22 @@ impl Hud {
                 stacks(&mut self.hits, o, &mut x, &rd.inputs);
                 x += o.text("→", [x, base], px, MUTED) + 8.0 * u;
                 stacks(&mut self.hits, o, &mut x, &rd.outputs);
-                o.text(
-                    &format!(
-                        "{} · {}",
-                        rd.name,
-                        trf("unit.seconds", &[&format!("{:.1}", rd.seconds)])
-                    ),
-                    [x + 4.0 * u, base],
-                    px,
-                    MUTED,
+                // What it makes a minute at full speed: the number to
+                // match belts and machines by.
+                let speed = match def.map(|d| &d.role) {
+                    Some(BuildingRole::Crafter { speed, .. }) => *speed,
+                    _ => 1.0,
+                } * view.boost(Bonus::Crafting);
+                let made = rd.outputs.first().map_or(0, |st| st.count) as f32;
+                let rate = made * speed * 60.0 / rd.seconds.max(1e-3);
+                let text = format!(
+                    "{} · {}",
+                    rd.name,
+                    trf("unit.per_min", &[&per_minute(rate)])
                 );
+                let room = r[0] + r[2] - pad - (x + 4.0 * u);
+                let px = fit(o, &text, px, room.max(1.0));
+                o.text(&text, [x + 4.0 * u, base], px, MUTED);
             } else if recipes.is_some() {
                 let text = tr("inspect.recipe_any");
                 let px = fit(o, text, px, r[2] - 2.0 * pad);
@@ -4721,16 +5041,36 @@ impl Hud {
             y += band;
         }
 
-        // Rotate and remove.
+        // Rotate, build another like it, and remove.
         if !hub {
             let bh = 40.0 * u;
-            let bw = (r[2] - 2.0 * pad - 8.0 * u) / 2.0;
-            let buttons = [
-                (tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT),
-                (tr("tool.remove"), Hit::Remove(e.id), palette::STARVE),
-            ];
+            let mut buttons = vec![(tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT)];
+            if anew {
+                buttons.push((
+                    tr("button.another"),
+                    Hit::Pipette(e.building.clone(), e.dir, e.recipe.clone()),
+                    TEXT,
+                ));
+            }
+            if let Some(b) = brush {
+                buttons.push((
+                    tr("button.copy_settings"),
+                    Hit::CopySettings(Box::new(b)),
+                    TEXT,
+                ));
+            }
+            buttons.push((tr("tool.remove"), Hit::Remove(e.id), palette::STARVE));
+            let per_row = if buttons.len() > 3 { 2 } else { buttons.len() };
+            let n = per_row as f32;
+            let bw = (r[2] - 2.0 * pad - 8.0 * u * (n - 1.0)) / n;
             for (i, (label, hit, ink)) in buttons.into_iter().enumerate() {
-                let b = [left + i as f32 * (bw + 8.0 * u), y, bw, bh];
+                let (row, col) = (i / per_row, i % per_row);
+                let b = [
+                    left + col as f32 * (bw + 8.0 * u),
+                    y + row as f32 * 48.0 * u,
+                    bw,
+                    bh,
+                ];
                 o.panel([b[0], b[1]], [bw, bh], 10.0 * u, RAISED);
                 let px = fit(o, label, 15.0 * u, bw - 12.0 * u);
                 let lw = o.measure(label, px);
@@ -4907,6 +5247,26 @@ fn picker_line(view: &View, e: &EntityView) -> String {
 
 /// One line on what a building does, for the inspect sheet, when it has no
 /// recipe, fluid or power figures to show instead.
+/// How many ore a drill digs a minute, with research's boost, as "30/min".
+fn mined_per_minute(view: &View, def: Option<&BuildingDef>) -> String {
+    let rate = match def.map(|d| &d.role) {
+        Some(BuildingRole::Miner { seconds_per_ore }) => {
+            60.0 / seconds_per_ore.max(1e-3) * view.boost(Bonus::Mining)
+        }
+        _ => 0.0,
+    };
+    trf("unit.per_min", &[&per_minute(rate)])
+}
+
+/// A rate a minute, as few figures as read well: 7.5, 30, 120.
+fn per_minute(rate: f32) -> String {
+    if rate < 10.0 && (rate - rate.round()).abs() > 0.05 {
+        format!("{rate:.1}")
+    } else {
+        format!("{:.0}", rate)
+    }
+}
+
 fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
     let name = |id: &mofact_core::ids::ItemId| {
         view.content
@@ -4918,8 +5278,16 @@ fn about(view: &View, def: Option<&BuildingDef>, e: &EntityView) -> String {
     match def.map(|d| &d.role) {
         Some(BuildingRole::Miner { .. }) => match (&e.ore, e.ore_left) {
             (_, Some(0)) => tr("inspect.mined_out").into(),
-            (Some(ore), Some(left)) => trf("inspect.mines_left", &[&name(ore), &left]),
-            (Some(ore), None) => trf("inspect.mines", &[&name(ore)]),
+            (Some(ore), Some(left)) => format!(
+                "{} · {}",
+                trf("inspect.mines_left", &[&name(ore), &left]),
+                mined_per_minute(view, def)
+            ),
+            (Some(ore), None) => format!(
+                "{} · {}",
+                trf("inspect.mines", &[&name(ore)]),
+                mined_per_minute(view, def)
+            ),
             (None, _) => tr("inspect.drill").into(),
         },
         Some(BuildingRole::Lab { .. }) => {
