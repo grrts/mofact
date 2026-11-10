@@ -5,6 +5,10 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Merger:** a new belt piece after Logistics, for feeding items onto a
+  belt one at a time. Belts coming in from behind and both sides take turns,
+  one item each, onto the belt ahead, so a side line never waits for a gap in
+  a busy main line. It is the splitter the other way round.
 - **Warehouse safety stock:** tap a warehouse and pick how many of each
   item it keeps back (none, 50, 100, 200 or 500). Its arrow and drones
   only take what it holds above that, so a buffer never runs dry.

@@ -936,8 +936,11 @@ pub fn turbine(c: &mut Canvas, z: f32, fine: bool, t: f32) {
 /// with arrows for its ways out. The plain one sends items north and
 /// south; a three-way one east too; a priority one has a bold arrow east
 /// and small ones to the sides for the overflow; a filter one a mesh
-/// before its arrow east.
+/// before its arrow east. A merger is drawn by [`merger`].
 pub fn splitter(c: &mut Canvas, z: f32, fine: bool, mode: SplitMode) {
+    if mode == SplitMode::Merge {
+        return merger(c, z, fine);
+    }
     let s = z;
     // The intake: the belt's western half.
     c.fill_rect(0.0, s * 0.12, s * 0.5, s * 0.76, pal::BELT);
@@ -953,6 +956,7 @@ pub fn splitter(c: &mut Canvas, z: f32, fine: bool, mode: SplitMode) {
         SplitMode::ThreeWay => pal::SPLIT[0],
         SplitMode::Priority => pal::SPLIT[1],
         SplitMode::Filter => pal::SPLIT[2],
+        SplitMode::Merge => pal::SPLIT[3],
     };
     fill(c, rr(s * 0.34, s * 0.1, s * 0.54, s * 0.8, s * 0.1), body);
     let w = (z * 0.05).max(1.0);
@@ -998,10 +1002,48 @@ pub fn splitter(c: &mut Canvas, z: f32, fine: bool, mode: SplitMode) {
             }
             arrow(c, s * 0.76, s * 0.5, 0, s * 0.26, pal::ACCENT);
         }
+        SplitMode::Merge => {}
     }
     if fine {
         for (bx, by) in [(0.4, 0.16), (0.82, 0.16), (0.4, 0.84), (0.82, 0.84)] {
             bolt(c, bx * s, by * s, s * 0.025);
+        }
+    }
+}
+
+/// A merger facing east: belt stubs in from the west, north and south
+/// meet in a small housing, and a belt runs on out east under one bold
+/// arrow, so it reads as a belt piece the others feed into.
+fn merger(c: &mut Canvas, z: f32, fine: bool) {
+    let s = z;
+    // The way through, west to east, and the stubs from the sides.
+    c.fill_rect(0.0, s * 0.12, s, s * 0.76, pal::BELT);
+    c.fill_rect(0.0, s * 0.1, s, s * 0.08, pal::BELT_RAIL);
+    c.fill_rect(0.0, s * 0.82, s, s * 0.08, pal::BELT_RAIL);
+    c.fill_rect(s * 0.24, 0.0, s * 0.4, s, pal::BELT);
+    c.fill_rect(s * 0.2, 0.0, s * 0.06, s * 0.2, pal::BELT_RAIL);
+    c.fill_rect(s * 0.62, 0.0, s * 0.06, s * 0.2, pal::BELT_RAIL);
+    c.fill_rect(s * 0.2, s * 0.8, s * 0.06, s * 0.2, pal::BELT_RAIL);
+    c.fill_rect(s * 0.62, s * 0.8, s * 0.06, s * 0.2, pal::BELT_RAIL);
+    // Small arrows on the three ways in.
+    arrow(c, s * 0.44, s * 0.06, 1, s * 0.2, pal::INK);
+    arrow(c, s * 0.44, s * 0.94, 3, s * 0.2, pal::INK);
+    arrow(c, s * 0.06, s * 0.5, 0, s * 0.2, pal::INK);
+    // The housing where they meet, and the way out.
+    fill(
+        c,
+        rr(s * 0.22, s * 0.24, s * 0.44, s * 0.52, s * 0.1),
+        pal::MACHINE_EDGE,
+    );
+    fill(
+        c,
+        rr(s * 0.26, s * 0.28, s * 0.36, s * 0.44, s * 0.08),
+        pal::SPLIT[3],
+    );
+    arrow(c, s * 0.5, s * 0.5, 0, s * 0.44, pal::ACCENT);
+    if fine {
+        for (bx, by) in [(0.3, 0.32), (0.58, 0.32), (0.3, 0.68), (0.58, 0.68)] {
+            bolt(c, bx * s, by * s, s * 0.022);
         }
     }
 }

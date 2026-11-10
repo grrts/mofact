@@ -1787,10 +1787,14 @@ impl Sim {
                 }
             }
             State::Splitter { held, next, filter } => {
-                let Some(item) = *held else {
+                let Role::Splitter { mode } = self.tables.buildings[e.kind as usize].role else {
                     return;
                 };
-                let Role::Splitter { mode } = self.tables.buildings[e.kind as usize].role else {
+                if mode == SplitMode::Merge {
+                    self.step_merger(e, held, next);
+                    return;
+                }
+                let Some(item) = *held else {
                     return;
                 };
                 let r = e.dir.rotate_cw();
@@ -1803,6 +1807,7 @@ impl Sim {
                     SplitMode::Priority => (Some(e.dir), &[l, r]),
                     SplitMode::Filter if *filter == Some(item) => (Some(e.dir), &[]),
                     SplitMode::Filter => (None, &[l, r]),
+                    SplitMode::Merge => (None, &[]),
                 };
                 if let Some(d) = first {
                     if self.push(e.pos.step(d), item, d) {
@@ -2212,12 +2217,73 @@ impl Sim {
         })
     }
 
+    /// A merger's tick: with nothing held, it takes the front item of the
+    /// first belt pointed into it that has one waiting, trying behind,
+    /// left and right in turn from where it left off, so every line feeding
+    /// it gets its go; then it puts what it holds on the belt ahead.
+    fn step_merger(&mut self, e: &Entity, held: &mut Option<Item>, next: &mut u8) {
+        if held.is_none() {
+            let r = e.dir.rotate_cw();
+            // The sides it takes from, by the way an item comes in going.
+            let ins = [e.dir, r, r.opposite()];
+            for k in 0..ins.len() {
+                let i = (usize::from(*next) + k) % ins.len();
+                let going = ins[i];
+                let Some(id) = self.entities.at(e.pos.step(going.opposite())) else {
+                    continue;
+                };
+                let from = *self.entities.get(id).expect("indexed");
+                if from.dir != going {
+                    continue;
+                }
+                if let Some(State::Belt { items, .. }) = self.states[id.0 as usize].as_mut() {
+                    if items.first().is_some_and(|&(_, p)| p >= UNIT) {
+                        *held = Some(items.remove(0).0);
+                        *next = ((i + 1) % ins.len()) as u8;
+                        break;
+                    }
+                }
+            }
+        }
+        if let Some(item) = *held {
+            if self.push(e.pos.step(e.dir), item, e.dir) {
+                *held = None;
+            }
+        }
+    }
+
     /// Hand `item`, travelling in `dir`, to whatever is on `tile`.
     fn push(&mut self, tile: TilePos, item: Item, dir: Dir) -> bool {
         let Some(id) = self.entities.at(tile) else {
             return false;
         };
         let target = *self.entities.get(id).expect("indexed");
+        // A merger takes what belts bring it in its own tick, in turn (see
+        // `step_merger`); anything else may hand it an item from behind or
+        // the side whenever it is empty.
+        let merger = matches!(
+            self.tables.buildings[target.kind as usize].role,
+            Role::Splitter {
+                mode: SplitMode::Merge
+            }
+        );
+        if merger {
+            // By its role: a belt handing items on is mid-step, its state out.
+            let belt = self
+                .entities
+                .at(tile.step(dir.opposite()))
+                .and_then(|b| self.entities.get(b))
+                .is_some_and(|x| {
+                    x.dir == dir
+                        && matches!(
+                            self.tables.buildings[x.kind as usize].role,
+                            Role::Belt { .. }
+                        )
+                });
+            if belt || dir == target.dir.opposite() {
+                return false;
+            }
+        }
         let Some(state) = self.states[id.0 as usize].as_mut() else {
             return false;
         };
@@ -2273,8 +2339,8 @@ impl Sim {
                 _ => false,
             },
             State::Splitter { held, .. } => {
-                // Only from behind.
-                if dir != target.dir || held.is_some() {
+                // Only from behind; a merger from the sides too.
+                if (dir != target.dir && !merger) || held.is_some() {
                     return false;
                 }
                 *held = Some(item);

@@ -912,6 +912,9 @@ impl Look {
             Kind::Belt => Some(Conveyor::Belt),
             Kind::Splitter => Some(match self.split_mode.get(building) {
                 None | Some(SplitMode::Even) => Conveyor::Splitter,
+                // A merger joins up like a belt: in from behind and the
+                // sides, out ahead.
+                Some(SplitMode::Merge) => Conveyor::Belt,
                 Some(_) => Conveyor::SplitterAhead,
             }),
             Kind::Underground => Some(Conveyor::Underground),
