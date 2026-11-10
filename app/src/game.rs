@@ -72,6 +72,9 @@ pub struct Game {
     /// pressed anything: frames are paced from these (T66).
     drawn: Option<Instant>,
     touched: Instant,
+    /// Whether the app is in the background, where the factory stops
+    /// whether or not the player paused it.
+    background: bool,
     /// What the game menu asked of the save slots, for [`Game::serve`],
     /// and the slots as it lists them.
     requests: Vec<Request>,
@@ -161,6 +164,7 @@ impl Game {
             before_map: None,
             drawn: None,
             touched: Instant::now(),
+            background: false,
             // List the slots at once, for the start menu's new game.
             requests: vec![Request::Refresh],
             slots: Vec::new(),
@@ -847,6 +851,11 @@ impl Game {
             "t" => return self.hud.toggle_research(),
             "7" | "x" => Tool::Remove,
             "r" => return self.controls.builder.rotate(),
+            " " | "space" => {
+                let paused = !self.hud.paused();
+                self.hud.set_paused(paused);
+                return self.sync_pause();
+            }
             "m" => {
                 let muted = !self.hud.muted();
                 self.hud.set_muted(muted);
@@ -869,6 +878,19 @@ impl Game {
             self.hud.select(None);
         }
         self.controls.builder.set_tool(tool);
+    }
+
+    /// The app went to the background (true) or came back: the factory
+    /// stops there, and on return carries on unless the player paused it.
+    pub fn set_background(&mut self, background: bool) {
+        self.background = background;
+        self.sync_pause();
+    }
+
+    /// Stop the simulation while the player has it paused or the app is
+    /// in the background.
+    fn sync_pause(&self) {
+        self.sim.set_paused(self.background || self.hud.paused());
     }
 
     /// Take a building like one already built in hand: belts with the
@@ -1156,6 +1178,7 @@ impl Game {
             }
             // A problem from the list: look at it, with the hand, so its
             // inspect sheet (opened by the HUD) says what's wrong.
+            Action::Pause(_) => self.sync_pause(),
             Action::Mute(muted) => self.sound.set_muted(muted),
             Action::LowPower(on) => self.scene.low_power = on,
             Action::ColourBlind(on) => self.use_colour_blind(on),
@@ -1391,6 +1414,8 @@ impl Game {
         let camera = framing(&self.content, &sim);
         sim.set_demo(self.purchase.as_ref().and_then(Purchase::demo));
         self.sim = SimHandle::spawn(sim);
+        // Another game starts running, whatever the last was doing.
+        self.hud.set_paused(false);
         self.built = Built::new(&self.content);
         self.built.world = Some(self.ore.gen());
         self.scene.forget_terrain();

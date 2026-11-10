@@ -287,6 +287,8 @@ pub enum Action {
     Redo,
     /// Centre the camera on this point, in tiles: a problem's whereabouts.
     Focus([f32; 2]),
+    /// Stop the factory (true) or set it going again.
+    Pause(bool),
     /// Turn the game's sound off (true) or back on.
     Mute(bool),
     /// Open the world map (true): zoom far out. Or close it and zoom back in.
@@ -583,6 +585,9 @@ enum Hit {
     TitleBuy,
     /// The tool's tip: a tap opens its words again, or folds them.
     Tip,
+    /// Pause the factory, or set it going again: the game menu's button
+    /// and the "Paused" chip.
+    Pause,
     /// The button that brings the camera back to the hub, at this point.
     Home([f32; 2]),
     /// A panel: it takes the touch, so nothing builds underneath.
@@ -755,6 +760,8 @@ pub struct Hud {
     /// Settings copied from a machine: taps on others like it give them
     /// the same, until Done.
     brush: Option<Brush>,
+    /// Whether the player paused the factory.
+    paused: bool,
     /// How high the inspect sheet may reach: below the goal card.
     sheet_top: f32,
     /// Orders shipped and missed as last drawn, to toast when one ends.
@@ -798,6 +805,16 @@ impl Hud {
     }
 
     /// The entity the inspect sheet is showing.
+    /// Whether the player paused the factory.
+    pub fn paused(&self) -> bool {
+        self.paused
+    }
+
+    /// Pause the factory or set it going, as the menu's button does.
+    pub fn set_paused(&mut self, paused: bool) {
+        self.paused = paused;
+    }
+
     /// The settings being pasted onto machines with taps, if any.
     pub fn brush(&self) -> Option<&Brush> {
         self.brush.as_ref()
@@ -1229,6 +1246,13 @@ impl Hud {
                 vec![Action::Tool(Tool::Hand)]
             }
             Hit::Home(at) => vec![Action::Focus(at)],
+            Hit::Pause => {
+                self.paused = !self.paused;
+                if self.paused {
+                    self.menu = false;
+                }
+                vec![Action::Pause(self.paused)]
+            }
             Hit::BrushDone => {
                 self.brush = None;
                 Vec::new()
@@ -1761,6 +1785,19 @@ impl Hud {
             } else {
                 self.toast = None;
             }
+        }
+        // Paused: say so, where a tap sets the factory going again.
+        if self.paused && !self.menu && !self.settings && !self.map {
+            let r = chip(
+                o,
+                tr("toast.paused"),
+                [ml, tip_y],
+                column,
+                u,
+                palette::ACCENT,
+            );
+            self.hits.push((r, Hit::Pause));
+            tip_y = r[1] + r[3] + gap;
         }
         // With the hand and a goal on screen, the goal card already says
         // what to do next; the general tip would only push the map down.
@@ -2734,15 +2771,30 @@ impl Hud {
             }
             y += row;
         }
-        // The settings have a sheet of their own.
+        // The settings have a sheet of their own; beside them, pause.
+        let half = (inner - gap) / 2.0;
         self.button(
             o,
-            [left, y, inner, bh],
+            [left, y, half, bh],
             tr("title.settings"),
             15.0 * u,
             RAISED,
             TEXT,
             Hit::Settings,
+        );
+        let (label, fill, ink) = if self.paused {
+            (tr("menu.resume"), palette::ACCENT, PANEL)
+        } else {
+            (tr("menu.pause"), RAISED, TEXT)
+        };
+        self.button(
+            o,
+            [left + half + gap, y, half, bh],
+            label,
+            15.0 * u,
+            fill,
+            ink,
+            Hit::Pause,
         );
         if view.crash {
             self.button(
@@ -4750,12 +4802,10 @@ impl Hud {
             + 44.0 * u + (rows - 1.0) * 48.0 * u // buttons
             + pad;
         // Two rows of buttons only where the sheet still fits on screen;
-        // on a short one Copy settings makes way, as four would not read.
-        let (brush, height) = if rows > 1.0 && at[1] - height < self.sheet_top {
-            (None, height - 48.0 * u)
-        } else {
-            (brush, height)
-        };
+        // on a short one Rotate moves up beside the close button as a
+        // round arrow, and the other three keep one row.
+        let compact = rows > 1.0 && at[1] - height < self.sheet_top;
+        let height = if compact { height - 48.0 * u } else { height };
         let r = [at[0], at[1] - height, width, height];
         o.panel([r[0], r[1]], [r[2], r[3]], 14.0 * u, PANEL);
         self.hits.push((r, Hit::Block));
@@ -4777,6 +4827,24 @@ impl Hud {
             TEXT,
         );
         self.hits.push((c, Hit::Close));
+        // Rotate as a round arrow, when the buttons below are short of room.
+        let c = if compact {
+            let t = [c[0] - 12.0 * u - close, c[1], close, close];
+            o.panel([t[0], t[1]], [close, close], close / 2.0, RAISED);
+            let icon = 22.0 * u;
+            let turns = Dir::ALL.iter().position(|&d| d == e.dir).unwrap_or(0) as u32;
+            o.icon_turned(
+                look::BELT,
+                [t[0] + (close - icon) / 2.0, t[1] + (close - icon) / 2.0],
+                icon,
+                TEXT,
+                turns,
+            );
+            self.hits.push((t, Hit::Turn(e.id, e.dir)));
+            t
+        } else {
+            c
+        };
         if !belt && !splits && !hub && !wired && !plumbing && mega.is_none() {
             let (label, color) = state(e.state, view.look);
             let spx = 12.0 * u;
@@ -5044,7 +5112,10 @@ impl Hud {
         // Rotate, build another like it, and remove.
         if !hub {
             let bh = 40.0 * u;
-            let mut buttons = vec![(tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT)];
+            let mut buttons = Vec::new();
+            if !compact {
+                buttons.push((tr("button.rotate"), Hit::Turn(e.id, e.dir), TEXT));
+            }
             if anew {
                 buttons.push((
                     tr("button.another"),
