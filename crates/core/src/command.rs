@@ -67,6 +67,9 @@ pub enum Command {
         entity: EntityId,
         filter: Option<ItemId>,
     },
+    /// A warehouse's safety stock: it hands out, and drones take, each
+    /// item only while it holds more than `keep` of it. 0 lets all go.
+    SetKeep { entity: EntityId, keep: u32 },
 }
 
 /// One stop on a train's schedule: the train stop at `at`, where it

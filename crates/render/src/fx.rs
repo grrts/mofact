@@ -230,6 +230,7 @@ mod tests {
             request: None,
             filter: None,
             held: Vec::new(),
+            keep: 0,
             id: EntityId(id),
             building: building.into(),
             pos: TilePos::new(x, y),

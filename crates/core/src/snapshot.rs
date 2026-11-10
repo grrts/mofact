@@ -64,6 +64,9 @@ pub struct EntityView {
     /// player's stock: only the hub's is.
     #[serde(default)]
     pub held: Vec<(ItemId, u32)>,
+    /// For a warehouse, how many of each item it keeps back: its safety stock.
+    #[serde(default)]
+    pub keep: u32,
 }
 
 /// The fluid in a pipe segment.
