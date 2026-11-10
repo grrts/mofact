@@ -1,0 +1,32 @@
+// An iron line from the west and a copper line from the north take turns
+// through a merger onto one belt into the hub. One drill and furnace per
+// line (1.2 s each): 50 of each a minute, well under the belt's 350, so
+// both get through at full speed.
+(
+    name: "Merger",
+    stock: [("iron-plate", 100), ("gear", 10)],
+    ore: [(19, 27, "iron-ore"), (19, 24, "copper-ore")],
+    research: ["logistics"],
+    build: [
+        At(building: "hub", x: 26, y: 26, dir: East),
+        // Iron along y = 27 into the merger's back.
+        At(building: "drill", x: 19, y: 27, dir: East),
+        Belts(x: 20, y: 27, len: 2, dir: East),
+        At(building: "furnace", x: 22, y: 27, dir: East),
+        Belts(x: 23, y: 27, len: 1, dir: East),
+        // Copper along y = 24, then down into the merger's side.
+        At(building: "drill", x: 19, y: 24, dir: East),
+        Belts(x: 20, y: 24, len: 2, dir: East),
+        At(building: "furnace", x: 22, y: 24, dir: East),
+        Belts(x: 23, y: 24, len: 1, dir: East),
+        Belts(x: 24, y: 24, len: 3, dir: South),
+        At(building: "merger", x: 24, y: 27, dir: East),
+        Belts(x: 25, y: 27, len: 1, dir: East),
+    ],
+    warmup_seconds: 60,
+    measure_seconds: 180,
+    expect: [
+        (item: "copper-plate", per_minute: 50.0, tolerance: 1.0),
+        (item: "iron-plate", per_minute: 50.0, tolerance: 1.0),
+    ],
+)

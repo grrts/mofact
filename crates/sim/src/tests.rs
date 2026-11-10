@@ -936,6 +936,92 @@ fn a_priority_splitter_fills_ahead_first_then_overflows() {
     );
 }
 
+/// A merger on (3, 0) facing east, with three-tile lines into it from
+/// the west, north and south, and a long line out east. Gives the merger
+/// and the first tile of each line in, west, north, south.
+fn merge_test() -> (Sim, EntityId, [EntityId; 3]) {
+    let mut sim = logistics();
+    belts(&mut sim, 0..=2, 0, Dir::East);
+    for y in 1..=3 {
+        place(&mut sim, "belt", 3, -y, Dir::South, None);
+        place(&mut sim, "belt", 3, y, Dir::North, None);
+    }
+    let merger = place(&mut sim, "merger", 3, 0, Dir::East, None);
+    belts(&mut sim, 4..=60, 0, Dir::East);
+    let at = |x, y| sim.entity_at(TilePos::new(x, y)).unwrap();
+    let ins = [at(0, 0), at(3, -3), at(3, 3)];
+    (sim, merger, ins)
+}
+
+/// Each kind of item on the line out of a [`merge_test`].
+fn merged(sim: &Sim, kinds: &[&str; 3]) -> [usize; 3] {
+    let snap = sim.snapshot();
+    kinds.map(|k| {
+        snap.belt_items
+            .iter()
+            .filter(|i| i.tile.x > 3 && i.item == item(k))
+            .count()
+    })
+}
+
+#[test]
+fn a_merger_takes_turns_between_full_lines() {
+    let (mut sim, _, ins) = merge_test();
+    let kinds = ["iron-plate", "copper-plate", "stone"];
+    // Every line in is kept full: each still gets a third of the way out.
+    for _ in 0..20 * mofact_core::TICKS_PER_SECOND {
+        for (e, k) in ins.iter().zip(&kinds) {
+            sim.feed(*e, &item(k));
+        }
+        sim.step();
+    }
+    let [west, north, south] = merged(&sim, &kinds);
+    assert!(west > 20, "items got through: {west}");
+    assert!(
+        west.abs_diff(north) <= 1 && west.abs_diff(south) <= 1,
+        "three full lines take turns: {west} {north} {south}"
+    );
+}
+
+#[test]
+fn a_merger_passes_a_lone_line_at_full_speed() {
+    // Only the side line runs: nothing waits on the empty ones.
+    let (mut sim, _, ins) = merge_test();
+    let mut fed = 0;
+    for _ in 0..20 * mofact_core::TICKS_PER_SECOND {
+        fed += usize::from(sim.feed(ins[1], &item("copper-plate")));
+        sim.step();
+    }
+    run(&mut sim, 30);
+    let [_, north, _] = merged(&sim, &["iron-plate", "copper-plate", "stone"]);
+    assert_eq!(north, fed, "every plate fed reached the line out");
+    // A belt runs 2 tiles a second with items 0.34 tiles apart: about
+    // 5.9 a second, so 20 seconds of it is over a hundred.
+    assert!(fed > 100, "fed at the belt's speed: {fed}");
+}
+
+#[test]
+fn a_merger_takes_from_a_drill_beside_it_and_never_backwards() {
+    // A drill isn't a belt: it hands the merger ore whenever it is empty.
+    let mut sim = logistics();
+    sim.set_ore(TilePos::new(3, 1), &item("iron-ore"));
+    place(&mut sim, "drill", 3, 1, Dir::North, None);
+    place(&mut sim, "merger", 3, 0, Dir::East, None);
+    belts(&mut sim, 4..=30, 0, Dir::East);
+    run(&mut sim, 12);
+    assert!(
+        items_on(&sim, |t| t.x > 3) >= 5,
+        "ore came out ahead of the merger"
+    );
+    // A belt pointed out of its front hands it nothing.
+    let mut sim = logistics();
+    place(&mut sim, "merger", 3, 0, Dir::East, None);
+    let back = place(&mut sim, "belt", 4, 0, Dir::West, None);
+    assert!(sim.feed(back, &item("iron-plate")));
+    run(&mut sim, 5);
+    assert_eq!(items_on(&sim, |t| t.x == 4), 1, "the plate waits");
+}
+
 #[test]
 fn a_filter_splitter_sends_its_item_ahead() {
     let (mut sim, splitter, first) = split_test("filter-splitter", 10);

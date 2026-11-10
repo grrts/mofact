@@ -86,6 +86,10 @@ pub enum SplitMode {
     /// The item it is set to goes ahead; everything else goes left and
     /// right in turn. Set to nothing, everything goes to the sides.
     Filter,
+    /// The other way round: a merger. Takes one item at a time from
+    /// behind, left and right in turn and puts it on the belt ahead, so
+    /// lines zip together and a side line always gets its turn.
+    Merge,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
