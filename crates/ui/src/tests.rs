@@ -2484,7 +2484,10 @@ fn the_game_menu_pauses_the_factory_and_a_chip_sets_it_going() {
     let pause = f.find(&Hit::Pause);
     assert_eq!(f.tap(centre(pause)).1, vec![Action::Pause(true)]);
     assert!(f.hud.paused());
-    assert!(!f.hud.menu_open(), "the menu makes way for the paused factory");
+    assert!(
+        !f.hud.menu_open(),
+        "the menu makes way for the paused factory"
+    );
     // A chip says so, and a tap on it plays on.
     f.draw((1179, 2556), 3.0, &Tool::Hand);
     let chip = f.find(&Hit::Pause);
