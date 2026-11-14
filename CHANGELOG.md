@@ -5,6 +5,18 @@ release, see "Releasing" in CONTRIBUTING.md.
 
 ## Unreleased
 
+- **Recipe pills fold on phones:** while placing a furnace or an
+  assembler on a narrow screen, its recipes fold to one pill naming the
+  choice ("Makes: Gear"), so they no longer cover the lower part of the map
+  where you build. Tap it to open every recipe; picking one folds them again.
+- **First-hour coach:** the guided second line stays on the map until its
+  furnace and belt are down, even though the "Have 3 drills" goal is met by
+  its drill, so it is no longer left as a drill with nowhere to put its ore.
+  Its step hints ("1. Tap Drill, then this ore") are now in every language.
+- **Starter labels:** the names over the first drill, furnace and hub keep
+  clear of anything built next to them, so a new drill no longer hides under
+  "Drill: digs iron ore", and a name whose building is off screen is hidden
+  instead of pinned to the edge of the screen.
 - **Pause:** the game menu has Pause beside Settings (Space on a
   keyboard). While paused, nothing in the factory moves and a "Paused"
   chip under the goal card sets it going again with a tap. Going to the

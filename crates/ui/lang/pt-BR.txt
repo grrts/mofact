@@ -126,6 +126,7 @@ list.join = {0}, {1}
 unit.per_min = {0}/min
 unit.seconds = {0} s
 recipe.auto = Auto
+recipe.makes = Faz: {0}
 build.title = Construir
 
 unlock.title = Desbloquear o jogo completo
@@ -230,6 +231,9 @@ toast.slot_loaded = Espaço {0} carregado
 guide.drill = Broca: extrai minério de ferro
 guide.furnace = Fornalha: faz placas
 guide.hub = Centro: as placas vão para o estoque
+guide.step_drill = 1. Toque em Broca e depois neste minério
+guide.step_furnace = 2. Toque em Fornalha e depois aqui
+guide.step_belt = 3. Toque em Esteira e arraste até o centro
 
 item.iron-ore = Minério de ferro
 item.copper-ore = Minério de cobre

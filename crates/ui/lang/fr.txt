@@ -126,6 +126,7 @@ list.join = {0}, {1}
 unit.per_min = {0}/min
 unit.seconds = {0} s
 recipe.auto = Auto
+recipe.makes = Fait : {0}
 build.title = Construire
 
 unlock.title = Débloquer le jeu complet
@@ -230,6 +231,9 @@ toast.slot_loaded = Partie {0} chargée
 guide.drill = Foreuse : extrait le minerai de fer
 guide.furnace = Four : fait des plaques
 guide.hub = Hub : les plaques vont dans votre stock
+guide.step_drill = 1. Touchez Foreuse, puis ce minerai
+guide.step_furnace = 2. Touchez Four, puis ici
+guide.step_belt = 3. Touchez Tapis, glissez jusqu'au hub
 
 item.iron-ore = Minerai de fer
 item.copper-ore = Minerai de cuivre

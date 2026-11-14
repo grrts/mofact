@@ -39,9 +39,9 @@ impl Step {
     /// What to tell the player while it is the next piece.
     pub fn say(&self) -> &'static str {
         match self.building.as_str() {
-            "drill" => "1. Tap Drill, then this ore",
-            "furnace" => "2. Tap Furnace, then here",
-            _ => "3. Tap Belt, drag to the hub",
+            "drill" => mofact_ui::tr("guide.step_drill"),
+            "furnace" => mofact_ui::tr("guide.step_furnace"),
+            _ => mofact_ui::tr("guide.step_belt"),
         }
     }
 }
@@ -88,43 +88,69 @@ impl Guide {
                 (Some(Coach::Labels(labels(content, snap))), None)
             }
             Want::Build { building, .. } if building.as_str() == "drill" => {
-                let occupied = occupied(content, snap);
-                let built = |s: &Step, t: &TilePos| {
-                    snap.entities.iter().any(|e| {
-                        e.pos == *t
-                            && (e.building == s.building
-                                || (s.building.as_str() == "belt" && is_belt(content, &e.building)))
-                    })
-                };
-                // Keep the line being built while every tile is either done
-                // or still free; otherwise find a new one.
-                let ok = self.plan.as_ref().is_some_and(|p| {
-                    p.iter()
-                        .all(|s| s.tiles.iter().all(|t| built(s, t) || !occupied.contains(t)))
-                        && !p.iter().all(|s| s.tiles.iter().all(|t| built(s, t)))
-                });
-                if !ok {
-                    self.plan = find(content, snap, ore, &occupied);
-                }
-                let Some(plan) = self.plan.clone() else {
-                    return (None, None);
-                };
-                let next = plan
-                    .iter()
-                    .position(|s| !s.tiles.iter().all(|t| built(s, t)))
-                    .unwrap_or(0);
-                let dir = (picked && *tool == plan[next].tool()).then_some(plan[next].dir);
-                let below = plan[next]
-                    .tiles
-                    .iter()
-                    .any(|t| occupied.contains(&TilePos::new(t.x, t.y - 1)));
-                (Some(Coach::Line(plan, next, below)), dir)
+                self.line(content, snap, ore, tool, picked, true)
             }
-            _ => {
-                self.plan = None;
-                (None, None)
-            }
+            // The drills goal is met by the line's drill, before its furnace
+            // and belt are down; keep showing the rest of that line so it
+            // isn't left as a drill with nowhere to put its ore.
+            _ if self.plan.is_some() => self.line(content, snap, ore, tool, picked, false),
+            _ => (None, None),
         }
+    }
+
+    /// The line to build and its next step. With `find_new`, a new line is
+    /// worked out when there is none or the last one is finished or built
+    /// over; without it, only the line already started is finished.
+    fn line(
+        &mut self,
+        content: &Content,
+        snap: &Snapshot,
+        ore: &OreMap,
+        tool: &Tool,
+        picked: bool,
+        find_new: bool,
+    ) -> (Option<Coach>, Option<Dir>) {
+        let occupied = occupied(content, snap);
+        let built = |s: &Step, t: &TilePos| {
+            snap.entities.iter().any(|e| {
+                e.pos == *t
+                    && (e.building == s.building
+                        || (s.building.as_str() == "belt" && is_belt(content, &e.building)))
+            })
+        };
+        // Keep the line being built while every tile is either done
+        // or still free; otherwise find a new one.
+        let ok = self.plan.as_ref().is_some_and(|p| {
+            p.iter()
+                .all(|s| s.tiles.iter().all(|t| built(s, t) || !occupied.contains(t)))
+                && !p.iter().all(|s| s.tiles.iter().all(|t| built(s, t)))
+        });
+        if !ok {
+            self.plan = if find_new {
+                find(content, snap, ore, &occupied)
+            } else {
+                None
+            };
+        }
+        let Some(plan) = self.plan.clone() else {
+            return (None, None);
+        };
+        let next = plan
+            .iter()
+            .position(|s| !s.tiles.iter().all(|t| built(s, t)))
+            .unwrap_or(0);
+        // Past the drills goal, only a line whose drill is down is worth
+        // finishing.
+        if !find_new && next == 0 {
+            self.plan = None;
+            return (None, None);
+        }
+        let dir = (picked && *tool == plan[next].tool()).then_some(plan[next].dir);
+        let below = plan[next]
+            .tiles
+            .iter()
+            .any(|t| occupied.contains(&TilePos::new(t.x, t.y - 1)));
+        (Some(Coach::Line(plan, next, below)), dir)
     }
 }
 
@@ -286,5 +312,58 @@ mod tests {
         let end = *last.tiles.last().unwrap();
         let (dx, dy) = last.dir.offset();
         assert!(taken.contains(&TilePos::new(end.x + dx, end.y + dy)));
+    }
+
+    #[test]
+    fn a_started_line_is_still_shown_after_the_drills_goal() {
+        let content = crate::bundled::content().unwrap();
+        let (sim, mut ore) = crate::game::new_game(&content, 7).unwrap();
+        let camera = crate::game::framing(&content, &sim);
+        ore.fill(&camera, (2000, 2000));
+        let mut snap = sim.snapshot();
+        let drills = content
+            .goals
+            .iter()
+            .position(
+                |g| matches!(&g.want, Want::Build { building, .. } if building.as_str() == "drill"),
+            )
+            .unwrap();
+        snap.goal.as_mut().unwrap().index = drills as u16;
+        let mut guide = Guide::default();
+        let Some(Coach::Line(plan, 0, _)) = guide.update(&content, &snap, &ore, &Tool::Hand).0
+        else {
+            panic!("the drills goal shows a line");
+        };
+        // The next goal comes before anything of the line is built: nothing
+        // to finish, so nothing shows.
+        let mut next = snap.clone();
+        next.goal.as_mut().unwrap().index += 1;
+        assert!(guide.update(&content, &next, &ore, &Tool::Hand).0.is_none());
+
+        // With the line's drill down, the goal moving on keeps the line.
+        let mut guide = Guide::default();
+        guide.update(&content, &snap, &ore, &Tool::Hand);
+        let mut drill = snap
+            .entities
+            .iter()
+            .find(|e| e.building.as_str() == "drill")
+            .unwrap()
+            .clone();
+        drill.pos = plan[0].tiles[0];
+        next.entities.push(drill);
+        let Some(Coach::Line(_, 1, _)) = guide.update(&content, &next, &ore, &Tool::Hand).0 else {
+            panic!("the rest of the line still shows");
+        };
+        // Once every piece is down, the coach is done.
+        let model = next.entities.last().unwrap().clone();
+        for step in &plan[1..] {
+            for t in &step.tiles {
+                let mut e = model.clone();
+                e.building = step.building.clone();
+                e.pos = *t;
+                next.entities.push(e);
+            }
+        }
+        assert!(guide.update(&content, &next, &ore, &Tool::Hand).0.is_none());
     }
 }

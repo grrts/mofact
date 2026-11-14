@@ -126,6 +126,7 @@ list.join = {0}, {1}
 unit.per_min = {0}/min
 unit.seconds = {0} s
 recipe.auto = Auto
+recipe.makes = Hace: {0}
 build.title = Construir
 
 unlock.title = Desbloquear el juego completo
@@ -230,6 +231,9 @@ toast.slot_loaded = Ranura {0} cargada
 guide.drill = Taladro: extrae mineral de hierro
 guide.furnace = Horno: hace placas
 guide.hub = Centro: las placas van a tus existencias
+guide.step_drill = 1. Toca Taladro y luego este mineral
+guide.step_furnace = 2. Toca Horno y luego aquí
+guide.step_belt = 3. Toca Cinta y arrastra hasta el centro
 
 item.iron-ore = Mineral de hierro
 item.copper-ore = Mineral de cobre

@@ -779,7 +779,12 @@ impl Game {
             scale,
             self.scene.low_power,
         );
-        let panels = self.hud.panels();
+        let mut panels = self.hud.panels();
+        if let Some(Coach::Labels(_)) = &coach {
+            // The starter line's names keep off whatever the player has
+            // built round it, so a new drill never hides under "Drill".
+            panels.extend(on_screen(&self.content, &latest, &camera, target.size()));
+        }
         let nudge = coach_marks(
             &mut self.overlay,
             coach.as_ref(),
@@ -1472,6 +1477,34 @@ pub fn ore_for(content: &Content, scenario: &mofact_headless::Scenario, seed: u6
     OreMap::new(content, seed, placed)
 }
 
+/// The screen rectangles of the buildings in sight.
+fn on_screen(
+    content: &Content,
+    snap: &mofact_core::snapshot::Snapshot,
+    camera: &Camera,
+    (sw, sh): (u32, u32),
+) -> Vec<[f32; 4]> {
+    let ppt = camera.pixels_per_tile;
+    snap.entities
+        .iter()
+        .filter_map(|e| {
+            let (w, h) = content
+                .buildings
+                .iter()
+                .find(|b| b.id == e.building)
+                .map_or((1, 1), |b| b.size);
+            let r = [
+                (e.pos.x as f32 - camera.center[0]) * ppt + sw as f32 / 2.0,
+                (e.pos.y as f32 - camera.center[1]) * ppt + sh as f32 / 2.0,
+                f32::from(w) * ppt,
+                f32::from(h) * ppt,
+            ];
+            (r[0] < sw as f32 && r[0] + r[2] > 0.0 && r[1] < sh as f32 && r[1] + r[3] > 0.0)
+                .then_some(r)
+        })
+        .collect()
+}
+
 /// Draw what the coach shows on the map, and return the tool it wants
 /// the player to pick next.
 fn coach_marks(
@@ -1540,8 +1573,14 @@ fn coach_marks(
             }
             for (pos, (w, h), text, below) in labels {
                 let p = at(*pos);
-                let mid = p[0] + f32::from(*w) * ppt / 2.0;
-                let ys = [p[1], p[1] + f32::from(*h) * ppt];
+                let (bw, bh) = (f32::from(*w) * ppt, f32::from(*h) * ppt);
+                // A name for a building out of sight would only be pushed
+                // to the edge of the screen, away from what it names.
+                if p[0] + bw < 0.0 || p[0] > sw as f32 || p[1] + bh < 0.0 || p[1] > sh as f32 {
+                    continue;
+                }
+                let mid = p[0] + bw / 2.0;
+                let ys = [p[1], p[1] + bh];
                 label(o, text, mid, ys, *below, [0xe9, 0xed, 0xf0, 0xff]);
             }
             None
