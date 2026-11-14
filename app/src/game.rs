@@ -798,6 +798,16 @@ impl Game {
             self.shown_lang = mofact_ui::i18n::lang();
             self.shown = mofact_ui::i18n::localize(&self.content);
         }
+        // A recipe chosen for one kind of crafter means nothing to another
+        // (a furnace's copper plate for a drill or an assembler), and the
+        // sim refuses a building with a recipe it can't make: let go of it.
+        if let (Tool::Place(b), Some(r)) =
+            (&self.controls.builder.tool, &self.controls.builder.recipe)
+        {
+            if !makes(&self.content, b, r) {
+                self.controls.builder.recipe = None;
+            }
+        }
         let builder = &self.controls.builder;
         let view = View {
             size: target.size(),
@@ -1477,6 +1487,26 @@ pub fn ore_for(content: &Content, scenario: &mofact_headless::Scenario, seed: u6
     OreMap::new(content, seed, placed)
 }
 
+/// Whether `building` is a crafter that can make `recipe`.
+fn makes(
+    content: &Content,
+    building: &mofact_core::ids::BuildingId,
+    recipe: &mofact_core::ids::RecipeId,
+) -> bool {
+    let Some(mofact_core::content::BuildingRole::Crafter { categories, .. }) = content
+        .buildings
+        .iter()
+        .find(|b| &b.id == building)
+        .map(|b| &b.role)
+    else {
+        return false;
+    };
+    content
+        .recipes
+        .iter()
+        .any(|r| &r.id == recipe && categories.contains(&r.category))
+}
+
 /// The screen rectangles of the buildings in sight.
 fn on_screen(
     content: &Content,
@@ -1875,5 +1905,20 @@ mod pacing {
         };
         assert_eq!(count(false), 60);
         assert_eq!(count(true), 30);
+    }
+}
+
+#[cfg(test)]
+mod recipes_in_hand {
+    use super::*;
+
+    #[test]
+    fn a_recipe_belongs_only_to_crafters_that_make_it() {
+        let content = crate::bundled::content().unwrap();
+        let ok = |b: &str, r: &str| makes(&content, &b.into(), &r.into());
+        assert!(ok("furnace", "copper-plate"));
+        assert!(ok("assembler", "gear"));
+        assert!(!ok("assembler", "copper-plate"));
+        assert!(!ok("drill", "copper-plate"));
     }
 }

@@ -13,6 +13,9 @@ release, see "Releasing" in CONTRIBUTING.md.
   furnace and belt are down, even though the "Have 3 drills" goal is met by
   its drill, so it is no longer left as a drill with nowhere to put its ore.
   Its step hints ("1. Tap Drill, then this ore") are now in every language.
+- **Fixed:** after choosing a furnace's recipe (such as Copper plate),
+  placing a drill or another building said "That isn't in this game's
+  data." A recipe in hand now only goes with crafters that can make it.
 - **Starter labels:** the names over the first drill, furnace and hub keep
   clear of anything built next to them, so a new drill no longer hides under
   "Drill: digs iron ore", and a name whose building is off screen is hidden
