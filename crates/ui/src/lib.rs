@@ -473,6 +473,8 @@ enum Hit {
     StockMore,
     Rotate,
     Recipe(Option<RecipeId>),
+    /// The folded recipe pill while placing: opens every recipe.
+    RecipeMenu,
     Belt(BuildingId),
     SetRecipe(EntityId, Option<RecipeId>),
     /// What a requester chest asks drones for (T49).
@@ -693,6 +695,12 @@ pub struct Hud {
     map: bool,
     /// Whether the stock shows every item rather than one row.
     stock_open: bool,
+    /// The building in hand whose recipe pills are opened out. On a narrow
+    /// screen they fold to one pill, so they don't cover the map being
+    /// built on; another tool in hand folds them again.
+    recipes_open: Option<BuildingId>,
+    /// The building in hand when the HUD was last drawn.
+    placing: Option<BuildingId>,
     /// Whether low-power mode is on.
     low_power: bool,
     /// Whether colour-blind mode is on (T58).
@@ -1214,7 +1222,14 @@ impl Hud {
                 vec![Action::Tool(Tool::Place(b))]
             }
             Hit::Rotate => vec![Action::Rotate],
-            Hit::Recipe(r) => vec![Action::Recipe(r)],
+            Hit::Recipe(r) => {
+                self.recipes_open = None;
+                vec![Action::Recipe(r)]
+            }
+            Hit::RecipeMenu => {
+                self.recipes_open = self.placing.clone();
+                vec![]
+            }
             Hit::Belt(b) => vec![Action::Belt(b)],
             Hit::SetRequest(entity, request) => {
                 vec![Action::Send(Command::SetRequest { entity, request })]
@@ -1935,17 +1950,49 @@ impl Hud {
             }
             self.hits.push((r, Hit::Home(home)));
         }
+        self.placing = placing.cloned();
+        if self.recipes_open.as_ref() != placing {
+            self.recipes_open = None;
+        }
         if let Some(recipes) = placing.and_then(|b| view.recipes_for(b)) {
-            self.recipe_picker(
+            let (at, width) = ([left, corner[1]], right - left);
+            let rows = self.recipe_picker(
                 o,
                 view,
                 &recipes,
                 view.recipe,
                 Hit::Recipe,
-                [left, corner[1]],
-                right - left,
-                true,
+                at,
+                width,
+                false,
             );
+            if rows <= 1 || self.recipes_open.is_some() {
+                self.recipe_picker(o, view, &recipes, view.recipe, Hit::Recipe, at, width, true);
+            } else {
+                // More than a row: one pill naming the choice, which opens
+                // the rest.
+                let made = view
+                    .recipe
+                    .and_then(|c| recipes.iter().find(|r| &r.id == c))
+                    .and_then(|r| r.outputs.first())
+                    .map(|out| out.item.clone());
+                let name = made.as_ref().map_or(tr("recipe.auto"), |i| {
+                    view.content
+                        .items
+                        .iter()
+                        .find(|d| &d.id == i)
+                        .map_or("", |d| d.name.as_str())
+                });
+                let label = trf("recipe.makes", &[&name]);
+                let icon = made.as_ref().and_then(|i| view.look.item(i));
+                self.pills(
+                    o,
+                    vec![(&label, icon, false, Hit::RecipeMenu)],
+                    at,
+                    width,
+                    true,
+                );
+            }
         }
         // Belt tiers, once there is more than one to lay.
         if *view.tool == Tool::Belt {

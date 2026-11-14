@@ -126,6 +126,7 @@ list.join = {0}、{1}
 unit.per_min = {0}/分钟
 unit.seconds = {0}秒
 recipe.auto = 自动
+recipe.makes = 制造：{0}
 build.title = 建造
 
 unlock.title = 解锁完整版
@@ -230,6 +231,9 @@ toast.slot_loaded = 已读取存档位 {0}
 guide.drill = 采矿机：开采铁矿石
 guide.furnace = 熔炉：制造板材
 guide.hub = 枢纽：板材存入库存
+guide.step_drill = 1. 点按采矿机，再点这块矿石
+guide.step_furnace = 2. 点按熔炉，再点这里
+guide.step_belt = 3. 点按传送带，拖到枢纽
 
 item.iron-ore = 铁矿石
 item.copper-ore = 铜矿石

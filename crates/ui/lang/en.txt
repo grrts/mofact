@@ -138,6 +138,7 @@ list.join = {0}, {1}
 unit.per_min = {0}/min
 unit.seconds = {0}s
 recipe.auto = Auto
+recipe.makes = Makes: {0}
 request.none = None
 warehouse.all = All
 keep.none = Take all
@@ -255,6 +256,9 @@ toast.slot_loaded = Slot {0} loaded
 guide.drill = Drill: digs iron ore
 guide.furnace = Furnace: makes plates
 guide.hub = Hub: plates go to your stock
+guide.step_drill = 1. Tap Drill, then this ore
+guide.step_furnace = 2. Tap Furnace, then here
+guide.step_belt = 3. Tap Belt, drag to the hub
 
 # Crash reports and repeatable research.
 menu.copy_crash = Copy last crash report

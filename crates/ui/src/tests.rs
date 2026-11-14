@@ -2513,3 +2513,30 @@ fn a_short_screen_keeps_copy_settings_and_rotate_moves_up() {
     let close = f.find(&Hit::Close);
     assert!((turn[1] - close[1]).abs() < 1.0, "beside the close button");
 }
+
+#[test]
+fn on_a_phone_the_recipes_fold_to_one_pill_while_placing() {
+    let mut f = Fixture::new();
+    let tool = Tool::Place("assembler".into());
+    f.draw((390, 844), 1.0, &tool);
+    assert!(!f.hud.hits.iter().any(|(_, h)| matches!(h, Hit::Recipe(_))));
+    let menu = f.find(&Hit::RecipeMenu);
+    assert_eq!(f.tap(centre(menu)), (true, vec![]));
+    f.draw((390, 844), 1.0, &tool);
+    let gear = f.find(&Hit::Recipe(Some("gear".into())));
+    f.find(&Hit::Recipe(None));
+    assert_eq!(
+        f.tap(centre(gear)),
+        (true, vec![Action::Recipe(Some("gear".into()))])
+    );
+    // Picking folds them again.
+    f.draw((390, 844), 1.0, &tool);
+    f.find(&Hit::RecipeMenu);
+
+    // Opened out, they fold when another building is taken in hand.
+    let menu = f.find(&Hit::RecipeMenu);
+    f.tap(centre(menu));
+    f.draw((390, 844), 1.0, &Tool::Place("furnace".into()));
+    f.draw((390, 844), 1.0, &tool);
+    f.find(&Hit::RecipeMenu);
+}
